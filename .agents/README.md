@@ -2,6 +2,10 @@
 
 This directory contains the tracked authority for active collaboration metadata. Together with `docs/memory/`, it records durable coordination facts; chat messages are never a source of project state. It is not imported by the plugin and must never contain credentials or runtime state.
 
+## Project Skill
+
+`.agents/skills/neat-freak/SKILL.md` is the canonical project-local knowledge cleanup skill. Tool-specific directories under `.claude/`, `.codex/`, and `.opencode/` contain pointers to this single copy so the instructions cannot drift.
+
 ## Workstream Protocol
 
 1. Read `AGENTS.md`, `docs/KNOWLEDGE_BASE.md`, and `docs/memory/`.
