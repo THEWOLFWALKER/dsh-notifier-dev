@@ -18,6 +18,32 @@ const POLL_ABORT_MS = (POLL_TIMEOUT_S + 10) * 1000
 const DEFAULT_ERROR_BACKOFF_MS = 5000
 const TERMINAL_FALLBACK_SUFFIX = '（按钮失效）'
 
+// P1-1 协议盲区护栏（2026-08-20，Trae1）：TG sendMessage 的 text 硬限 4096 字符，
+// 超限必 400 "message is too long"。审批 reason / 提问 context 上游无长度上限
+// （public 层各 20000 码点），长文案会让按钮卡在所有会话全军覆没——卡片 catch 后
+// warn + 返回 null，静默退化为纯编号回复（mock fetch 不校验长度，单测测不出；
+// 与 v0.6.2 BUTTON_DATA_INVALID、v0.6.3 legacy markdown 同类协议盲区）。
+// 计数按 UTF-16 码元（对抗性 review 修正：TG 底层 UTF-16 存储，astral 字符 1 码点
+// = 2 码元——只按码点数截到 4096 的全 emoji 文本实际 8192 码元，真机仍 400）；
+// 切口回退到码点边界，绝不劈开 surrogate pair。
+const TG_TEXT_LIMIT = 4096
+const TG_TEXT_TRUNCATE_MARK = '…（内容过长，已截断）'
+
+/** 卡片文本护栏：按 UTF-16 码元把 text 钳到 TG 4096 硬限内；超限截断并追加可见标记。 */
+function clampTelegramText(text) {
+  const s = String(text ?? '')
+  if (s.length <= TG_TEXT_LIMIT) return s
+  const markUnits = TG_TEXT_TRUNCATE_MARK.length
+  let cut = TG_TEXT_LIMIT - markUnits
+  // 切口若落在代理对中间（前一码元是高代理且后一码元是低代理），回退一位保码点完整
+  if (cut > 0
+    && s.charCodeAt(cut - 1) >= 0xD800 && s.charCodeAt(cut - 1) <= 0xDBFF
+    && s.charCodeAt(cut) >= 0xDC00 && s.charCodeAt(cut) <= 0xDFFF) {
+    cut -= 1
+  }
+  return `${s.slice(0, Math.max(0, cut))}${TG_TEXT_TRUNCATE_MARK}`
+}
+
 /**
  * 创建 Telegram 入站通道。
  * @param {object} options
@@ -260,7 +286,8 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
           // 与 reason（路径/反引号）未转义，legacy markdown 未配对 _/* 必 400 "can't parse
           // entities"，卡片静默降级纯文本（审查 R2 P1-2，与 v0.6.2 BUTTON_DATA_INVALID
           // 同类 mock 盲区：mock fetch 不解析 markdown，单测测不出）。纯文本无此面。
-          text: `🔐 ${title}\n\n${content}\n\n_decision: ${approvalKey}_`,
+          // P1-1：text 经 clampTelegramText 钳 4096（reason 上游无上限，见常量区注释）。
+          text: clampTelegramText(`🔐 ${title}\n\n${content}\n\n_decision: ${approvalKey}_`),
           reply_markup: {
             inline_keyboard: [[
               { text: '✅ 批准（本次）', callback_data: `r:${refs.mint(`ap:allowed-once:${approvalKey}:${token}`, { chatId })}` },
@@ -291,7 +318,8 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
         if (rows.length === 0) return null
         const result = await api('sendMessage', {
           chat_id: chatId,
-          text: `${title}\n\n${content}`,
+          // P1-1：同审批卡，content 无上游上限，统一过 4096 钳制
+          text: clampTelegramText(`${title}\n\n${content}`),
           reply_markup: { inline_keyboard: [rows] },
         })
         return { messageId: result?.message_id }
@@ -318,7 +346,8 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
         if (rows.length === 0) return null
         const result = await api('sendMessage', {
           chat_id: chatId,
-          text: `❓ ${title}\n\n${content}`,
+          // P1-1：提问 context 无上游上限（ask_user 入参直传），统一过 4096 钳制
+          text: clampTelegramText(`❓ ${title}\n\n${content}`),
           reply_markup: { inline_keyboard: rows.map((row) => [row]) }, // 一选项一行，手机端可读
         })
         return { messageId: result?.message_id }

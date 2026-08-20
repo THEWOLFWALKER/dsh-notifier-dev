@@ -3,6 +3,16 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 SemVer。
 DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏性变更（会在条目中标注）。
 
+## [Unreleased]
+
+### 修复：Telegram 卡片文本超长护栏（P1-1 协议盲区，2026-08-20）
+
+- 背景：TG `sendMessage` 的 text 硬限 4096 字符，超限必 400 `message is too long`。审批 `reason` / 提问 `context` / 动作卡 `content` 上游均无长度上限（public 层各 20000 码点），长文案会让按钮卡在所有会话全军覆没——卡片 catch 后只 warn 一行并返回 null，静默退化为纯编号回复。这是与 v0.6.2 `BUTTON_DATA_INVALID`、v0.6.3 legacy markdown 同类的 mock 盲区（mock fetch 不校验协议形状，单测测不出）。
+- `src/inbound/telegram-bot.mjs`：新增 `clampTelegramText()` 护栏，`sendApprovalCard` / `sendActionCard` / `sendQuestionCard` 三个卡片路径的 text 统一钳制。计数按 **UTF-16 码元**执行（对抗性 review 修正：TG 底层 UTF-16 存储，astral 字符 1 码点 = 2 码元——只按码点数截到 4096 的全 emoji 文本实际 8192 码元，真机仍会 400）；切口回退到码点边界，绝不劈开 surrogate pair；截断处追加可见标记 `…（内容过长，已截断）`。限内文本零改动直通。
+- `test/inbound.telegram.test.mjs`：+6 项协议形状契约——审批/提问/动作卡超长截断仍送达（不因 400 退化）、码点合规但码元超限的全 emoji 文本必须截断（码点计数会漏的对抗用例）、surrogate pair 完整性、限内文本不加标记不误伤、按钮 ref 形态不受截断影响、三种卡 sendMessage 一律不带 `parse_mode`（v0.6.3 legacy markdown 400 事故防回归护栏）。
+- 测试契约 891 → 897；`package.json` `dshQuality.testCount`、README 双语徽章/正文、HANDOFF 测试行同步。
+- 真机验证缺口：截断后的合规长度在真机的实际表现（含代理转义差异）仍待真机复验，已记录 `docs/memory/risks.md`。
+
 ## [0.8.5] - 2026-08-19
 
 ### Security

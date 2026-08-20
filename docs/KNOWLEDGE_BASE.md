@@ -8,7 +8,7 @@ This is the navigation page for humans and agents. It deliberately points to one
 - Canonical collaboration repository: private `dsh-notifier-dev` (GitHub owner `THEWOLFWALKER`). The public repository `https://github.com/THEWOLFWALKER/dsh-notifier` is the release/source mirror, not the day-to-day relay workspace.
 - The public repository's `main` history is unrelated to the current hardening line; do not merge or force-push it implicitly. Public synchronization is a deliberate release operation.
 - Runtime: Node.js ESM, Node `>=22`, no build step, no production dependencies.
-- Test contract: `891` total tests. The `2026-08-20` Windows run passed `887`; the four failures are the platform-dependent desktop adapter tests when BurntToast is unavailable. Release documentation retains `891` as the full contract count.
+- Test contract: `897` total tests. The `2026-08-20` Linux run passed all `897`; the earlier Windows run passed `893` with the four failures being the platform-dependent desktop adapter tests when BurntToast is unavailable. Release documentation retains `897` as the full contract count.
 - The attached npm archive is a release artifact. The engineering archive is the source authority.
 
 ## Read Order

@@ -74,6 +74,101 @@ test('sendApprovalCard：API 失败返回 null（调用方降级为纯通知）'
   assert.equal(card, null)
 })
 
+// ---------------------------------------------------------------- P1-1 协议护栏
+// mock fetch 不校验协议形状（v0.6.2 BUTTON_DATA_INVALID / v0.6.3 legacy markdown 两次
+// 真机事故的共因）。以下测试让 mock 承担协议校验角色：TG sendMessage text 硬限
+// 4096 字符，超限必 400 "message is too long" → 卡片全灭退化为纯编号回复。
+
+test('P1-1 审批卡超长 reason：按 UTF-16 码元截断到 4096 内仍送达（TG message is too long 护栏）', async () => {
+  const { fetchImpl, calls } = makeFetch({ sendMessage: { ok: true, result: { message_id: 11 } } })
+  const vault = createTokenVault({ secret: 'k' })
+  const tg = createTelegramInbound({ config: CONFIG, bus: makeBus(), vault, fetchImpl })
+  const token = vault.mint('ap:long-op:1')
+  // 4500 个 astral 码点（每个 2 个 UTF-16 码元）：验证码元计数与 surrogate pair 不被劈开
+  const content = '🎮'.repeat(4500)
+  const card = await tg.sendApprovalCard({ chatId: 100, title: '需要批准：long-op', content, approvalKey: 'ap:long-op:1', token })
+  assert.deepEqual(card, { messageId: 11 }, '截断后卡片必须仍送达——不因超长 400 静默退化为编号回复')
+  const text = calls[0].body.text
+  assert.ok(text.length <= 4096, `text 码元数 ${text.length} 必须 ≤4096（TG 硬限按 UTF-16 码元执行）`)
+  assert.ok(text.includes('（内容过长，已截断）'), '截断标记可见')
+  assert.ok(text.startsWith('🔐'), '头部标识保留（截断只动尾部）')
+  // surrogate pair 完整性：剥离合法代理对后不得残留孤立代理项
+  assert.ok(!/[\uD800-\uDFFF]/.test(text.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '')), '截断切口在码点边界，不劈 surrogate pair')
+  // 按钮形态完好：截断只影响展示文本，不影响裁决载体
+  const buttons = calls[0].body.reply_markup.inline_keyboard[0]
+  for (const button of buttons) assert.match(button.callback_data, /^r:[23456789A-HJKMNPQRSTVWXYZ]{8}$/, 'ref 形态不受截断影响')
+})
+
+test('P1-1 对抗用例：码点数 ≤4096 但码元数超限的全 emoji 文本必须截断（码点计数会漏）', async () => {
+  const { fetchImpl, calls } = makeFetch({ sendMessage: { ok: true, result: { message_id: 16 } } })
+  const vault = createTokenVault({ secret: 'k' })
+  const tg = createTelegramInbound({ config: CONFIG, bus: makeBus(), vault, fetchImpl })
+  // 3000 个 astral emoji：3000 码点（< 4096 合规）但 6000 UTF-16 码元（> 4096 超限）。
+  // 只按码点计数的实现会放行 → 真机 400 message is too long。
+  const content = '🎯'.repeat(3000)
+  await tg.sendApprovalCard({ chatId: 100, title: '需要批准：emoji', content, approvalKey: 'ap:emoji:1', token: vault.mint('ap:emoji:1') })
+  const text = calls[0].body.text
+  assert.ok(text.length <= 4096, `码元计数必须截断：${text.length} ≤ 4096（码点计数实现在此会漏成 ${[...text].length}+）`)
+  assert.ok(text.includes('（内容过长，已截断）'), '截断标记可见')
+})
+
+test('P1-1 提问卡超长 context：同样截断到 4096 内仍送达（ask_user context 无上游上限）', async () => {
+  const { fetchImpl, calls } = makeFetch({ sendMessage: { ok: true, result: { message_id: 12 } } })
+  const vault = createTokenVault({ secret: 'k' })
+  const tg = createTelegramInbound({ config: CONFIG, bus: makeBus(), vault, fetchImpl })
+  const token = vault.mint('aq:q1:0')
+  const card = await tg.sendQuestionCard({
+    chatId: 100, title: '提问：选哪个方案', content: 'x'.repeat(9000),
+    qKey: 'aq:q1', token, options: ['方案 A', '方案 B'],
+  })
+  assert.deepEqual(card, { messageId: 12 }, '截断后提问卡必须仍送达')
+  const text = calls[0].body.text
+  assert.ok(text.length <= 4096, 'text 码元数 ≤4096')
+  assert.ok(text.includes('（内容过长，已截断）'), '截断标记可见')
+  assert.ok(text.startsWith('❓'), '头部标识保留')
+  const rows = calls[0].body.reply_markup.inline_keyboard
+  assert.equal(rows.length, 2, '选项按钮行不受截断影响（一选项一行）')
+})
+
+test('P1-1 动作卡超长 content：同样截断到 4096 内仍送达（心跳/卡住文案防线）', async () => {
+  const { fetchImpl, calls } = makeFetch({ sendMessage: { ok: true, result: { message_id: 13 } } })
+  const vault = createTokenVault({ secret: 'k' })
+  const tg = createTelegramInbound({ config: CONFIG, bus: makeBus(), vault, fetchImpl })
+  const card = await tg.sendActionCard({ chatId: 100, title: 't', content: 'y'.repeat(9000), actions: [{ label: '停止任务', data: 'ac:turn/cancel:tk' }] })
+  assert.deepEqual(card, { messageId: 13 }, '截断后动作卡必须仍送达')
+  const text = calls[0].body.text
+  assert.ok(text.length <= 4096, 'text 码元数 ≤4096')
+  assert.ok(text.includes('（内容过长，已截断）'), '截断标记可见')
+})
+
+test('P1-1 边界：4096 码点内的文本原样直通（不误伤合法长文、不加标记）', async () => {
+  const { fetchImpl, calls } = makeFetch({ sendMessage: { ok: true, result: { message_id: 14 } } })
+  const vault = createTokenVault({ secret: 'k' })
+  const tg = createTelegramInbound({ config: CONFIG, bus: makeBus(), vault, fetchImpl })
+  // 头尾装饰 + content 总码点数恰在限内（含 emoji）
+  const content = '配置'.repeat(2000) // 4000 码点 + 装饰 ≈ 4070 内
+  await tg.sendApprovalCard({ chatId: 100, title: '需要批准：cfg', content, approvalKey: 'ap:cfg:1', token: vault.mint('ap:cfg:1') })
+  const text = calls[0].body.text
+  assert.ok(!text.includes('（内容过长，已截断）'), '限内不加截断标记')
+  assert.ok(text.includes('_decision: ap:cfg:1_'), '限内装饰尾完整保留')
+})
+
+test('P1-1 防回归：三种卡的 sendMessage 一律不设 parse_mode（v0.6.3 legacy markdown 400 事故）', async () => {
+  const { fetchImpl, calls } = makeFetch({ sendMessage: { ok: true, result: { message_id: 15 } } })
+  const vault = createTokenVault({ secret: 'k' })
+  const tg = createTelegramInbound({ config: CONFIG, bus: makeBus(), vault, fetchImpl })
+  const token = vault.mint('ap:md:1')
+  // 文本里故意放未配对的 _ 和 *：纯文本面无害；一旦有人加回 parse_mode 真机必 400
+  const nasty = 'path/to_some_dir *star __bold_ 未配对标记'
+  await tg.sendApprovalCard({ chatId: 100, title: '需要批准：md', content: nasty, approvalKey: 'ap:md:1', token })
+  await tg.sendActionCard({ chatId: 100, title: 't', content: nasty, actions: [{ label: '停', data: 'ac:x:tk' }] })
+  await tg.sendQuestionCard({ chatId: 100, title: 'q', content: nasty, qKey: 'aq:md', token: vault.mint('aq:md:0'), options: ['A'] })
+  assert.ok(calls.length >= 3, '三种卡各发一条')
+  for (const call of calls) {
+    assert.ok(!('parse_mode' in call.body), '卡片不得设置 parse_mode（legacy markdown 未配对 _/* 必 400 can\'t parse entities）')
+  }
+})
+
 test('notifyChatIds：配置归一化为字符串数组', () => {
   const tg = createTelegramInbound({ config: { botToken: 'T', notifyChatIds: [100, '200'] }, bus: makeBus(), vault: createTokenVault() })
   assert.deepEqual(tg.notifyChatIds(), ['100', '200'])
