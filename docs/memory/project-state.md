@@ -8,8 +8,8 @@ Snapshot date: 2026-08-20 (Trae1 relay).
 - Active line: `main` (all relay work merged); new relay topics branch from `main` as `codex/<topic>`.
 - Security hardening commits `bb03f8a` and `ce68543` (A1/A2) are part of `main` history.
 - Canonical source commit: `3fc3f24` (`chore: import dsh-notifier v0.8.5 baseline`).
-- Package version: `0.8.5` (unchanged; P1-1 fix is recorded under CHANGELOG `[Unreleased]`).
-- Test baseline: `897` total tests after the P1-1 protocol guards (+6). On `2026-08-20` the Linux relay host passed all `897`; the earlier Windows validation passed `893` with 4 desktop adapter failures from the missing BurntToast/PowerShell capability.
+- Package version: `0.8.5` (unchanged; P1-1 and P1-2 fixes are recorded under CHANGELOG `[Unreleased]`).
+- Test baseline: `902` total tests after the P1-2 error-visibility fixes (+5 on top of the 897 P1-1 contract). On `2026-08-20` the Linux relay host passed all; the earlier Windows validation passed `898` with 4 desktop adapter failures from the missing BurntToast/PowerShell capability.
 - Engineering archive: source authority. Attached npm archive: release artifact only.
 - Artifact observation: the two archives share source/tests/package metadata; `CHANGELOG.md` is the only common-file difference.
 - Workspace policy: no `node_modules/`, `package-lock.json`, credentials, state files, or generated logs in Git.
@@ -19,14 +19,14 @@ Snapshot date: 2026-08-20 (Trae1 relay).
 
 ## Validation Evidence
 
-- `npm test` (Linux relay host, 2026-08-20): `897 pass`, `0 fail` — includes the 6 new P1-1 protocol-shape tests.
-- `node scripts/verify-release.mjs`: passed with documented tests = `897`.
+- `npm test` (Linux relay host, 2026-08-20): `902 pass`, `0 fail` — includes the 6 P1-1 protocol-shape tests and the 5 P1-2 error-visibility tests; the post-merge `main` baseline also passed 897/897 before P1-2.
+- `node scripts/verify-release.mjs`: passed with documented tests = `902`.
 - `node scripts/gen-channel-matrix.mjs --check`, `node --check src/index.mjs`, `git diff --check`: passed.
 
 ## Current Maintenance Direction
 
 - No new user-facing features are planned for the current cycle. Work is limited to technical debt, bug elimination, protocol/host validation, and documentation truth.
-- The ordered queue is `docs/TECHNICAL_DEBT.md`; P1-1 Telegram card guards are landed, its real-device confirmation and the remaining P1/P0 items are open.
+- The ordered queue is `docs/TECHNICAL_DEBT.md`; P1-1 (Telegram card guards, merged) and P1-2 (error visibility, landed on `codex/tech-debt-error-visibility`) are done locally. Open: P1-1 real-device confirmation and long-connection lifecycle, P1-3 state stress, P1-4 admin UI audit, P0-2 registry acceptance (needs npm auth), A3-A6 security plan.
 
 ## Next Gate
 

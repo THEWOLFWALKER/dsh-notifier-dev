@@ -163,7 +163,11 @@ export function registerApprovalHandler(deps) {
       const globalTypes = Array.isArray(notifier?.channels) ? notifier.channels : []
       const { channelTypes } = router.resolveOutbound(String(agentId), workspaceOf(request.agent), globalTypes)
       return channelTypes
-    } catch {
+    } catch (error) {
+      // P1-2 错误可见性（2026-08-20，Trae1）：路由解析异常与「空集」同样回落全局广播
+      // （fail-safe 投递语义不变），但异常路径原先零日志——同函数的空集回落自 v0.6.5
+      // 起就有 warn，异常反而静默，路由子系统坏了会无声地把审批卡广播到全渠道。
+      warn(`审批分流解析异常，回落全局广播（路由引擎报错: ${error instanceof Error ? error.message : String(error)}）`)
       return null
     }
   }

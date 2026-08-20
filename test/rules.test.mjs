@@ -43,6 +43,15 @@ test('keywords: 非法正则降级字面量，不炸启动', () => {
   const filter = createKeywordFilter({ include: ['[unclosed'], exclude: ['(bad'], regex: true })
   assert.equal(filter.test('包含 [unclosed 的文本'), true)
   assert.equal(filter.test('(bad 文本'), false)
+  // P1-2 错误可见性：降级条目必须上报（调用方据此 warn）——语义从「正则」变「子串」
+  // 的静默变化是通知静默停止/漏拦的隐患，宁可漏拦不炸启动但要让用户看见。
+  assert.deepEqual(filter.regexFallbacks, ['[unclosed', '(bad'], '非法正则条目逐一登记')
+})
+
+test('keywords: regexFallbacks 仅在 regex 模式且有条目时非空', () => {
+  assert.deepEqual(createKeywordFilter({ include: ['[bad'], regex: false }).regexFallbacks, [], '非 regex 模式本来就走字面量，无降级可言')
+  assert.deepEqual(createKeywordFilter({ include: ['^ok$'], regex: true }).regexFallbacks, [], '合法正则不登记')
+  assert.deepEqual(createKeywordFilter({}).regexFallbacks, [], '空配置无降级')
 })
 
 test('keywords: 空串与非字符串条目被丢弃、重复去重', () => {

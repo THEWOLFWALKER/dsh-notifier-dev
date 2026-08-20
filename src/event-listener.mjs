@@ -197,6 +197,13 @@ export function createEventListener(ctx, notifier, resolvedConfig, wiring = {}) 
   const warn = (message) => {
     try { ctx?.logger?.warn?.('[dsh-notifier]', message) } catch { /* 日志失败绝不致命 */ }
   }
+  // P1-2 错误可见性（2026-08-20，Trae1）：keywords.regex 开启时，非法正则条目会静默
+  // 降级为字面量子串匹配——语义从「正则命中」变「子串包含」，include 规则可能因此
+  // 永不命中（通知静默停止）、exclude 规则可能漏拦。降级本身保留（宁可漏拦不炸启动），
+  // 但必须让用户看见哪些条目降级了。
+  if (Array.isArray(keywords.regexFallbacks) && keywords.regexFallbacks.length > 0) {
+    warn(`keywords.regex 中 ${keywords.regexFallbacks.length} 条非法正则已降级为字面量匹配（语义变化，请修正）: ${keywords.regexFallbacks.join(' | ').slice(0, 200)}`)
+  }
 
   /** 事件粒度门：配置关掉的事件线/结束原因直接静默（不占 dedup 名额）。
    *  容忍两种形状：resolveConfig 归一化的 { enabled, kinds } 与原始的 { completed: false } 直传。 */

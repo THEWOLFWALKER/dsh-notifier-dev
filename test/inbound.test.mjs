@@ -3,7 +3,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createStore, defaultStateDir } from '../src/inbound/store.mjs'
@@ -41,14 +41,21 @@ test('store：损坏 JSON 启动回退空态；save 自愈转存现场并重建�
   writeFileSync(path, '{oops not json', 'utf8')
   const store = createStore(path)
   assert.equal(store.size(), 0) // boot 仍 fail-open（无记忆好过误清空）
+  // P1-2（2026-08-20）：boot 损坏不再静默清零——对齐 v0.6.5 save 路径的取证惯例，
+  // 现场以 copy（非 rename，不打扰他进程）转存 .corrupt.<ts>，fail-open 语义不变。
+  let backups = readdirSync(dir).filter((name) => name.startsWith('state.json.corrupt.'))
+  assert.equal(backups.length, 1, 'boot 损坏立即取证一份副本（copy 不动原文件）')
+  assert.equal(readFileSync(join(dir, backups[0]), 'utf8'), '{oops not json', 'boot 取证副本内容 = 损坏现场')
   store.set('k', 'v') // 不抛错，内存态继续可用
   assert.equal(store.get('k'), 'v')
-  // v0.6.5 自愈：现场转存 .corrupt.<ts>（取证保留），写路径以内存全量重建——
+  // v0.6.5 自愈：save 现场转存 .corrupt.<ts>（取证保留），写路径以内存全量重建——
   // 中止语义会让 dirty 无限积压、CLI↔宿主共享永久断裂（v0.6.4 审查遗留问题）
   assert.equal(readFileSync(path, 'utf8'), '{"k":"v"}') // 重建后立即可读
-  const backups = readdirSync(dir).filter((name) => name.startsWith('state.json.corrupt.'))
-  assert.equal(backups.length, 1) // 原始损坏现场留了副本
-  assert.equal(readFileSync(join(dir, backups[0]), 'utf8'), '{oops not json')
+  backups = readdirSync(dir).filter((name) => name.startsWith('state.json.corrupt.'))
+  assert.equal(backups.length, 2, 'boot 取证 1 份 + save 自愈转存 1 份（同一损坏现场双取证，时间戳不同）')
+  for (const backup of backups) {
+    assert.equal(readFileSync(join(dir, backup), 'utf8'), '{oops not json')
+  }
   // 自愈后新实例（重启模拟）读到重建内容——半截 JSON 本就解析不出任何键，重建零丢失
   const healed = createStore(path)
   assert.equal(healed.get('k'), 'v')
@@ -58,6 +65,44 @@ test('store：损坏 JSON 启动回退空态；save 自愈转存现场并重建�
   const recovered = createStore(path)
   assert.equal(recovered.get('k2'), 'v2')
   assert.equal(recovered.get('repaired'), true)
+})
+
+test('P1-2 store：boot 损坏取证副本不得破坏并发写者（copy 而非 rename，原文件保持原位）', () => {
+  const { path, dir } = tempStorePath()
+  writeFileSync(path, '{"half":"written-but-trunc', 'utf8')
+  const before = statSync(path).mtimeMs
+  const store = createStore(path)
+  assert.equal(store.size(), 0, 'fail-open 空态起步')
+  assert.ok(existsSync(path), '原文件仍在原位（boot 只取证 copy，不把文件抽走——他进程持有句柄不受影响）')
+  assert.equal(readFileSync(path, 'utf8'), '{"half":"written-but-trunc', '原文件内容未被 boot 改动')
+  const backups = readdirSync(dir).filter((name) => name.startsWith('state.json.corrupt.'))
+  assert.equal(backups.length, 1)
+  assert.equal(readFileSync(join(dir, backups[0]), 'utf8'), '{"half":"written-but-trunc')
+  assert.ok(statSync(path).mtimeMs === before, 'copy 不更新原文件 mtime（读收敛的 mtime 基线不受扰动）')
+  // 后续 save 自愈照常工作（与既有 v0.6.5 语义衔接）
+  store.set('k', 'v')
+  assert.equal(readFileSync(path, 'utf8'), '{"k":"v"}')
+})
+
+test('P1-2 store：读失败（非损坏）boot 仍静默 fail-open，不产生取证副本', () => {
+  const { path, dir } = tempStorePath()
+  // 目录同名冲突：readFileSync 抛 EISDIR——是「读不了」不是「内容损坏」，不触发取证
+  mkdirSync(path, { recursive: true })
+  const store = createStore(path)
+  assert.equal(store.size(), 0)
+  const backups = readdirSync(dir).filter((name) => name.startsWith('state.json.corrupt.'))
+  assert.equal(backups.length, 0, '读失败不产生 .corrupt 副本（与解析失败区分，避免噪音取证）')
+})
+
+test('P1-2 store：空文件视作空态静默起步，不告警不取证（无记忆可丢失）', () => {
+  const { path, dir } = tempStorePath()
+  writeFileSync(path, '', 'utf8')
+  const store = createStore(path)
+  assert.equal(store.size(), 0)
+  const backups = readdirSync(dir).filter((name) => name.startsWith('state.json.corrupt.'))
+  assert.equal(backups.length, 0, '空文件无取证价值（外部 touch/首写中断），不算损坏')
+  store.set('k', 'v')
+  assert.equal(readFileSync(path, 'utf8'), '{"k":"v"}', '后续 save 正常落盘')
 })
 
 test('store：跨进程写锁——陈锁（持锁进程已死）当次回收，锁序恢复（v0.6.4 R2-P1-2 / v0.6.5 R4-1-P2-1）', () => {

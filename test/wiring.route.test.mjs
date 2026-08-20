@@ -423,7 +423,7 @@ function makeFakeInbound(channel, targets = []) {
 }
 
 /** 审批 rig：真 bus/vault/store + 假 ctx/notifier（spy notifyAll 第二参）。 */
-function makeApprovalRig({ interactive = [], routerFactory = null, notifierChannels = [] } = {}) {
+function makeApprovalRig({ interactive = [], routerFactory = null, notifierChannels = [], logger = null } = {}) {
   const store = createStore(join(tempDir(), 'state.json'))
   const vault = createTokenVault({ secret: 'wiring-secret' })
   const bus = createInboundBus({ allowUsers: ['u1', 'u2'], store, vault })
@@ -444,6 +444,7 @@ function makeApprovalRig({ interactive = [], routerFactory = null, notifierChann
     interactive,
     approvalConfig: { mode: 'answer', timeoutMs: 400 },
     ...(router !== null ? { router } : {}),
+    ...(logger !== null ? { logger } : {}),
   })
   const handle = (request) => handlers['approval/request'](request, () => 'desktop')
   return { store, bus, broadcasts, dispose, handle }
@@ -482,6 +483,30 @@ test('审批分流：request 无 agent 时回落全局广播（第二参空对�
   await new Promise((resolve) => setTimeout(resolve, 30))
   assert.deepEqual(rig.broadcasts[0].options, {}, '无 agent = 不分流，全局广播')
   assert.equal(qq.state.cards.length, 1, '全局广播下交互渠道照常收卡片')
+  rig.bus.accept({ channel: 'qq', userId: 'u2', chatId: 'opengrp01', messageId: 'msg:1:opengrp01', text: '1' })
+  assert.equal(await outcome, 'allowed-once')
+  rig.dispose()
+})
+
+test('P1-2 审批分流：路由引擎抛异常时回落全局广播且必须告警（不再静默扩散）', async () => {
+  const qq = makeFakeInbound('qq', [{ chatId: 'opengrp01', userId: 'u2' }])
+  const warnings = []
+  const rig = makeApprovalRig({
+    interactive: [qq],
+    notifierChannels: ['webhook', 'qq'],
+    logger: { warn: (prefix, message) => warnings.push(String(message)) },
+    routerFactory: () => ({
+      resolveOutbound() { throw new Error('route engine exploded') },
+    }),
+  })
+  const outcome = rig.handle({ toolName: 'bash', callId: 'c1', agent: { id: 'ws-a' } })
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  // fail-safe 语义不变：异常回落全局广播（第二参空对象），审批照发不丢
+  assert.deepEqual(rig.broadcasts[0].options, {}, '路由异常 = 回落全局广播（fail-safe 投递不变）')
+  assert.equal(qq.state.cards.length, 1, '异常回落下交互渠道照常收卡片')
+  // P1-2 新增可见性：异常路径与空集路径对仗，必须 warn 而非静默
+  const hit = warnings.find((message) => message.includes('审批分流解析异常') && message.includes('route engine exploded'))
+  assert.ok(hit !== undefined, `路由异常必须告警（实际 warnings: ${JSON.stringify(warnings)}）`)
   rig.bus.accept({ channel: 'qq', userId: 'u2', chatId: 'opengrp01', messageId: 'msg:1:opengrp01', text: '1' })
   assert.equal(await outcome, 'allowed-once')
   rig.dispose()

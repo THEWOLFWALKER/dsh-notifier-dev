@@ -2,7 +2,7 @@
 
 > 写给下一个 agent。本文档是完整的工作上下文快照：设计理念、军规约定、架构地图、
 > 版本脉络、审查记录、已知坑、待办清单。读完这一份即可无缝接手。
-> 交接时刻：2026-08-20，v0.8.5。当前维护周期停止新增功能，优先清理技术债、排除 bug、补齐真实协议验证。测试契约为 897 个；2026-08-20 Linux 主机 897 全过；此前 Windows 主机 893 通过、4 个桌面通知用例因 BurntToast/PowerShell 能力缺失失败，非桌面用例通过。registry 发布状态需独立核验。
+> 交接时刻：2026-08-20，v0.8.5。当前维护周期停止新增功能，优先清理技术债、排除 bug、补齐真实协议验证。测试契约为 902 个；2026-08-20 Linux 主机 902 全过；此前 Windows 主机 898 通过、4 个桌面通知用例因 BurntToast/PowerShell 能力缺失失败，非桌面用例通过。registry 发布状态需独立核验。
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
 > 上一稳定发布位 v0.6.5 = `b2d23c0`（npm 与 GitHub 发布位 `0221d1e` 已对齐）。
 
@@ -12,11 +12,11 @@
 - 分支拓扑（2026-08-20 合并后校准）：私有 `main` 已合并全部接力成果——hardening 的 3 个 relay-prompt 文档提交（`e576088`/`8ce3329`/`70a3a33`，含 `docs/RELAY_BOOTSTRAP_PROMPT.md`）与 Trae1 的 `codex/tech-debt-protocol-guards`（P1-1 Telegram 卡片协议护栏，测试契约 891→897，分支提交 `478b87d`）；私有仓库为唯一开发源。
 - 主 agent：`root / Codex primary / Windows workspace`，负责仓库迁移、规则、知识库和最终整合。
 - Terra 审查 agent：`terra_relay_setup_review / gpt-5.6-terra high / Windows shared workspace`，完成私有开发库、公共发布库和接力流程审查；无代码提交，结论已写入 `.agents/workstreams/terra-relay-setup-review.md`。
-- Trae1：`Trae1 / Trae (SOLO) primary agent / Linux sandbox (Ubuntu 22.04, Node v22.16.0)`，完成 P1-1 Telegram 卡片文本超长护栏（对抗性 review 中修正码点→UTF-16 码元计数缺陷），记录见 `.agents/workstreams/tech-debt-protocol-guards.md`。
+- Trae1：`Trae1 / Trae (SOLO) primary agent / Linux sandbox (Ubuntu 22.04, Node v22.16.0)`，两轮接力：①P1-1 Telegram 卡片文本超长护栏（对抗性 review 修正码点→UTF-16 码元计数缺陷）；②合并 hardening 文档提交与 P1-1 回 main（merge `c03ffb9`），完成 P1-2 错误可见性审计（356 catch 分类，三处静默故障补告警，三轮对抗性 review 修正取证 copy 体积护栏与空文件误判），记录见 `.agents/workstreams/tech-debt-protocol-guards.md` 与 `.agents/workstreams/tech-debt-error-visibility.md`。
 - 接力规则：每个 agent 必须更新自己的 workstream（身份、模型/工具、机器、文件、测试、review、风险、下一步、commit SHA），并在完成时刷新本节、提交、推送和确认工作树干净。
 - 新 agent 的第一条消息模板：`docs/RELAY_BOOTSTRAP_PROMPT.md`；发送者填写 agent 身份、工具/模型、机器环境和任务主题后，直接整段发送。
 - 项目本地 neat-freak canonical skill：`.agents/skills/neat-freak/SKILL.md`；`.claude/skills/`、`.codex/skills/`、`.opencode/skills/` 只有入口指针。
-- 下一步：继续在私有仓库接力（P1-1 余项：护栏真机复验 / 其他渠道 payload 证据 / 长连接生命周期；然后 P1-2 错误可见性、P1-3 状态压力、P0-2 registry 验收）；npm `0.8.5` 仍未发布，发布必须单独经过 release gate。
+- 下一步：继续在私有仓库接力（真机闭环清单见 `docs/memory/risks.md`——TG 护栏边界、长连接重连可见性、其他渠道 payload 证据、BurntToast 主机、npm 验收；然后 P1-3 状态压力、P1-4 admin UI 审计、安全计划 A3-A6）；npm `0.8.5` 仍未发布，发布必须单独经过 release gate。
 
 ---
 
@@ -32,7 +32,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 零运行时依赖（只用 fetch + node:crypto + 原生 WebSocket）。
 
 - 语言/运行时：Node.js ESM（.mjs），无 TypeScript，无构建步骤
-- 代码量：src+test+scripts ≈ 35,500 行；46 个测试文件，897 测试
+- 代码量：src+test+scripts ≈ 35,500 行；46 个测试文件，902 测试
 - 文档：README.md / README.zh-CN.md / ADAPTER.md（渠道接入规范）/ PLUGINS.md（插件互操作）/ docs/v0.5-design.md / docs/v0.6-design.md / CHANGELOG.md（最详细的历史）
 
 ---
@@ -43,7 +43,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 |---|---|
 | 版本 | package.json = 0.8.5；CHANGELOG、admin UI、双语 README 和发布守卫已同步；registry 状态待独立核验 |
 | git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前分支 `codex/plugin-security-hardening` |
-| 测试 | `npm test` 契约 = **897 tests**（2026-08-20 Linux 主机全过；Windows 主机 893 pass / 4 个桌面能力限制失败；非桌面通过） |
+| 测试 | `npm test` 契约 = **902 tests**（2026-08-20 Linux 主机全过；Windows 主机 898 pass / 4 个桌面能力限制失败；非桌面通过） |
 | 发布 | **发包前核对四处计数一致——README.md 徽章/正文、README.zh-CN.md 徽章/正文、HANDOFF.md、admin UI 版本串（src/admin/ui.mjs）——任何一处与实际不符先修再发** |
 | 真机验证 | v0.6.1 修过 TG 真机事故（见 §5）；v0.7 真机测试通过（2026-08-17，v0.7.0-realtest 包）；内部真机测试文档 TG-TEST.md（Telegram 提问链路）与 WECHAT-TEST.md（微信扫码即配对）随 code/ 保留 |
 
@@ -62,7 +62,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 用户文档 | `docs/guide.md` · `docs/upgrade-guide.md` · `docs/upgrade-guide.en.md` | README 双语均链接 guide；升级/回滚是装包用户高频需求 |
 | 互操作契约 | `PLUGINS.md` | 其他插件作者消费 notifier 服务时的契约（README 链接） |
 | CLI | `scripts/`（channel-login · test-channel · route · gen-channel-matrix 等） | guide.md 教用户直接 `node scripts/...` |
-| 测试 | `test/` | 行为契约随包分发是项目惯例（897 用例，装包即可 `npm test`） |
+| 测试 | `test/` | 行为契约随包分发是项目惯例（902 用例，装包即可 `npm test`） |
 
 **仅工程仓库（不进 npm 包）**：
 
@@ -232,7 +232,7 @@ src/
 4. ~~v0.8 文档同步~~：~~README 双语/HANDOFF 的 ask_user 覆盖~~ + ~~guide.md 远程提问章节~~ + ~~npm 发布包文档完整性~~——2026-08-19 全部补齐（提交 `f559658` + 0.8.5 交接打包批；发布包文件边界规则见 §1.5）。
 5. **P0：完成 0.8.5 registry artifact 验收**：按 `docs/TECHNICAL_DEBT.md` 的 disposable-profile 流程验证安装、重启、版本、出站和入站。
 6. **P1：补齐真实协议验证**（部分完成 2026-08-20：TG 卡片路径 4096 UTF-16 码元护栏 + parse_mode/callback_data 防回归测试已落地 `codex/tech-debt-protocol-guards`，见 CHANGELOG Unreleased）：余项为护栏边界真机复验、其他 provider payload limits 证据、回调体上限（与 A5 协调）、长连接生命周期；mock 通过不等于完成。
-7. **P1：做错误可见性与并发状态压力审查**：覆盖防御性 catch、SDK 重连/销毁、state.json 锁与收敛读写。
+7. **P1：做并发状态压力审查**（P1-2 错误可见性审计已完成 2026-08-20：356 个 catch 全分类，三处静默故障补告警——审批路由异常、store 启动损坏取证、keywords 正则降级上报，契约 897→902）：余下 P1-3 覆盖防御性 catch、SDK 重连/销毁、state.json 锁与收敛读写压力测试。
 8. **P2：证据驱动处理结构性债务**：callback-refs 256 容量、YAML `allowUsers` 迁移尾巴、可选 SDK 版本矩阵。没有现场证据不改容量或移除兼容路径。
 
 完整清单和完成标准见 `docs/TECHNICAL_DEBT.md`。
@@ -243,7 +243,7 @@ src/
 
 ```bash
 cd dsh-notifier
-npm test                    # 897 测试，约 2 分钟
+npm test                    # 902 测试，约 2 分钟
 npm run lint 2>/dev/null || node --check src/index.mjs   # 无 lint 配置的话用 node --check
 node scripts/route.mjs --help        # 路由 CLI
 node scripts/channel-login.mjs --help
