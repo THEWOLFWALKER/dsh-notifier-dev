@@ -14,6 +14,7 @@ Snapshot date: 2026-08-20.
 - Workspace policy: no `node_modules/`, `package-lock.json`, credentials, state files, or generated logs in Git.
 - Release status at this snapshot: npm registry has released through `0.8.4`; `0.8.5` is the locally validated candidate and has not been published. npm authentication and the disposable-profile acceptance gate remain required. The public mirror's `main` has unrelated history; no public mainline migration is performed by relay setup.
 - Relay tooling: the canonical neat-freak skill is tracked at `.agents/skills/neat-freak/`; Claude/Codex/OpenCode project skill paths contain pointers to it. The current local branch tracks the private remote; `origin` remains the public release mirror.
+- Relay prompt: `docs/RELAY_BOOTSTRAP_PROMPT.md` is the copy-paste first message for every new agent; it requires identity-bearing workstream, adversarial review, consolidated `HANDOFF.md`, private push, and a clean tree.
 
 ## Validation Evidence
 

@@ -20,8 +20,9 @@ This is the navigation page for humans and agents. It deliberately points to one
 5. `docs/OPERATIONS.md` for start-up, state, admin, and release smoke checks.
 6. `docs/TECHNICAL_DEBT.md` for the active no-new-features maintenance queue.
 7. `HANDOFF.md` for detailed historical rationale, review findings, and known traps.
-8. `CHANGELOG.md` for chronological changes; it is not a substitute for current rules.
-9. `docs/security/PLUGIN_ATTACK_REVIEW.md` and `docs/security/PLUGIN_SECURITY_FIX_PLAN.md` for the hostile-plugin threat model and staged remediation ownership.
+8. `docs/RELAY_BOOTSTRAP_PROMPT.md` for the copy-paste first message sent to a new relay agent.
+9. `CHANGELOG.md` for chronological changes; it is not a substitute for current rules.
+10. `docs/security/PLUGIN_ATTACK_REVIEW.md` and `docs/security/PLUGIN_SECURITY_FIX_PLAN.md` for the hostile-plugin threat model and staged remediation ownership.
 
 ## Audience Map
 
@@ -34,6 +35,7 @@ This is the navigation page for humans and agents. It deliberately points to one
 | `docs/VERSIONING.md` | Release owners | Canonical version fields, package comparison, release gate |
 | `docs/memory/` | Future agents | Short durable facts, decisions, and recurring risks |
 | `HANDOFF.md` | Detailed successor context | Historical rationale and full engineering snapshot |
+| `docs/RELAY_BOOTSTRAP_PROMPT.md` | New relay agents | Direct first message for repository takeover and handoff |
 | `.agents/workstreams/` | Parallel agents | Temporary scope reservations and handoff notes |
 
 The product, UX, planning, review-loop, and DSH GUI consistency contract is maintained in `docs/architecture.md` and summarized as agent-enforced rules in `AGENTS.md`.

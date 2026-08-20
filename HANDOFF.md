@@ -13,6 +13,7 @@
 - 主 agent：`root / Codex primary / Windows workspace`，负责仓库迁移、规则、知识库和最终整合。
 - Terra 审查 agent：`terra_relay_setup_review / gpt-5.6-terra high / Windows shared workspace`，完成私有开发库、公共发布库和接力流程审查；无代码提交，结论已写入 `.agents/workstreams/terra-relay-setup-review.md`。
 - 接力规则：每个 agent 必须更新自己的 workstream（身份、模型/工具、机器、文件、测试、review、风险、下一步、commit SHA），并在完成时刷新本节、提交、推送和确认工作树干净。
+- 新 agent 的第一条消息模板：`docs/RELAY_BOOTSTRAP_PROMPT.md`；发送者填写 agent 身份、工具/模型、机器环境和任务主题后，直接整段发送。
 - 项目本地 neat-freak canonical skill：`.agents/skills/neat-freak/SKILL.md`；`.claude/skills/`、`.codex/skills/`、`.opencode/skills/` 只有入口指针。
 - 下一步：继续在私有仓库接力；npm `0.8.5` 仍未发布，发布必须单独经过 release gate。
 
