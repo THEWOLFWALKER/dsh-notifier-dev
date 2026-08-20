@@ -2,7 +2,7 @@
 
 This is the active work queue for the next maintenance cycle. It deliberately excludes new user-facing capabilities. The goal is to make the existing 0.8.5 behavior more trustworthy, observable, testable, and easier to release.
 
-Status at `2026-08-19`: P0-1 documentation truth audit is in final validation after the A1/A2 security changes and package allowlist correction; P0-3 host-qualified baseline is recorded. P0-2 registry acceptance remains pending npm authentication/publication and profile access. All P1/P2 items remain open.
+Status at `2026-08-20` (Trae1): P0-1 documentation truth audit is in final validation after the A1/A2 security changes and package allowlist correction; P0-3 host-qualified baseline is recorded (897-test contract; Linux host passes all, Windows host lacks only the four BurntToast desktop tests). P0-2 registry acceptance remains pending npm authentication/publication and profile access. P1-1 Telegram card-path protocol guards landed on `codex/tech-debt-protocol-guards` (4096 UTF-16 code-unit text clamp + parse_mode/callback-shape regression tests); its remaining real-device confirmation and long-connection items stay open. P1-2/P1-3/P1-4 and P2 items remain open.
 
 ## Operating Rule
 
@@ -14,11 +14,11 @@ Every item follows the same loop: write a short plan, reproduce or measure the p
 
 - **P0-1 Documentation truth audit [done]**: reconcile `HANDOFF.md`, README test wording, package file counts, branch/commit references, and registry status with the current tree. Stale facts are an operational defect because they send the next maintainer down the wrong path.
 - **P0-2 0.8.5 artifact acceptance**: inspect `npm pack --dry-run --json`, then install the registry artifact in a disposable DSH profile and verify version, startup assembly, one outbound test, and one inbound command. Do not treat a `file:` install as acceptance.
-- **P0-3 Host-qualified test baseline [recorded]**: keep the 891-test contract explicit. On this Windows host, 887 pass and four desktop tests require BurntToast/PowerShell capability; validate the desktop adapter on a capable host rather than weakening its behavior.
+- **P0-3 Host-qualified test baseline [recorded]**: keep the 897-test contract explicit. On the Windows host, 893 pass and four desktop tests require BurntToast/PowerShell capability; the 2026-08-20 Linux relay host passed all 897. Validate the desktop adapter on a capable host rather than weakening its behavior.
 
 ### P1: High-Value Bug And Regression Coverage
 
-- **P1-1 Provider protocol blind spots**: add or execute real/protocol checks for Telegram callback payload length, legacy markdown escaping, provider payload limits, callback body limits, and long-lived connection behavior. Mock fetch alone is insufficient for these paths.
+- **P1-1 Provider protocol blind spots [partially done 2026-08-20]**: Telegram card-path text is now clamped to the 4096 UTF-16 code-unit limit with protocol-shape regression tests (approval/question/action cards, parse_mode guard) on `codex/tech-debt-protocol-guards`. Still open: one real-device confirmation of the clamp boundary, payload-limit evidence for other providers (feishu/qq/wxpusher/dingtalk JSON cards stay unclamped until evidence), legacy markdown escaping coverage beyond the parse_mode guard, callback body limits (A5 overlap — coordinate with the security plan), and long-lived connection behavior. Mock fetch alone remains insufficient for these paths.
 - **P1-2 Error visibility audit**: trace every defensive catch around inbound SDKs, WebSocket lifecycle, callback handling, and admin operations. Confirm that failures remain isolated without becoming silent; add diagnostics or regression tests where the current log contract is ambiguous.
 - **P1-3 Cross-process state stress**: exercise concurrent route/member/credential writes, lock recovery, mtime convergence, corrupt-file backup, and stale `file:`/copied-install behavior on a disposable profile.
 - **P1-4 Existing UI workflow audit**: test the current admin and sub-agent-console-facing flows for loading, empty, error, disabled, narrow viewport, and destructive-action confirmation states. Reuse the DSH visual system; this is maintenance of existing UX, not a redesign.

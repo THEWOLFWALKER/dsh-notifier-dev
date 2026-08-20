@@ -1,6 +1,7 @@
 # Recurring Risks
 
 - Mock tests do not cover provider payload limits, legacy markdown parsing, callback size limits, or SDK lifecycle behavior. Changes touching those areas need protocol or real-device validation.
+- Telegram card text is clamped to the 4096 UTF-16 code-unit limit since 2026-08-20 (`clampTelegramText` in `src/inbound/telegram-bot.mjs`, P1-1), with focused protocol-shape tests. The clamp's real-device behavior at the boundary (including proxy escaping differences) still needs one real-device confirmation; other card providers (feishu/qq/wxpusher/dingtalk JSON cards) have no evidence of overflow and stay unclamped until evidence appears.
 - Optional inbound dependencies are lazy-loaded; a missing package must produce a visible diagnostic and leave unrelated channels alive.
 - Windows desktop toast cannot run in the headless CI matrix; keep `desktop` validation local when touching that adapter.
 - `state.json` is shared by the running host and CLI tools. Direct manual edits or bypassing store setters can reintroduce lost updates and stale route reads.
