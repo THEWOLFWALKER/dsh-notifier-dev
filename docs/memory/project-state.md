@@ -4,7 +4,7 @@ Snapshot date: 2026-08-20.
 
 - Canonical development repository: private `https://github.com/THEWOLFWALKER/dsh-notifier-dev`.
 - Public release/source mirror: `https://github.com/THEWOLFWALKER/dsh-notifier`.
-- Latest relay commit: `b0e6fbe` (`docs: establish relay handoff and project skill`).
+- Latest relay commit: `e576088` (`docs: make relay prompt agent-ready`).
 - Active branch: `codex/plugin-security-hardening`; it contains the source baseline plus A1/A2 notifier security hardening commits `bb03f8a` and `ce68543`.
 - Canonical source commit: `3fc3f24` (`chore: import dsh-notifier v0.8.5 baseline`).
 - Package version: `0.8.5`.

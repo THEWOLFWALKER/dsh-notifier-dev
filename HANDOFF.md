@@ -9,7 +9,7 @@
 ## 当前接力交代（2026-08-20）
 
 - 当前 canonical 开发仓库：私有 `THEWOLFWALKER/dsh-notifier-dev`；公共 `THEWOLFWALKER/dsh-notifier` 只做发布/公开源码镜像。
-- 当前分支：`codex/plugin-security-hardening`；私有仓库 `main` 与该分支均已指向最新接力基线 `b0e6fbe`。
+- 当前分支：`codex/plugin-security-hardening`；最新接力文档提交为 `e576088`，私有仓库为唯一开发源。
 - 主 agent：`root / Codex primary / Windows workspace`，负责仓库迁移、规则、知识库和最终整合。
 - Terra 审查 agent：`terra_relay_setup_review / gpt-5.6-terra high / Windows shared workspace`，完成私有开发库、公共发布库和接力流程审查；无代码提交，结论已写入 `.agents/workstreams/terra-relay-setup-review.md`。
 - 接力规则：每个 agent 必须更新自己的 workstream（身份、模型/工具、机器、文件、测试、review、风险、下一步、commit SHA），并在完成时刷新本节、提交、推送和确认工作树干净。
