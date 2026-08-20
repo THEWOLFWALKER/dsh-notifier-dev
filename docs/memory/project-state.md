@@ -4,7 +4,7 @@ Snapshot date: 2026-08-20 (Trae1 relay).
 
 - Canonical development repository: private `https://github.com/THEWOLFWALKER/dsh-notifier-dev`.
 - Public release/source mirror: `https://github.com/THEWOLFWALKER/dsh-notifier`.
-- Branch topology (post-merge 2026-08-20): private `main` has merged the relay-prompt doc commits (`e576088`/`8ce3329`/`70a3a33`) and Trae1's P1-1 protocol guards (`478b87d`, test contract 897). `codex/plugin-security-hardening` and `codex/tech-debt-protocol-guards` are fully contained in `main` and retired as active lines.
+- Branch topology (post-merge 2026-08-20, second merge): private `main` has merged the relay-prompt doc commits (`e576088`/`8ce3329`/`70a3a33`), Trae1's P1-1 protocol guards (`478b87d`, test contract 897), and Trae1's P1-2 error visibility (`fa96463`, merge `1a720ab`, test contract 902). `codex/plugin-security-hardening`, `codex/tech-debt-protocol-guards`, and `codex/tech-debt-error-visibility` are fully contained in `main` and retired as active lines.
 - Active line: `main` (all relay work merged); new relay topics branch from `main` as `codex/<topic>`.
 - Security hardening commits `bb03f8a` and `ce68543` (A1/A2) are part of `main` history.
 - Canonical source commit: `3fc3f24` (`chore: import dsh-notifier v0.8.5 baseline`).
@@ -26,7 +26,7 @@ Snapshot date: 2026-08-20 (Trae1 relay).
 ## Current Maintenance Direction
 
 - No new user-facing features are planned for the current cycle. Work is limited to technical debt, bug elimination, protocol/host validation, and documentation truth.
-- The ordered queue is `docs/TECHNICAL_DEBT.md`; P1-1 (Telegram card guards, merged) and P1-2 (error visibility, landed on `codex/tech-debt-error-visibility`) are done locally. Open: P1-1 real-device confirmation and long-connection lifecycle, P1-3 state stress, P1-4 admin UI audit, P0-2 registry acceptance (needs npm auth), A3-A6 security plan.
+- The ordered queue is `docs/TECHNICAL_DEBT.md`; P1-1 (Telegram card guards) and P1-2 (error visibility) are done locally and merged into `main`. Open: P1-1 real-device confirmation and long-connection lifecycle, P1-3 state stress, P1-4 admin UI audit, P0-2 registry acceptance (needs npm auth), A3-A6 security plan.
 
 ## Next Gate
 

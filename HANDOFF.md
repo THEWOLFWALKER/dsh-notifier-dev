@@ -9,10 +9,10 @@
 ## 当前接力交代（2026-08-20）
 
 - 当前 canonical 开发仓库：私有 `THEWOLFWALKER/dsh-notifier-dev`；公共 `THEWOLFWALKER/dsh-notifier` 只做发布/公开源码镜像。
-- 分支拓扑（2026-08-20 合并后校准）：私有 `main` 已合并全部接力成果——hardening 的 3 个 relay-prompt 文档提交（`e576088`/`8ce3329`/`70a3a33`，含 `docs/RELAY_BOOTSTRAP_PROMPT.md`）与 Trae1 的 `codex/tech-debt-protocol-guards`（P1-1 Telegram 卡片协议护栏，测试契约 891→897，分支提交 `478b87d`）；私有仓库为唯一开发源。
+- 分支拓扑（2026-08-20 二次合并后校准）：私有 `main` 已合并全部接力成果——hardening 的 3 个 relay-prompt 文档提交（`e576088`/`8ce3329`/`70a3a33`，含 `docs/RELAY_BOOTSTRAP_PROMPT.md`）、Trae1 的 `codex/tech-debt-protocol-guards`（P1-1 Telegram 卡片协议护栏，测试契约 891→897，分支提交 `478b87d`）与 `codex/tech-debt-error-visibility`（P1-2 错误可见性，897→902，分支提交 `fa96463`，merge `1a720ab`）；私有仓库为唯一开发源，下一位 agent 从 `main` 拉新分支。
 - 主 agent：`root / Codex primary / Windows workspace`，负责仓库迁移、规则、知识库和最终整合。
 - Terra 审查 agent：`terra_relay_setup_review / gpt-5.6-terra high / Windows shared workspace`，完成私有开发库、公共发布库和接力流程审查；无代码提交，结论已写入 `.agents/workstreams/terra-relay-setup-review.md`。
-- Trae1：`Trae1 / Trae (SOLO) primary agent / Linux sandbox (Ubuntu 22.04, Node v22.16.0)`，两轮接力：①P1-1 Telegram 卡片文本超长护栏（对抗性 review 修正码点→UTF-16 码元计数缺陷）；②合并 hardening 文档提交与 P1-1 回 main（merge `c03ffb9`），完成 P1-2 错误可见性审计（356 catch 分类，三处静默故障补告警，三轮对抗性 review 修正取证 copy 体积护栏与空文件误判），记录见 `.agents/workstreams/tech-debt-protocol-guards.md` 与 `.agents/workstreams/tech-debt-error-visibility.md`。
+- Trae1：`Trae1 / Trae (SOLO) primary agent / Linux sandbox (Ubuntu 22.04, Node v22.16.0)`，两轮接力：①P1-1 Telegram 卡片文本超长护栏（对抗性 review 修正码点→UTF-16 码元计数缺陷）；②合并 hardening 文档提交与 P1-1 回 main（merge `c03ffb9`），完成 P1-2 错误可见性审计（356 catch 分类，三处静默故障补告警，四轮对抗性 review 修正取证 copy 体积护栏与空文件误判），并合并回 main（merge `1a720ab`）；记录见 `.agents/workstreams/tech-debt-protocol-guards.md` 与 `.agents/workstreams/tech-debt-error-visibility.md`。
 - 接力规则：每个 agent 必须更新自己的 workstream（身份、模型/工具、机器、文件、测试、review、风险、下一步、commit SHA），并在完成时刷新本节、提交、推送和确认工作树干净。
 - 新 agent 的第一条消息模板：`docs/RELAY_BOOTSTRAP_PROMPT.md`；发送者填写 agent 身份、工具/模型、机器环境和任务主题后，直接整段发送。
 - 项目本地 neat-freak canonical skill：`.agents/skills/neat-freak/SKILL.md`；`.claude/skills/`、`.codex/skills/`、`.opencode/skills/` 只有入口指针。
@@ -42,7 +42,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 项 | 状态 |
 |---|---|
 | 版本 | package.json = 0.8.5；CHANGELOG、admin UI、双语 README 和发布守卫已同步；registry 状态待独立核验 |
-| git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前分支 `codex/plugin-security-hardening` |
+| git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前分支 `main`（P1-1/P1-2 接力分支均已合并退役，新工作从 `main` 拉） |
 | 测试 | `npm test` 契约 = **902 tests**（2026-08-20 Linux 主机全过；Windows 主机 898 pass / 4 个桌面能力限制失败；非桌面通过） |
 | 发布 | **发包前核对四处计数一致——README.md 徽章/正文、README.zh-CN.md 徽章/正文、HANDOFF.md、admin UI 版本串（src/admin/ui.mjs）——任何一处与实际不符先修再发** |
 | 真机验证 | v0.6.1 修过 TG 真机事故（见 §5）；v0.7 真机测试通过（2026-08-17，v0.7.0-realtest 包）；内部真机测试文档 TG-TEST.md（Telegram 提问链路）与 WECHAT-TEST.md（微信扫码即配对）随 code/ 保留 |
