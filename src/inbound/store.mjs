@@ -14,7 +14,7 @@
 //    再以内存全量快照重建写路径——中止会让 dirty 无限积压、CLI↔宿主共享永久断裂；
 //  - 只有启动 load() 保留 fail-open（无记忆好过误清空）。
 
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 /** DSH 数据目录：$DSH_HOME（宿主约定）回退 ~/.dsh。 */
@@ -36,11 +36,49 @@ const syncSleep = (ms) => {
 export function createStore(filePath) {
   // 启动载入：损坏/缺省 fail-open 到空态（无记忆好过误清空——审批丢失只导致超时回退）
   const loadBoot = () => {
+    let raw
     try {
       if (!existsSync(filePath)) return {}
-      const parsed = JSON.parse(readFileSync(filePath, 'utf8'))
+      raw = readFileSync(filePath, 'utf8')
+    } catch {
+      return {} // 读失败（权限/占用等）：维持静默 fail-open，与损坏区分
+    }
+    try {
+      // 空文件视作空态：writeFileSync 落盘必有内容，空串只可能是外部 touch/首次写中断——
+      // 无记忆可丢失、无现场可取证，按损坏告警纯属噪音（对抗性 review 第 3 轮修正）
+      if (raw.trim() === '') return {}
+      const parsed = JSON.parse(raw)
       return (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {}
     } catch {
+      // P1-2 错误可见性（2026-08-20，Trae1）：启动时损坏原先静默清零——绑定表/待审批/
+      // 扫码凭证全部丢失且零日志，用户只见「绑定莫名失效」。对齐 v0.6.5 save 路径的
+      // 取证惯例：现场 copy 为 .corrupt.<ts>（copy 而非 rename——boot 时他进程可能
+      // 持有该文件，rename 会把它抽走；copy 无副作用）+ 告警。fail-open 语义不变。
+      // 对抗性 review（资源耗尽角度）：save 路径取证走 rename 是 O(1)，copy 会完整
+      // 复制——异常巨物（历史事故写出的 GB 级垃圾）会翻倍占盘。超过 8MB 只告警
+      // 不取证（正常 state.json 为 KB 级；巨物现场保留在原位，事后可手工处理）。
+      let sizeBytes = -1
+      try { sizeBytes = statSync(filePath).size } catch { /* stat 失败按未知处理 */ }
+      const FORENSIC_COPY_MAX_BYTES = 8 * 1024 * 1024
+      let preserved = false
+      let skippedForSize = false
+      if (sizeBytes >= 0 && sizeBytes > FORENSIC_COPY_MAX_BYTES) {
+        skippedForSize = true
+      } else {
+        const backup = `${filePath}.corrupt.${Date.now()}`
+        try {
+          copyFileSync(filePath, backup)
+          preserved = true
+        } catch { /* 取证 copy 失败不阻止 fail-open 起步 */ }
+      }
+      try {
+        const detail = preserved
+          ? `；现场已取证为 ${filePath}.corrupt.*，可手工排查恢复`
+          : skippedForSize
+            ? `；文件异常巨大（${sizeBytes} bytes），跳过取证复制以免占满磁盘，原始现场保留在原位`
+            : '；取证转存失败（备份目录不可写？）'
+        console.error('[dsh-notifier/store]', `state 文件启动时损坏，已按空状态起步（绑定/待审批等记忆丢失）: ${filePath}${detail}`)
+      } catch { /* 控制台不可用不致命 */ }
       return {}
     }
   }

@@ -5,6 +5,15 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 修复：P1-2 错误可见性——三处静默故障路径补告警（2026-08-20）
+
+- 审计范围：全量扫描 src/ 的 356 个 catch 块（141 有日志可见 / 139 有注释的刻意静默 / 7 前端 UI / 61 无注释静默逐个核实）。`_shared.mjs` 5 处为误报（catch 后分类重抛）；`ledger.mjs` 静默是文档化设计军规（账本失败绝不影响推送）；tokens/verifyToken 等 fail-closed 静默为安全正确行为——均不动。
+- `src/approval/router.mjs`：审批分流的路由引擎异常原先静默回落全局广播（同函数的空集回落自 v0.6.5 起就有 warn，异常路径却零日志）。现在异常同样 warn（含引擎报错原因）；fail-safe 广播投递语义不变。
+- `src/inbound/store.mjs`：启动时 state 文件损坏原先静默清零——绑定表/待审批/扫码凭证全部丢失且零日志。现在对齐 v0.6.5 save 路径的取证惯例：现场以 **copy**（非 rename——boot 时他进程可能持有该文件）转存 `.corrupt.<ts>` + 告警；空文件视作空态静默起步（无记忆可丢失，不算损坏）；读失败（权限/占用）与解析失败区分，前者维持静默；取证 copy 有 8MB 体积护栏（异常巨物只告警不复制，避免占满磁盘）。fail-open 语义不变。
+- `src/rules.mjs` + `src/event-listener.mjs`：`keywords.regex` 非法正则原先静默降级字面量子串匹配——语义从「正则命中」变「子串包含」，include 规则可能永不命中（通知静默停止）。降级行为保留（宁可漏拦不炸启动），但 `createKeywordFilter` 新增 `regexFallbacks` 纯数据上报（模块保持零 IO），event-listener 装配时非空即 warn 列出降级条目。
+- 测试：+5（审批异常分流告警、boot 取证不破坏并发写者、读失败不取证、空文件不告警、regexFallbacks 条件暴露）+3 处既有断言语义更新（boot 取证副本 1→2 等）；测试契约 897 → 902。
+- review 过程：三轮对抗性 review（攻击者/资源耗尽、跨切面回归、全量 diff 重读），修正 2 个自引入缺陷：取证 copy 无体积护栏（巨物翻倍占盘）、空文件误判损坏（噪音告警）。
+
 ### 修复：Telegram 卡片文本超长护栏（P1-1 协议盲区，2026-08-20）
 
 - 背景：TG `sendMessage` 的 text 硬限 4096 字符，超限必 400 `message is too long`。审批 `reason` / 提问 `context` / 动作卡 `content` 上游均无长度上限（public 层各 20000 码点），长文案会让按钮卡在所有会话全军覆没——卡片 catch 后只 warn 一行并返回 null，静默退化为纯编号回复。这是与 v0.6.2 `BUTTON_DATA_INVALID`、v0.6.3 legacy markdown 同类的 mock 盲区（mock fetch 不校验协议形状，单测测不出）。

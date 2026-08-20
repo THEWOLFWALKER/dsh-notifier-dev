@@ -23,14 +23,17 @@ function toStringList(value) {
  * 编译单个关键词条目为匹配函数。
  * - regex: true → 按 RegExp source 编译；非法正则降级为字面量匹配（宁可漏拦不炸启动）。
  * - 大小写：字面量统一 toLowerCase 比较；regex 用 'i' flag（caseSensitive 时都不做）。
+ * - 非法正则的降级由 regexFallbacks 上报（P1-2：语义从「正则」变「子串」是静默变化，
+ *   模块自身纯函数无日志，由调用方决定如何可见化）。
  */
-function compileEntry(entry, { regex, caseSensitive }) {
+function compileEntry(entry, { regex, caseSensitive }, fallbacks) {
   if (regex) {
     try {
       const flags = caseSensitive ? '' : 'i'
       const pattern = new RegExp(entry, flags)
       return (text) => pattern.test(text)
     } catch {
+      if (Array.isArray(fallbacks)) fallbacks.push(entry)
       return (text) => containsLiteral(text, entry, caseSensitive)
     }
   }
@@ -58,8 +61,10 @@ export function createKeywordFilter(rawKeywords) {
   const regex = raw.regex === true
   const caseSensitive = raw.caseSensitive === true
 
-  const includeMatchers = include.map((entry) => compileEntry(entry, { regex, caseSensitive }))
-  const excludeMatchers = exclude.map((entry) => compileEntry(entry, { regex, caseSensitive }))
+  // P1-2 错误可见性：regex 模式下编译失败的条目在此登记（纯数据上报，模块不落日志）
+  const regexFallbacks = []
+  const includeMatchers = include.map((entry) => compileEntry(entry, { regex, caseSensitive }, regexFallbacks))
+  const excludeMatchers = exclude.map((entry) => compileEntry(entry, { regex, caseSensitive }, regexFallbacks))
 
   const test = (text) => why(text) === undefined
   const why = (text) => {
@@ -75,7 +80,7 @@ export function createKeywordFilter(rawKeywords) {
     }
     return undefined
   }
-  return { test, why }
+  return { test, why, regexFallbacks }
 }
 
 /**
