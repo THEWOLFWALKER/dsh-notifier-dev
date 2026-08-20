@@ -5,9 +5,10 @@ This is the navigation page for humans and agents. It deliberately points to one
 ## Current Baseline
 
 - Canonical engineering baseline: Git commit `3fc3f24`; the active security-hardening branch is `codex/plugin-security-hardening`, package version `0.8.5`.
-- Canonical collaboration repository: `https://github.com/THEWOLFWALKER/dsh-notifier` (`origin`). The local and remote `main` histories are unrelated; integration must use a reviewed branch or explicit user-directed migration, never an implicit merge/force push.
+- Canonical collaboration repository: private `dsh-notifier-dev` (GitHub owner `THEWOLFWALKER`). The public repository `https://github.com/THEWOLFWALKER/dsh-notifier` is the release/source mirror, not the day-to-day relay workspace.
+- The public repository's `main` history is unrelated to the current hardening line; do not merge or force-push it implicitly. Public synchronization is a deliberate release operation.
 - Runtime: Node.js ESM, Node `>=22`, no build step, no production dependencies.
-- Test contract: `890` total tests. The `2026-08-19` Windows run passed `886`; the four failures are the platform-dependent desktop adapter tests when BurntToast is unavailable. Release documentation retains `890` as the full contract count.
+- Test contract: `891` total tests. The `2026-08-20` Windows run passed `887`; the four failures are the platform-dependent desktop adapter tests when BurntToast is unavailable. Release documentation retains `891` as the full contract count.
 - The attached npm archive is a release artifact. The engineering archive is the source authority.
 
 ## Read Order
@@ -50,5 +51,6 @@ The product, UX, planning, review-loop, and DSH GUI consistency contract is main
 
 - If docs and source disagree, inspect the source and tests, then update the stale document in the same change.
 - For collaboration status and decisions, `.agents/` and `docs/memory/` are authoritative; chat is only a request channel. Runtime behavior is still authoritative only in `src/` and `test/`.
+- For serial multi-tool development, commit/push at each machine handoff. Every agent writes a detailed identity-bearing workstream and refreshes the consolidated current handoff snapshot in `HANDOFF.md`; memory remains for durable repository facts and decisions.
 - If the engineering archive and npm archive disagree, keep the engineering tree as truth and record the artifact mismatch in `docs/memory/project-state.md`.
 - If two agents produce competing edits, preserve both diffs until the parent agent resolves them; never silently reset or checkout another agent's work.

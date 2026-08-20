@@ -14,7 +14,7 @@ Every item follows the same loop: write a short plan, reproduce or measure the p
 
 - **P0-1 Documentation truth audit [done]**: reconcile `HANDOFF.md`, README test wording, package file counts, branch/commit references, and registry status with the current tree. Stale facts are an operational defect because they send the next maintainer down the wrong path.
 - **P0-2 0.8.5 artifact acceptance**: inspect `npm pack --dry-run --json`, then install the registry artifact in a disposable DSH profile and verify version, startup assembly, one outbound test, and one inbound command. Do not treat a `file:` install as acceptance.
-- **P0-3 Host-qualified test baseline [recorded]**: keep the 890-test contract explicit. On this Windows host, 886 pass and four desktop tests require BurntToast/PowerShell capability; validate the desktop adapter on a capable host rather than weakening its behavior.
+- **P0-3 Host-qualified test baseline [recorded]**: keep the 891-test contract explicit. On this Windows host, 887 pass and four desktop tests require BurntToast/PowerShell capability; validate the desktop adapter on a capable host rather than weakening its behavior.
 
 ### P1: High-Value Bug And Regression Coverage
 

@@ -9,6 +9,8 @@
 - `docs/KNOWLEDGE_BASE.md` is the documentation map. `docs/memory/` contains concise durable facts, not a second implementation spec.
 - Tracked `.agents/` workstreams and `docs/memory/` are the only collaboration-state authority; chat messages are not durable project state. Runtime truth remains `src/` and `test/`.
 - The npm package archive is an output. It never overrides the engineering tree.
+- Every task completion or milestone handoff must read and execute the project-local `.agents/skills/neat-freak/SKILL.md` checklist before the final response. Its canonical copy lives under `.agents/skills/neat-freak/`; tool-specific skill directories contain pointers only.
+- Private-development/public-release split: the private canonical Git remote is the only serial relay workspace; `https://github.com/THEWOLFWALKER/dsh-notifier` is the public release/source mirror. Do not develop from the public mirror.
 
 ## Hard Boundaries
 
@@ -40,6 +42,7 @@
 - Keep the first baseline commit immutable. Group each follow-up by one logical concern.
 - Do not mix source, release metadata, and unrelated cleanup in one commit.
 - Before handoff, the working tree must be clean, the branch must identify its purpose, and the final commit list must be reported.
+- Relay handoff cadence: every agent completion must commit and push before leaving a machine, update its detailed `.agents/workstreams/<topic>.md` identity/status/tests/review/commit record, and refresh the current handoff snapshot in `HANDOFF.md`. Do not append chat transcripts; consolidate the snapshot so it stays readable.
 - Never commit `node_modules/`, `package-lock.json`, credentials, state files, `.log` files, or generated local artifacts.
 
 ## Multi-Agent Protocol

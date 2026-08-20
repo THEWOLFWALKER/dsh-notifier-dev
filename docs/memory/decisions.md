@@ -16,6 +16,10 @@ Agents share one working tree but reserve scope with one file per workstream und
 
 Tracked `.agents/` workstreams and `docs/memory/` are the authority for collaboration status, ownership, and durable decisions. Chat is a request channel, never a durable source of project state. Runtime truth remains `src/` and `test/`; package truth remains `package.json`.
 
+## Repository Roles And Relay Cadence
+
+The private `dsh-notifier-dev` repository is the canonical serial development workspace for all tools and machines. The public `THEWOLFWALKER/dsh-notifier` repository is a release/source mirror. Every agent completion records identity, scope, files, tests, review, risks, next step, and commit in its workstream, then refreshes the consolidated current handoff snapshot in `HANDOFF.md`; `docs/memory/` carries only durable facts and decisions.
+
 ## Security Defaults
 
 Remote approval and remote questions fail closed. Timeout, malformed input, invalid token, wrong source chat, or any exception returns control to the desktop and never invents an answer.

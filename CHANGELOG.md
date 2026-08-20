@@ -15,7 +15,7 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 - 消费方读取 `record.message` 的 sent 事件逻辑需迁移到 `titleLength`、`contentLength`、`titleBytes`、`contentBytes`、`hasContent` 与投递状态字段。
 
 > 交接打包批：npm 发布包文档完整性修复 + guide.md 补齐 v0.8 远程提问章节 + 仓库文件地图。
-> 本版同时包含插件事件脱敏与定向发送审计统一；当前 Windows 主机 886/890 通过，4 个桌面测试需 BurntToast/PowerShell 能力。
+> 本版同时包含插件事件脱敏与定向发送审计统一；当前 Windows 主机 887/891 通过，4 个桌面测试需 BurntToast/PowerShell 能力。
 
 ### 修复：npm 发布包文档完整性（README 引用死链）
 
@@ -34,7 +34,7 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ### 测试
 
-- `npm test`：890 项契约；当前 Windows 主机 886 通过，4 个桌面能力测试因环境缺失失败。
+- `npm test`：891 项契约；当前 Windows 主机 887 通过，4 个桌面能力测试因环境缺失失败。
 
 ## [0.8.4] - 2026-08-18
 

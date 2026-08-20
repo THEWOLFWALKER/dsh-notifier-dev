@@ -2,9 +2,19 @@
 
 > 写给下一个 agent。本文档是完整的工作上下文快照：设计理念、军规约定、架构地图、
 > 版本脉络、审查记录、已知坑、待办清单。读完这一份即可无缝接手。
-> 交接时刻：2026-08-19，v0.8.5。当前维护周期停止新增功能，优先清理技术债、排除 bug、补齐真实协议验证。测试契约为 890 个；当前 Windows 主机 886 通过、4 个桌面通知用例因 BurntToast/PowerShell 能力缺失失败，非桌面用例通过。registry 发布状态需独立核验。
+> 交接时刻：2026-08-20，v0.8.5。当前维护周期停止新增功能，优先清理技术债、排除 bug、补齐真实协议验证。测试契约为 891 个；当前 Windows 主机 887 通过、4 个桌面通知用例因 BurntToast/PowerShell 能力缺失失败，非桌面用例通过。registry 发布状态需独立核验。
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
 > 上一稳定发布位 v0.6.5 = `b2d23c0`（npm 与 GitHub 发布位 `0221d1e` 已对齐）。
+
+## 当前接力交代（2026-08-20）
+
+- 当前 canonical 开发仓库：私有 `THEWOLFWALKER/dsh-notifier-dev`；公共 `THEWOLFWALKER/dsh-notifier` 只做发布/公开源码镜像。
+- 当前分支：`codex/plugin-security-hardening`；私有仓库 `main` 与该分支均已指向已审查基线 `1fc396f`。
+- 主 agent：`root / Codex primary / Windows workspace`，负责仓库迁移、规则、知识库和最终整合。
+- Terra 审查 agent：`terra_relay_setup_review / gpt-5.6-terra high / Windows shared workspace`，完成私有开发库、公共发布库和接力流程审查；无代码提交，结论已写入 `.agents/workstreams/terra-relay-setup-review.md`。
+- 接力规则：每个 agent 必须更新自己的 workstream（身份、模型/工具、机器、文件、测试、review、风险、下一步、commit SHA），并在完成时刷新本节、提交、推送和确认工作树干净。
+- 项目本地 neat-freak canonical skill：`.agents/skills/neat-freak/SKILL.md`；`.claude/skills/`、`.codex/skills/`、`.opencode/skills/` 只有入口指针。
+- 下一步：继续在私有仓库接力；npm `0.8.5` 仍未发布，发布必须单独经过 release gate。
 
 ---
 
@@ -20,7 +30,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 零运行时依赖（只用 fetch + node:crypto + 原生 WebSocket）。
 
 - 语言/运行时：Node.js ESM（.mjs），无 TypeScript，无构建步骤
-- 代码量：src+test+scripts ≈ 35,500 行；46 个测试文件，890 测试
+- 代码量：src+test+scripts ≈ 35,500 行；46 个测试文件，891 测试
 - 文档：README.md / README.zh-CN.md / ADAPTER.md（渠道接入规范）/ PLUGINS.md（插件互操作）/ docs/v0.5-design.md / docs/v0.6-design.md / CHANGELOG.md（最详细的历史）
 
 ---
@@ -30,8 +40,8 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 项 | 状态 |
 |---|---|
 | 版本 | package.json = 0.8.5；CHANGELOG、admin UI、双语 README 和发布守卫已同步；registry 状态待独立核验 |
-| git | 当前分支 `codex/plugin-security-hardening`；基线 `3fc3f24`，知识库 `50db0c4`，产品原则 `9aced27` |
-| 测试 | `npm test` 契约 = **890 tests**（当前 Windows 主机 **886 pass / 4 个桌面能力限制失败**；非桌面通过） |
+| git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前分支 `codex/plugin-security-hardening` |
+| 测试 | `npm test` 契约 = **891 tests**（当前 Windows 主机 **887 pass / 4 个桌面能力限制失败**；非桌面通过） |
 | 发布 | **发包前核对四处计数一致——README.md 徽章/正文、README.zh-CN.md 徽章/正文、HANDOFF.md、admin UI 版本串（src/admin/ui.mjs）——任何一处与实际不符先修再发** |
 | 真机验证 | v0.6.1 修过 TG 真机事故（见 §5）；v0.7 真机测试通过（2026-08-17，v0.7.0-realtest 包）；内部真机测试文档 TG-TEST.md（Telegram 提问链路）与 WECHAT-TEST.md（微信扫码即配对）随 code/ 保留 |
 
@@ -50,7 +60,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 用户文档 | `docs/guide.md` · `docs/upgrade-guide.md` · `docs/upgrade-guide.en.md` | README 双语均链接 guide；升级/回滚是装包用户高频需求 |
 | 互操作契约 | `PLUGINS.md` | 其他插件作者消费 notifier 服务时的契约（README 链接） |
 | CLI | `scripts/`（channel-login · test-channel · route · gen-channel-matrix 等） | guide.md 教用户直接 `node scripts/...` |
-| 测试 | `test/` | 行为契约随包分发是项目惯例（890 用例，装包即可 `npm test`） |
+| 测试 | `test/` | 行为契约随包分发是项目惯例（891 用例，装包即可 `npm test`） |
 
 **仅工程仓库（不进 npm 包）**：
 
@@ -231,7 +241,7 @@ src/
 
 ```bash
 cd dsh-notifier
-npm test                    # 890 测试，约 2 分钟
+npm test                    # 891 测试，约 2 分钟
 npm run lint 2>/dev/null || node --check src/index.mjs   # 无 lint 配置的话用 node --check
 node scripts/route.mjs --help        # 路由 CLI
 node scripts/channel-login.mjs --help
