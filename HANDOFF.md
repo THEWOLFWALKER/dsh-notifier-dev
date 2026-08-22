@@ -4,6 +4,7 @@
 > 版本脉络、审查记录、已知坑、待办清单。读完这一份即可无缝接手。
 > 交接时刻：2026-08-23，v0.8.5。当前维护周期停止新增功能，优先清理技术债、排除 bug、补齐真实协议验证。测试契约为 906 个；2026-08-23 Linux 主机 906 全过；此前 Windows 主机 898 通过、4 个桌面通知用例因 BurntToast/PowerShell 能力缺失失败，非桌面用例通过。registry 发布状态需独立核验。
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
+> 2026-08-23 接力合入公共镜像 v0.8.5 发布内容（issue #11 ask_user 编号回复修复 + PR #9 飞书扫码 SDK 适配），见「当前接力交代」。
 > 上一稳定发布位 v0.6.5 = `b2d23c0`（npm 与 GitHub 发布位 `0221d1e` 已对齐）。
 
 ## 当前接力交代（2026-08-23）
@@ -41,7 +42,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 项 | 状态 |
 |---|---|
 | 版本 | package.json = 0.8.5；CHANGELOG、admin UI、双语 README 和发布守卫已同步；registry 状态待独立核验 |
-| git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前分支 `main`（P1-1/P1-2 接力分支均已合并退役，新工作从 `main` 拉） |
+| git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前分支 `main`（P1-1/P1-2/P1-3 接力分支均已合并退役，新工作从 `main` 拉） |
 | 测试 | `npm test` 契约 = **906 tests**（2026-08-23 Linux 主机全过；Windows 主机 898 pass / 4 个桌面能力限制失败——基于 902 契约时代，非桌面通过） |
 | 发布 | **发包前核对四处计数一致——README.md 徽章/正文、README.zh-CN.md 徽章/正文、HANDOFF.md、admin UI 版本串（src/admin/ui.mjs）——任何一处与实际不符先修再发** |
 | 真机验证 | v0.6.1 修过 TG 真机事故（见 §5）；v0.7 真机测试通过（2026-08-17，v0.7.0-realtest 包）；内部真机测试文档 TG-TEST.md（Telegram 提问链路）与 WECHAT-TEST.md（微信扫码即配对）随 code/ 保留 |

@@ -101,6 +101,12 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 - 新增用例覆盖：动作卡来源校验三态（命中/越界/历史卡兼容放行）、TG/飞书点击会话透传、提问 allowChats 与 onChannel 收紧、WxPusher uid 形态与公网 fail-closed、孤儿清扫联动（`test/actions.test.mjs`、`test/inbound.telegram.test.mjs`、`test/inbound.feishu.test.mjs`、`test/inbound.wxpusher.test.mjs`、`test/questions.test.mjs`、`test/wiring.route.test.mjs`、`test/approval.test.mjs`、`test/inbound.test.mjs`）。
 - `npm test`：历史版本记录为 885/885 通过（862 基线 + 23 新增）。
 
+### 修复：ask_user 编号回复在出站/入站异名与纯入站通道失效（issue #11，2026-08-23 自公共镜像接力合入）
+
+- `src/questions/router.mjs`：`pushQuestion` 计算 `hintChannels` 时，把「该问题目标用户已绑定、卡片未送达」的交互入站通道一并计入（如 `qq`/`wechat`），编号话术经入站 `sendText` 送达纯入站通道（wechat iLink 无出站文本可走）；已由出站文本送达的通道（同名 type 或别名对 `qq-bot↔qq`）只补通道名不重发，避免同号双发。修复 QQ 官方机器人（`qq-bot` 出站 ↔ `qq` 入站异名）与微信 iLink（inbound-only）场景下 `ask_user` 编号回复完全失效、并落入 conversation 路由污染对话的问题。
+- 安全约束不变：只加目标用户已绑定（`notifyTargets()` 三级解析非空）的通道，话术确实送达才入 `hintChannels`，维持 SEC-2 fail-closed——没收到话术的渠道/用户裸编号仍拒绝并 warn。
+- 测试：`test/questions.test.mjs` 新增 3 用例（QQ 异名命中且不双发、iLink 纯入站 sendText 送达后命中、未绑定目标通道不补入 hintChannels）。镜像侧 885→888；本仓库契约以 Unreleased 计数为准。
+
 ## [0.8.3] - 2026-08-18
 
 ### 修复：提问编号回复竞态收紧（SEC-2，questions 侧 any→hint）
