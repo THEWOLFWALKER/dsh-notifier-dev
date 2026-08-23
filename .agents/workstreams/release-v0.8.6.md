@@ -2,7 +2,7 @@
 
 - Agent identity: `ox-alpha / span/ox-alpha / Linux sandbox x64 (root, Node v22.23.2, kernel 6.8.0-136-generic)`
 - Branch: `codex/release-v0.8.6`
-- Status: `active` (release candidate prepared, awaiting user confirmation before merge + npm publish)
+- Status: `done` (merged to `main` and published to npm; public mirror cleaned)
 - Scope: Resolve public/private version split, audit mirror issues/PRs, run neat-freak, and prepare a release-ready `v0.8.6` that supersedes the public mirror's npm `v0.8.5`.
 
 ## Audit findings
@@ -29,11 +29,10 @@
 - `git diff --check`: OK
 - `npm pack --dry-run --json`: 144 files, 528314 bytes; all required docs in package.
 
-## Next step
+## Completed
 
-Await explicit user confirmation, then:
-1. no-ff merge `codex/release-v0.8.6` → `main`
-2. authenticate npm and run disposable-profile acceptance (optional but recommended)
-3. `npm publish` to override/supersede public mirror `v0.8.5`
-4. Tag `v0.8.6` on the merge commit
-5. Retire this workstream to `done`
+1. `codex/release-v0.8.6` no-ff merged to `main` (`bf03a1c`) and tagged `v0.8.6`.
+2. npm publish succeeded: `+ dsh-notifier@0.8.6`; `dist-tags.latest = 0.8.6`.
+3. Public mirror `main` cleaned: removed tracked `node_modules/` (947 files) and `package-lock.json` (`db42908`); tracked files 1104 → 156.
+4. Release branch `codex/release-v0.8.6` retired.
+5. `~/.npmrc` token and local temp clone cleaned up post-publish.
