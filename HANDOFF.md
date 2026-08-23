@@ -2,18 +2,21 @@
 
 > 写给下一个 agent。本文档是完整的工作上下文快照：设计理念、军规约定、架构地图、
 > 版本脉络、审查记录、已知坑、待办清单。读完这一份即可无缝接手。
-> 交接时刻：2026-08-23，v0.8.5。当前维护周期停止新增功能，优先清理技术债、排除 bug、补齐真实协议验证。测试契约为 906 个；2026-08-23 Linux 主机 906 全过；此前 Windows 主机 898 通过、4 个桌面通知用例因 BurntToast/PowerShell 能力缺失失败，非桌面用例通过。registry 发布状态需独立核验。
+> 交接时刻：2026-08-23，v0.8.5。当前维护周期停止新增功能，优先清理技术债、排除 bug、补齐真实协议验证。测试契约为 909 个；2026-08-23 Linux 主机 909 全过；此前 Windows 主机 898 通过、4 个桌面通知用例因 BurntToast/PowerShell 能力缺失失败，非桌面用例通过。registry 发布状态需独立核验。
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
+> 2026-08-23 接力合入公共镜像 v0.8.5 发布内容（issue #11 ask_user 编号回复修复 + PR #9 飞书扫码 SDK 适配），见「当前接力交代」。
 > 上一稳定发布位 v0.6.5 = `b2d23c0`（npm 与 GitHub 发布位 `0221d1e` 已对齐）。
 
-## 当前接力交代（2026-08-23）
+## 当前接力交代（2026-08-23，第二轮：镜像接力合入）
 
-- 当前 canonical 开发仓库：私有 `THEWOLFWALKER/dsh-notifier-dev`；公共 `THEWOLFWALKER/dsh-notifier` 只做发布/公开源码镜像。
-- 分支拓扑（2026-08-23 合并后校准）：私有 `main` = `52c467a`（merge `codex/p1-3-state-stress`），已含全部接力成果——hardening 文档提交、P1-1 协议护栏（891→897）、P1-2 错误可见性（897→902）、本轮 P1-3 状态压力（902→906，分支 `8f442f1` 已合并退役）；下一位 agent 从 `main` 拉新分支。
-- 本轮 agent：`ox-alpha / span/ox-alpha / Linux sandbox (root, Node v22.23.2)`，完成 **P1-3 跨进程状态压力审查**：一次性多进程 harness 实测 9 场景（并发不相交键零丢失、读收敛 ~3ms、损坏自愈双取证、SIGKILL 风暴文件不撕裂）；确认并修复「崩溃残留新鲜锁 10s 内不被回收 → 每次写白等 ~480ms 降级裸写」缺陷（属主 pid 死亡探测 + 500ms 宽限，保守方向），+4 回归测试，契约 902→906。详见 `.agents/workstreams/p1-3-state-stress.md` 与 CHANGELOG Unreleased。
-- 历史接力：Terra 审查 agent（relay 流程审查，无代码提交）；Trae1 两轮（P1-1 Telegram 卡片协议护栏 891→897；P1-2 错误可见性审计 897→902）——记录见对应 workstream 文件。
-- 接力规则：每个 agent 必须更新自己的 workstream（身份、模型/工具、机器、文件、测试、review、风险、下一步、commit SHA），并在完成时刷新本节、提交、推送和确认工作树干净。
-- 新 agent 的第一条消息模板：`docs/RELAY_BOOTSTRAP_PROMPT.md`。
+- 当前 canonical 开发仓库：私有 `THEWOLFWALKER/dsh-notifier-dev`；公共 `THEWOLFWALKER/dsh-notifier` 只做发布/公开源码镜像。分支拓扑：私有 `main` 已含 P1-1/P1-2/P1-3（merge `52c467a`）与本轮镜像接力；下一位 agent 从 `main` 拉新分支。
+
+- 本轮 agent：`ox-alpha / span/ox-alpha / Linux sandbox (root, Node v22.23.2)`，两轮接力：
+  ①P1-3 跨进程状态压力审查（merge `52c467a`，契约 902→906）；
+  ②公共镜像 v0.8.5 发布内容接力合入——issue #11 ask_user 编号回复修复（镜像 `74e5d54` cherry-pick 为 `4a1b8f7`）与 PR #9 飞书扫码 SDK 适配（镜像 `cbaab26` cherry-pick 为 `5e42768`），契约 906→909。分支 `codex/relay-mirror-v085-fixes`。
+- **镜像接力背景**：公共镜像 `THEWOLFWALKER/dsh-notifier` 的 main（`20bfff9`，2026-08-23）已发布 npm v0.8.5 并含 issue #11 修复（作者 @Lana0741 报告、维护者修复）与 PR #9（贡献者 @chenxiccc，已 merge）。私有 main 与公共镜像是两条无关历史，不能 git merge——按内容 cherry-pick 接力。私有侧 P1-1/P1-2/P1-3 三轮技术债成果**未在镜像中**，属私有线领先内容。
+- 镜像遗留卫生问题（记录不改）：镜像 main 提交了 `node_modules/`（947 文件）与 `package-lock.json`，违反项目军规；下次从镜像同步时严禁带入（`.gitignore` 已覆盖，cherry-pick 只取源码文件即可）。
+- 镜像开放 issue 与私有 main 对照（本轮核验）：#1/#6 飞书 WSClient logger:null → 私有已修（v0.7.3 noop sdkWsLogger）；#2 `${ENV:NAME}` 入站解析 → 私有已修（v0.6.1 resolveEnvRefs）；#4 飞书三问 → 私有 v0.7.3 闭环；#8 加签 19021 → 私有已修（feishu.mjs #8 注释）；#11 → 本轮合入。剩余开放项 #3/#5/#7 属功能请求（当前周期不新增功能，挂起）；#4 若真机复现残留再开新 workstream。
 - 项目本地 neat-freak canonical skill：`.agents/skills/neat-freak/SKILL.md`；`.claude/skills/`、`.codex/skills/`、`.opencode/skills/` 只有入口指针。
 - 下一步：真机闭环清单见 `docs/memory/risks.md`（TG 护栏边界、长连接重连可见性、其他渠道 payload 证据、BurntToast 主机、npm 验收——其中 BurntToast 主机可顺带复验本轮 4 项锁测试）；然后 P1-4 admin UI 审计、安全计划 A3-A6、P2 结构性债务。npm `0.8.5` 仍未发布，发布必须单独经过 release gate。
 
@@ -31,7 +34,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 零运行时依赖（只用 fetch + node:crypto + 原生 WebSocket）。
 
 - 语言/运行时：Node.js ESM（.mjs），无 TypeScript，无构建步骤
-- 代码量：src+test+scripts ≈ 35,500 行；46 个测试文件，906 测试
+- 代码量：src+test+scripts ≈ 35,500 行；46 个测试文件，909 测试
 - 文档：README.md / README.zh-CN.md / ADAPTER.md（渠道接入规范）/ PLUGINS.md（插件互操作）/ docs/v0.5-design.md / docs/v0.6-design.md / CHANGELOG.md（最详细的历史）
 
 ---
@@ -41,8 +44,8 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 项 | 状态 |
 |---|---|
 | 版本 | package.json = 0.8.5；CHANGELOG、admin UI、双语 README 和发布守卫已同步；registry 状态待独立核验 |
-| git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前分支 `main`（P1-1/P1-2 接力分支均已合并退役，新工作从 `main` 拉） |
-| 测试 | `npm test` 契约 = **906 tests**（2026-08-23 Linux 主机全过；Windows 主机 898 pass / 4 个桌面能力限制失败——基于 902 契约时代，非桌面通过） |
+| git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前分支 `main`（P1-1/P1-2/P1-3 接力分支均已合并退役，新工作从 `main` 拉） |
+| 测试 | `npm test` 契约 = **909 tests**（2026-08-23 Linux 主机全过；Windows 主机 898 pass / 4 个桌面能力限制失败——基于 902 契约时代，非桌面通过） |
 | 发布 | **发包前核对四处计数一致——README.md 徽章/正文、README.zh-CN.md 徽章/正文、HANDOFF.md、admin UI 版本串（src/admin/ui.mjs）——任何一处与实际不符先修再发** |
 | 真机验证 | v0.6.1 修过 TG 真机事故（见 §5）；v0.7 真机测试通过（2026-08-17，v0.7.0-realtest 包）；内部真机测试文档 TG-TEST.md（Telegram 提问链路）与 WECHAT-TEST.md（微信扫码即配对）随 code/ 保留 |
 
