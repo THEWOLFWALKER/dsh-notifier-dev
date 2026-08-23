@@ -3,6 +3,7 @@
 // 空配置绝不弄崩启动：任何渠道解析问题只 warn + 跳过（学 dsh-email）。
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { ADAPTERS, resolveConfig, resolveEnvRefs, CHANNEL_TYPES } from './config.mjs'
 import { createNotifier } from './notify.mjs'
 import { createEventListener } from './event-listener.mjs'
@@ -157,6 +158,9 @@ export function apply(ctx, config = {}) {
     ? inboundRaw.stateDir.trim()
     : defaultStateDir()
   const store = createStore(`${stateDir}/state.json`)
+  // v0.8.7 引导码文件交付（LEAK-2）：码面写本机 0600 文件，stderr 只印路径——
+  // 日志聚合（journald/Loki/ELK）不再承载 owner 级凭证。
+  const BOOTSTRAP_CODE_FILE = `${stateDir}/bootstrap-paircode.txt`
 
   // v0.3.3 出站凭证 state 回退（设计稿 §5）：admin.enabled 开启时，store 里每个非双域出站
   // 类型的 `<type>:account`（UI putChannel / 手写产物）与 YAML 行字段级合并（store 字段
@@ -441,11 +445,35 @@ export function apply(ctx, config = {}) {
   // admin 未启用则排队丢弃（审计文件属管理台，不存在静默丢审记的口径问题）。
   let pairingAuditSink = null
   const pairingAuditBacklog = []
+
+  // v0.8.7 引导码文件写入辅助（方案A）：码面写本机 0600 文件，不流经 warn/stderr。
+  const writeBootstrapCodeFile = (code) => {
+    try {
+      mkdirSync(stateDir, { recursive: true })
+      // 写前先删：已存在的 symlink 会被 writeFileSync 跟随写穿到目标（本地提权面）
+      try { unlinkSync(BOOTSTRAP_CODE_FILE) } catch { /* 不存在即已达目的 */ }
+      writeFileSync(BOOTSTRAP_CODE_FILE, `${code}\n`, { encoding: 'utf8', mode: 0o600 })
+      // mode 只在新建时生效，既有文件（如 umask 异常）补一刀
+      try { chmodSync(BOOTSTRAP_CODE_FILE, 0o600) } catch { /* 权限收紧失败不致命，下方仍有码文件 */ }
+      return true
+    } catch (error) {
+      // 失败只报路径与原因，绝不回退把码面印进日志（LEAK-2 的修复点就在这）
+      warn(`引导码文件写入失败: ${error instanceof Error ? error.message : String(error)}（引导码无法文件交付，请使用管理台铸码）`)
+      return false
+    }
+  }
+  const clearBootstrapCodeFile = () => {
+    try { unlinkSync(BOOTSTRAP_CODE_FILE) } catch { /* 不存在即已达目的（幂等） */ }
+  }
   const identity = createIdentity({ store, logger })
   const pairing = createPairing({
     store,
     logger,
     onAudit: (event, detail) => {
+      // v0.8.7 (A2)：bootstrap 码进终态即删码文件（核销/过期/撤销含 re-mint 替换旧码）。
+      if (detail?.origin === 'bootstrap' && (event === 'redeem' || event === 'expire' || event === 'revoke')) {
+        clearBootstrapCodeFile()
+      }
       try {
         if (pairingAuditSink !== null) pairingAuditSink(`pairing:${event}`, detail)
         else if (pairingAuditBacklog.length < 200) pairingAuditBacklog.push([`pairing:${event}`, detail])
@@ -470,6 +498,8 @@ export function apply(ctx, config = {}) {
     warn(`身份绑定迁移失败（继续以既有绑定表运行）: ${error instanceof Error ? error.message : String(error)}`)
   }
   const guidedBoot = identity.isEmpty() && allowUsers.length === 0
+  // v0.8.7 (A2)：非引导态清理陈旧引导码文件（重启后引导态已结束，旧码面不该残留）。
+  if (!guidedBoot) clearBootstrapCodeFile()
 
   // v0.7 启动门（修审查 #1）：通道凭证就绪即启动——白名单不再拦启动；空名单进入引导态
   // （业务面照旧全拒，仅注册面开放，红线不降级）。v0.6 兼容分支：无通道凭证但
@@ -479,20 +509,20 @@ export function apply(ctx, config = {}) {
   const inboundReady = anyChannelReady
     || (approvalWanted && (allowUsers.length > 0 || identity.size() > 0))
   if (inboundReady) {
-    // 引导态铸造 bootstrap 码：仅 stderr（warn 双写）与管理台两个出口，不出网不落明文。
-    // 绑定表非空后不再铸造（常规配对码走管理台/owner）。
-    let bootstrapCode = null
+    // v0.8.7 引导码文件交付（LEAK-2）：码面写本机 0600 文件，stderr 只印路径+ID——
+    // 日志聚合不再承载 owner 级凭证。绑定表非空后不再铸造。
     const showBootstrap = (minted) => {
       if (minted?.ok !== true) return
       const minutes = Math.max(1, Math.round((minted.expiresAt - Date.now()) / 60000))
-      // 码面只在此处出现一次（R5 审查 R5-2-P3-5：指令行重复印码面，审计口径双计）
-      warn(`【引导配对码】${minted.code}（${minutes} 分钟内有效，首位 /pair 成功者成为 owner）\n` +
-        '在任意已启用通道私聊机器人发送：/pair <上方配对码>')
+      if (writeBootstrapCodeFile(minted.code)) {
+        warn(`【引导配对码】已写入 ${BOOTSTRAP_CODE_FILE}（${minutes} 分钟内有效，仅本机用户可读）\n  在任意已启用通道私聊机器人发送：/pair <配对码>\n  查看配对码：cat ${BOOTSTRAP_CODE_FILE}`)
+      } else {
+        warn(`【引导配对码】文件写入失败，请使用管理台铸码（${minutes} 分钟内有效）`)
+      }
     }
     if (guidedBoot) {
       try {
-        bootstrapCode = pairing.mint({ origin: 'bootstrap', mintedBy: 'system:boot' })
-        showBootstrap(bootstrapCode)
+        showBootstrap(pairing.mint({ origin: 'bootstrap', mintedBy: 'system:boot' }))
       } catch (error) {
         warn(`bootstrap 引导码铸造失败（注册面仍可用，管理台可补铸）: ${error instanceof Error ? error.message : String(error)}`)
       }

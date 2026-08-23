@@ -5,6 +5,20 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 安全修复：引导码文件交付 + 过期码泵码堵死 + 文案不再指引 stderr（批次 B-1，2026-08-23）
+
+依据 `.agents/workstreams/crack-fix-plan/PLAN-B1.md`（solution2.md 推荐方案 A + B2 + B4）。三条缺陷同属一条泄露链：引导码明文进持久化日志 + 过期码可无限重铸 + 文案把用户往日志里引。
+
+- **LEAK-2 引导码明文进日志（高危）**：`showBootstrap`（`src/index.mjs`）原先经 `warn()` 双写（宿主 logger + stderr）把 owner 级配对码码面打进持久化日志（journald/Loki/ELK），任何能读日志的账号即可拿到首绑凭证。现在码面写 `<stateDir>/bootstrap-paircode.txt`（`mode 0600`，写前先 `unlinkSync` 防 symlink 写穿），stderr/logger **只印路径与有效时长，绝无码面**；写失败不回退印码面，只 warn 指引管理台铸码（宪法 #3 不静默、不泄漏二者兼顾）。
+- **码面不留残渣**：新增 `clearBootstrapCodeFile()`，挂 `pairing.onAudit` —— bootstrap 码进 `redeem`/`expire`/`revoke` 任一终态即删码文件（含 re-mint 先 revoke 后 mint 的替换时序）；非引导态启动（`allowUsers` 已配或绑定表非空）顺手清掉上一轮残留文件，码面不过夜。同时移除 `bootstrapCode` 变量，码面不再驻留内存。
+- **BYPASS-BOOT 过期码泵码（行为变化）**：`src/inbound/pairing.mjs` 的 `redeem` 对 expired 码原先直接 return、**不记失败计数**，过期码可无限次触发 `ensureBootstrap` 重铸（24h 内约 144 枚，旧实现每枚都进 stderr）。现在过期码提交同样计入 `recordFailure`，滑窗 5 次后锁出 10 分钟并返回 `locked-out`；`commands.mjs` 的 expired 重铸分支因 reason 已变而不再命中，锁出态不重铸。**行为变化**：连续第 5 次提交过期码的回执由「配对码已过期」变为「尝试次数过多，已临时锁定 10 分钟」；单次过期提交的语义不变（宪法 #6 用户失误不锁死）。
+- **重铸节流 + 回调不静默**：`ensureBootstrap`（`src/inbound/commands.mjs`）新增同进程 10 分钟节流窗与 `minted.ok` 校验，不再对失败的 mint 假断言「已重铸」；`onBootstrapRemint` 回调异常原为空 catch 吞掉，现在 warn 出声（码已铸但文件可能未写入，指引查管理台）。节流/失败时 `/pair` 回执明确告知「重铸失败或节流中」，不静默吞掉（宪法 #6 停留在「等待再试」）。
+- **文案（B4）**：5 处不再指引用户去翻 stderr/宿主启动日志，改指「本机引导码文件」与管理台 —— `whoamiText` 未绑定提示、`guidedHelp` 配对码位置、`/pair` 无参用法、expired 重铸成功回执、expired 节流回执。同步改口径的用户文档：`docs/guide.md` 引导码段落、README/README.zh-CN 身份体系条目（双语并行）。
+- **自审补漏（本轮 review 发现，PLAN 未列）**：`ensureBootstrap` 在「已有在铸引导码」时也返回 `null`，若与节流共用同一句回执会谎报「重铸失败或节流中」——正是 B4 要治的 MISLEAD 类。现在该分支单独回执「当前已有在铸引导码，请取现码」；另修 `writeBootstrapCodeFile` 的 `error.message` 对非 Error 抛出物会得到 `undefined`（统一走 `instanceof Error` 三元，与文件内既有惯例一致），并去掉未使用的 `expiresAt` 形参。
+- 保留 `【引导配对码】` 前缀（既有 `test/admin-wiring.test.mjs` 断言不破）；不新增 store 键族，无新增运行时依赖（`node:fs` 内置）。
+- 测试：+13（引导码文件 mode 0600/单行码面、码面零泄漏正负控双钉、写失败不回退印码面、symlink 不被写穿、非引导态启动清陈旧文件、管理台撤销经真 HTTP 面触发删文件且 API 响应无码面、过期码 5 次锁出、锁出上下边界第 4/第 5 次、复合键隔离不牵连他人、重铸节流、回调异常 warn 出声、有在铸码时不谎报重铸失败、单次过期回执语义不变）；测试契约 927 → 940。
+- 未收口的残差已登记技术债：admin UI 与 `bus.mjs` whoami 文案仍引 stderr、README/`docs/guide.md` 仍写「终端日志里打引导码」、跨进程节流不共享。
+
 ## [0.8.6] - 2026-08-23
 
 > 覆盖公共镜像 `THEWOLFWALKER/dsh-notifier` 已发布的 `v0.8.5`，并额外包含 PR #9 飞书扫码 SDK 适配与 P1-1/P1-2/P1-3 技术债修复。

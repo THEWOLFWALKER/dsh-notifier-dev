@@ -8,7 +8,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:net'
@@ -510,7 +510,43 @@ test('§5.5 wxpusher 凭证链尾：admin 开 + store appToken（无 YAML）→ 
     assert.ok(rig.warnings.some((w) => /inbound 已启动：wxpusher/.test(w)),
       'v0.7：allowUsers 空 + 凭证就绪 → 引导态启动（不再是死路）')
     assert.ok(rig.warnings.some((w) => /【引导配对码】/.test(w)),
-      '引导态铸造 bootstrap 码（stderr 双写展示，绑定表非空后不再铸）')
+      '引导态铸造 bootstrap 码（v0.8.7 起走 0600 文件交付，不再 stderr 印码面）')
+    // v0.8.7 B1（LEAK-2）：码面落 0600 文件，warn 只带路径
+    const codePath = join(dir, 'bootstrap-paircode.txt')
+    assert.ok(existsSync(codePath), '引导态必须写出引导码文件')
+    const code = readFileSync(codePath, 'utf8').trim()
+    for (const line of rig.warnings) {
+      assert.ok(!line.includes(code), `码面不得出现在 warn/stderr（LEAK-2 回归）：${line}`)
+    }
+  } finally {
+    await rig.cleanup()
+  }
+})
+
+test('v0.8.7 B1 引导码文件终态删除：管理台撤销 bootstrap 码 → onAudit 钩子删掉码文件（A2）', async () => {
+  const dir = tempDir({ 'wxpusher:account': { appToken: 'AT_revoke' } })
+  const rig = bootCtx()
+  const port = await freePort()
+  try {
+    apply(rig.ctx, {
+      channels: [{ type: 'webhook', url: 'http://127.0.0.1:1/hook' }],
+      inbound: { stateDir: dir },
+      admin: { enabled: true, port, token: 'revoke-tok' },
+    })
+    assert.ok(await waitHttp(port), '前置：管理台就绪')
+    const codePath = join(dir, 'bootstrap-paircode.txt')
+    assert.ok(existsSync(codePath), '前置：引导态码文件存在')
+    // 经真 HTTP 面拿在铸 bootstrap 码 id（脱敏视图，无码面），再撤销
+    const members = await (await authGet(port, '/api/members', 'revoke-tok')).json()
+    const bootstrapCode = members.pairingCodes.find((entry) => entry.origin === 'bootstrap')
+    assert.ok(bootstrapCode !== undefined, `管理台应看到在铸引导码（实际：${JSON.stringify(members.pairingCodes)}）`)
+    assert.ok(!JSON.stringify(members).includes(readFileSync(codePath, 'utf8').trim()),
+      '管理台 API 响应绝不含码面（只有哈希前缀 id）')
+    const revoked = await fetch(`http://127.0.0.1:${port}/api/pairing/${bootstrapCode.id}`, {
+      method: 'DELETE', headers: { Authorization: 'Bearer revoke-tok' },
+    })
+    assert.equal(revoked.status, 200, '撤销应成功')
+    assert.ok(!existsSync(codePath), '撤销后码文件必须被 onAudit 钩子删除（不留码面残渣）')
   } finally {
     await rig.cleanup()
   }

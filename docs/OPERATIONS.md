@@ -15,7 +15,7 @@ The project has no install step for runtime tests. Optional packages are needed 
 
 ## State Directory
 
-Use `$DSH_HOME/dsh-notifier` when `DSH_HOME` is set; otherwise the plugin falls back to `~/.dsh/dsh-notifier`. Keep `state.json`, ledger files, audit files, and lock/corrupt backups private. Do not manually edit a live state file while DSH is running; use the admin API or route CLI so the store merge/lock protocol is preserved.
+Use `$DSH_HOME/dsh-notifier` when `DSH_HOME` is set; otherwise the plugin falls back to `~/.dsh/dsh-notifier`. Keep `state.json`, ledger files, audit files, and lock/corrupt backups private. On a guided-bootstrap start the directory also holds `bootstrap-paircode.txt` (mode `0600`) carrying the one-shot pairing code — the startup log prints only its path. It is removed automatically once the code is redeemed, expires, or is revoked, and on any later start that is no longer in the guided state; delete it by hand if you abandon a first-time setup. Do not manually edit a live state file while DSH is running; use the admin API or route CLI so the store merge/lock protocol is preserved.
 
 ## First-Time Setup
 
@@ -35,6 +35,8 @@ The full end-user flow is in `docs/guide.md`. The CLI-only upgrade and rollback 
 | Inbound silent | Optional dependency installed, token/account fallback, paired composite identity, provider long-poll/WS logs |
 | Approval did not apply | Original chat/channel, token age, first-arrival state, desktop fallback; never treat timeout as approval |
 | Ask-user missing | Installed package version, `questions.enabled`, startup assembly log, `npm ls dsh-notifier` |
+| `/pair` rejected as locked | Five failed attempts (wrong **or expired** code) lock that `(channel, userId)` for 10 minutes; wait it out or mint a fresh code from the admin members page |
+| Bootstrap code unavailable | Read the path printed at startup (`bootstrap-paircode.txt`); if the write failed the log says so — mint a code from the admin members page instead. Re-mint is throttled to once per 10 minutes per process |
 | Route seems ignored | `node scripts/route.mjs show`, then `route.mjs test <sessionId>`; check enabled channel filtering |
 | Admin unavailable | `admin.enabled`, loopback port, Bearer token, 1 MiB request limit, SSE connection cap |
 | Behavior differs on phone | Run protocol/real-device validation; mocks do not model provider payload limits or callback parsing |

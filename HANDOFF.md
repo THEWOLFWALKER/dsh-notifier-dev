@@ -18,6 +18,7 @@
 - 镜像卫生问题已清理（2026-08-23）：公共镜像 `main` 删除误提交的 `node_modules/`（947 文件）与 `package-lock.json`，tracked 文件从 1104 降至 156；`.gitignore` 已覆盖，不会再入。
 - 镜像开放 issue 与私有 main 对照（本轮核验）：#1/#6 飞书 WSClient logger:null → 私有已修（v0.7.3 noop sdkWsLogger）；#2 `${ENV:NAME}` 入站解析 → 私有已修（v0.6.1 resolveEnvRefs）；#4 飞书三问 → 私有 v0.7.3 闭环；#8 加签 19021 → 私有已修（feishu.mjs #8 注释）；#11 → 本轮合入。剩余开放项 #3/#5/#7 属功能请求（当前周期不新增功能，挂起）；#4 若真机复现残留再开新 workstream。
 - 项目本地 neat-freak canonical skill：`.agents/skills/neat-freak/SKILL.md`；`.claude/skills/`、`.codex/skills/`、`.opencode/skills/` 只有入口指针。
+- **在途未发布分支 `crack-fix-batchA-v0.8.7`（2026-08-23）**：破甲修复分批推进，尚未合 main、未发版，故四处版本/计数串仍停在已发布的 v0.8.6 / 909 契约。已完成批次 A（CRACK-001/002/003/004 越权裁决族 fail-closed，`013ec48`，契约 927）与批次 B-1（引导码 0600 文件交付 + 过期码泵码堵死 + 文案去 stderr，契约 940，workstream `.agents/workstreams/crack-fix-b1-bootstrap-code.md`）。批次计划在 `.agents/workstreams/crack-fix-plan/`（`PLAN.md` 总表、`PLAN-B1.md` 批次 B-1），残差与后续批次登记在 `~/dsh-notifier-handoff/20-techdebt.md`。合 main / 发版前需补真机验收（引导码文件流程、越权裁决回归）。
 - 下一步：真机闭环清单见 `docs/memory/risks.md`（TG 护栏边界、长连接重连可见性、其他渠道 payload 证据、BurntToast 主机、npm 验收）。当前周期不再新增功能；继续 P1-4 admin UI 审计、安全计划 A3-A6、P2 结构性债务。
 
 ---

@@ -46,7 +46,7 @@ provider payload
   -> agent action or desktop fallback
 ```
 
-The empty identity table is a guided bootstrap state: registration commands remain available, while normal business messages remain denied until pairing succeeds. Pairing codes are hashed, short-lived, rate-limited, and auditable. Callback/action/question tokens are single-use and source-scoped when a source chat is recorded.
+The empty identity table is a guided bootstrap state: registration commands remain available, while normal business messages remain denied until pairing succeeds. Pairing codes are hashed, short-lived, rate-limited, and auditable. The guided bootstrap code is delivered through `<stateDir>/bootstrap-paircode.txt` (mode `0600`, rewritten on re-mint, deleted as soon as the code is redeemed/expired/revoked or the instance boots outside the guided state); logs and stderr carry only the file path, never the code itself. Failed pairing attempts — including submissions of an already expired code — count toward the per-`(channel, userId)` lockout, so an expired code cannot be used to pump unlimited re-mints. Callback/action/question tokens are single-use and source-scoped when a source chat is recorded.
 
 ## Routing
 
