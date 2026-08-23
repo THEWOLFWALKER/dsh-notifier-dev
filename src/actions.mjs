@@ -9,6 +9,21 @@
 
 import { randomBytes } from 'node:crypto'
 
+// CRACK-001（破甲轮 P0）：缺来源元数据的动作卡的升级迁移宽限窗，上界对齐 token TTL
+// （tokens.mjs 默认 10min）——升级瞬间在途的旧卡本就只剩 ≤10min 生命期，窗外一律
+// fail-closed，绝不产生永久免检卡。
+const LEGACY_SOURCE_GRACE_MS = 10 * 60 * 1000
+
+/**
+ * CRACK-001：仅「缺来源元数据」（srcChats 为 undefined/null）且带可核时间戳的
+ * 升级在途卡适用宽限；新卡（有 srcChats）绝不进此路径，仍走严校验。
+ */
+function graceSourceAllowed(row) {
+  if (row.srcChats !== undefined && row.srcChats !== null) return false
+  if (typeof row.createdAt !== 'number') return false
+  return Date.now() - row.createdAt <= LEGACY_SOURCE_GRACE_MS
+}
+
 /**
  * 创建动作分发器。
  * @param {object} options
@@ -124,8 +139,9 @@ export function createActionDispatcher({ vault = null, store = null, logger = nu
      * 核销并执行动作（通道回调入口）。
      * @param {object} [opts.chatId] - v0.8.4 F-08 点击所在的会话（通道回调透传）。
      *   账本已记录来源会话（srcChats）时：点击会话必须在该通道允许集合内，否则拒绝
-     *   （source-chat-mismatch）；缺点击会话（新卡必须带）→ 拒绝。无来源元数据的
-     *   历史卡 → 显式 warn + 兼容放行（不打旧卡，绝不静默放行转发）。
+     *   （source-chat-mismatch）；缺点击会话（新卡必须带）→ 拒绝。缺来源元数据的
+     *   升级在途旧卡（undefined/null）→ 仅升级宽限窗内放行（CRACK-001，10min 上界
+     *   = token TTL），窗外 fail-closed 拒绝；放行与拒绝均显式 warn，绝不静默。
      * @returns {{ ok: boolean, reason?: string, message: string }}
      *   ok = 本次点击是否生效（核销成功且 handler 已调用）；message 为给操作者的反馈文案。
      *   任何失败路径返回中文文案，绝不 throw。
@@ -161,8 +177,8 @@ export function createActionDispatcher({ vault = null, store = null, logger = nu
           return { ok: false, reason: 'already-resolved', message: '该操作已处理' }
         }
         // v0.8.4 F-08：来源会话校验（对齐 SEC-1 / questions.decide 的 chatId 比对）。
-        // 账本无来源元数据 → 显式 warn + 兼容放行（升级前在途卡片不打历史，但也绝不
-        // 静默——每次都告警，转发点击不会安静漏过）。新卡（有 srcChats）必须校验。
+        // 账本无来源元数据（undefined/null）→ CRACK-001 fail-closed：仅升级宽限窗内
+        // 放行且显式 warn，窗外拒绝；绝不静默——每条路径都告警。新卡（有 srcChats）必须校验。
         const srcChats = (row.srcChats !== null && typeof row.srcChats === 'object' && !Array.isArray(row.srcChats))
           ? row.srcChats
           : null
@@ -177,8 +193,16 @@ export function createActionDispatcher({ vault = null, store = null, logger = nu
             warn(`动作 ${actionKey} 点击会话拒绝（via ${clickVia}，chatId ${String(chatId)} 不在来源集合）`)
             return { ok: false, reason: 'source-chat-mismatch', message: '请到原会话操作' }
           }
-        } else if (row.srcChats === undefined) {
-          warn(`动作 ${actionKey} 账本缺来源会话元数据（srcChats），按历史卡兼容放行（转发风险请核对卡片来源）`)
+        } else {
+          // CRACK-001：缺来源元数据(undefined/null)一律 fail-closed，仅升级宽限窗内放行
+          if (row.srcChats === undefined || row.srcChats === null) {
+            if (graceSourceAllowed(row)) {
+              warn(`动作 ${actionKey} 缺来源会话元数据(srcChats)，按升级宽限窗口放行(仅限升级后10min内)`)
+            } else {
+              warn(`动作 ${actionKey} 缺来源会话元数据(srcChats)，拒绝(fail-closed: 无来源授权)`)
+              return { ok: false, reason: 'source-chat-mismatch', message: '请到原会话操作' }
+            }
+          }
         }
         const handler = handlers.get(row.kind)
         if (handler === undefined) {

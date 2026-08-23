@@ -11,6 +11,7 @@ import { registerApprovalHandler } from '../src/approval/router.mjs'
 import { createInboundBus } from '../src/inbound/bus.mjs'
 import { createTokenVault } from '../src/inbound/tokens.mjs'
 import { createStore } from '../src/inbound/store.mjs'
+import { createIdentity } from '../src/inbound/identity.mjs'
 
 function tempPath() {
   return join(mkdtempSync(join(tmpdir(), 'dsh-notifier-ap-')), 'state.json')
@@ -93,7 +94,7 @@ test('escalation：stages 为空时 start 是 no-op；dispose 清一切', async 
  *   给 telegram 补 sendText 桩（norm 化后回执可用）。缺省不实现 → norm 化 sendText
  *   对缺方法返回 false（回执静默失败，不升级抛错）。
  */
-function makeRig({ approvalConfig = {}, chatIds = ['100'], mode = 'answer', sendText = null } = {}) {
+function makeRig({ approvalConfig = {}, chatIds = ['100'], mode = 'answer', sendText = null, identity = null, logger = null } = {}) {
   const store = createStore(tempPath())
   const vault = createTokenVault({ secret: 'test-secret' })
   // 白名单含 42（个人号）与 100（= 推送 chatId 对应的用户），供编号回复匹配测试
@@ -123,6 +124,8 @@ function makeRig({ approvalConfig = {}, chatIds = ['100'], mode = 'answer', send
   if (typeof sendText === 'function') telegram.sendText = sendText
   const dispose = registerApprovalHandler({
     ctx, notifier, bus, vault, store, telegram,
+    ...(identity !== null ? { identity } : {}),
+    ...(logger !== null ? { logger } : {}),
     counterStart: 0, // v0.6.4 生产随机化 counter 起点；测试固定 0 保住 ap:<callId>:<n> 确定性断言
     approvalConfig: { mode, ...approvalConfig },
   })
@@ -152,7 +155,7 @@ test('router：answer 模式远程批准——token 首达采纳，账本落 all
   const card = rig.cards[0]
   assert.equal(card.approvalKey, 'ap:c1:1')
   const verdict = rig.bus.decide({
-    approvalKey: card.approvalKey, decision: 'allowed-once', token: card.token, via: 'telegram', userId: '42',
+    approvalKey: card.approvalKey, decision: 'allowed-once', token: card.token, via: 'telegram', userId: '42', chatId: '100',
   })
   assert.deepEqual(verdict, { ok: true })
   assert.equal(await pending, 'allowed-once')
@@ -169,7 +172,7 @@ test('router：answer 模式远程拒绝——返回 rejected，卡片编辑为�
   const pending = rig.handle({ toolName: 'rm', callId: 'c1', reason: '删除文件' })
   await sleep(20)
   const card = rig.cards[0]
-  rig.bus.decide({ approvalKey: card.approvalKey, decision: 'rejected', token: card.token, via: 'telegram', userId: '42' })
+  rig.bus.decide({ approvalKey: card.approvalKey, decision: 'rejected', token: card.token, via: 'telegram', userId: '42', chatId: '100' })
   assert.equal(await pending, 'rejected')
   assert.equal(rig.store.get('ap:c1:1').decision, 'rejected')
   assert.match(rig.edits[0].text, /已远程拒绝/)
@@ -199,7 +202,7 @@ test('router：token 单次核销——同 token 二次裁决被拒（按钮双�
   const pending = rig.handle({ toolName: 'rm', callId: 'c1', reason: 'x' })
   await sleep(20)
   const card = rig.cards[0]
-  assert.equal(rig.bus.decide({ approvalKey: card.approvalKey, decision: 'allowed-once', token: card.token }).ok, true)
+  assert.equal(rig.bus.decide({ approvalKey: card.approvalKey, decision: 'allowed-once', token: card.token, via: 'telegram', userId: '42', chatId: '100' }).ok, true)
   assert.deepEqual(
     rig.bus.decide({ approvalKey: card.approvalKey, decision: 'allowed-once', token: card.token }),
     { ok: false, reason: 'already-resolved' },
@@ -283,7 +286,10 @@ test('router：编号回复收紧——卡片未送达的渠道（如微信类�
 })
 
 test('router：编号回复优先精确匹配（pushedTo 的 channel+user），再同渠道回退', async () => {
-  const rig = makeRig()
+  // CRACK-003：同渠道回退命中他人卡片——42 需 telegram owner 绑定才可代决（放行矩阵）
+  const identity = createIdentity({ store: createStore(tempPath()) })
+  identity.addBinding({ channel: 'telegram', userId: '42' }) // 首条绑定 = owner
+  const rig = makeRig({ identity })
   const first = rig.handle({ toolName: 'a', callId: 'c1', reason: 'x' })
   await sleep(20)
   const second = rig.handle({ toolName: 'b', callId: 'c2', reason: 'x' })
@@ -295,6 +301,53 @@ test('router：编号回复优先精确匹配（pushedTo 的 channel+user），�
   // 同渠道其他白名单用户（卡片送达过 telegram，但非本人目标）回复 1 → 同渠道回退命中最新 pending
   rig.bus.accept({ channel: 'telegram', userId: '42', chatId: '100', messageId: 'msg:t:2', text: '1' })
   assert.equal(await first, 'allowed-once')
+  rig.dispose()
+})
+
+// CRACK-003 编号回复归属闸：exact 放行；onChannel/intended 仅 owner 可代决；identity 缺失 fail-closed。
+test('router：CRACK-003 归属闸——member 代决他人卡片被拒（消费 + 回执「无权」+ warn，审批不裁决）', async () => {
+  const texts = []
+  const warns = []
+  const identity = createIdentity({ store: createStore(tempPath()) })
+  identity.addBinding({ channel: 'telegram', userId: '100' }) // owner = 卡发本人
+  identity.addBinding({ channel: 'telegram', userId: '42' }) // 第二条 = member
+  const rig = makeRig({
+    approvalConfig: { timeoutMs: 800, escalation: { enabled: false } },
+    sendText: async (chatId, text) => { texts.push({ chatId, text }); return true },
+    identity,
+    logger: { warn: (...args) => warns.push(args.join(' ')) },
+  })
+  const pending = rig.handle({ toolName: 'rm', callId: 'c1', reason: 'x' })
+  await sleep(20)
+  // 卡片送达 chatId 100（user 100）；同渠道 member 42 裸 1 → 归属闸拒绝
+  assert.deepEqual(
+    rig.bus.accept({ channel: 'telegram', userId: '42', chatId: '100', messageId: 'msg:t:3', text: '1' }),
+    { ok: true },
+  )
+  assert.equal(texts.length, 1)
+  assert.match(texts[0].text, /无权/)
+  assert.equal(warns.some((w) => /归属拒绝/.test(w)), true, '拒绝必须留痕（静默即事故）')
+  assert.equal(await pending, 'desktop', 'member 的裸 1 未裁决，审批超时交还桌面')
+  assert.equal(rig.store.get('ap:c1:1').decision, 'timeout')
+  rig.dispose()
+})
+
+test('router：CRACK-003 fail-closed——identity 缺失时非 exact 编号回复一律拒绝', async () => {
+  const texts = []
+  const rig = makeRig({
+    approvalConfig: { timeoutMs: 800, escalation: { enabled: false } },
+    sendText: async (chatId, text) => { texts.push({ chatId, text }); return true },
+  })
+  const pending = rig.handle({ toolName: 'rm', callId: 'c1', reason: 'x' })
+  await sleep(20)
+  assert.deepEqual(
+    rig.bus.accept({ channel: 'telegram', userId: '42', chatId: '100', messageId: 'msg:t:3', text: '2' }),
+    { ok: true },
+  )
+  assert.equal(texts.length, 1)
+  assert.match(texts[0].text, /无权/)
+  assert.equal(await pending, 'desktop', 'identity 缺失 → 非 exact 一律 fail-closed 拒绝')
+  assert.equal(rig.store.get('ap:c1:1').decision, 'timeout')
   rig.dispose()
 })
 
@@ -395,7 +448,7 @@ test('router：升级链在等待期触发再提醒，裁决后停止', async ()
   const pending = rig.handle({ toolName: 'rm', callId: 'c1', reason: 'x' })
   await sleep(150) // 宽窗中点：第一阶段必触发，第二阶段必未触发
   const card = rig.cards[0]
-  rig.bus.decide({ approvalKey: card.approvalKey, decision: 'allowed-once', token: card.token })
+  rig.bus.decide({ approvalKey: card.approvalKey, decision: 'allowed-once', token: card.token, via: 'telegram', userId: '42', chatId: '100' })
   await pending
   const escalationBroadcasts = rig.broadcasts.filter((msg) => /仍在等待批准/.test(msg.title))
   assert.equal(escalationBroadcasts.length, 1) // 只触发了第一阶段就被裁决叫停

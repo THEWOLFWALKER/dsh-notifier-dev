@@ -74,11 +74,13 @@ function numberedHint(options, multiSelect) {
  * @param {import('../inbound/store.mjs').store} deps.store
  * @param {object} deps.notifier - createNotifier 实例（广播编号文案用）
  * @param {() => object[]} deps.interactive - 交互通道实例列表（惰性 getter，装配期后解引用）
+ * @param {object} [deps.identity] - 身份注册表（CRACK-004：hint 兜底编号回复仅该渠道绑定的
+ *   owner 可代答；缺失/异常 fail-closed。exact/onChannel 属当事人级命中，不查 identity）
  * @param {object} [deps.logger]
  * @param {{ timeoutMs?: number, escalation?: { enabled?: boolean, stages?: object[] } }} [deps.config]
  */
 export function createQuestionBridge(deps) {
-  const { bus, vault, store, notifier } = deps
+  const { bus, vault, store, notifier, identity } = deps
   const logger = deps.logger ?? null
   const config = deps.config ?? {}
   const defaultTimeoutMs = Math.max(1000, Number(config.timeoutMs) || 300000)
@@ -116,11 +118,14 @@ export function createQuestionBridge(deps) {
     },
     /**
      * 最近一条待决提问（编号回复降级）。匹配优先级：
-     *  1) exact 推送过该 (channel,userId)；
-     *  2) onChannel 该 channel 推送过且 userId 一致；
-     *  3) hint 该 channel 收到过本问题的编号话术（=aq 行 hintChannels 含该渠道）——
-     *     替代旧 `any` 无条件兜底（SEC-2 / C-2 / BUG-11：关死「既没送卡、又没广播编号
-     *     话术的渠道裸数字越权仲裁」的面）。无卡片渠道的合法编号作答由 hint 接住。
+      *  1) exact 推送过该 (channel,userId)；
+      *  2) onChannel 该 channel 推送过且 userId 一致；
+      *  3) hint 该 channel 收到过本问题的编号话术（=aq 行 hintChannels 含该渠道）——
+      *     替代旧 `any` 无条件兜底（SEC-2 / C-2 / BUG-11：关死「既没送卡、又没广播编号
+      *     话术的渠道裸数字越权仲裁」的面）。无卡片渠道的合法编号作答由 hint 接住。
+     * CRACK-004：返回值带 evidence（exact|onChannel|hint）——handleNumberedReply 的
+     * 归属闸据此放行当事人级命中、对 hint 要求 owner。questions 的 exact 与 onChannel
+     * 都是同 user 命中（SEC-5/6），只透归属证词等级，不改匹配语义。
      */
     latestPendingFor(channel, userId) {
       let exact = null
@@ -132,11 +137,11 @@ export function createQuestionBridge(deps) {
         const pushed = Array.isArray(row.pushedTo) ? row.pushedTo : []
         if (pushed.some((target) => target.channel === channel)) {
           if (pushed.some((target) => target.channel === channel && String(target.userId) === String(userId))) {
-            if (exact === null || row.createdAt > exact.row.createdAt) exact = { key, row }
-            if (onChannel === null || row.createdAt > onChannel.row.createdAt) onChannel = { key, row }
+            if (exact === null || row.createdAt > exact.row.createdAt) exact = { key, row, evidence: 'exact' }
+            if (onChannel === null || row.createdAt > onChannel.row.createdAt) onChannel = { key, row, evidence: 'onChannel' }
           }
         }
-        if (hint === null && isHintedChannel(row, channel)) hint = { key, row }
+        if (hint === null && isHintedChannel(row, channel)) hint = { key, row, evidence: 'hint' }
       }
       return exact ?? onChannel ?? hint
     },
@@ -340,6 +345,15 @@ export function createQuestionBridge(deps) {
       const inbound = interactiveEntries().find((entry) => entry.channel === envelope.channel)
       if (inbound !== undefined) void inbound.sendText(envelope.chatId, message)
     }
+    // CRACK-004 归属闸：exact/onChannel 已是当事人级命中（SEC-5/6 同 user 校验），直接放行；
+    // hint 属广播兜底——仅该渠道绑定的 owner 可代答。identity 缺失/异常一律 fail-closed。
+    // 拒绝语义：消费裸编号（不进对话路由）+ 回执提示，问题保持待决，原提问者仍可作答。
+    const allowed = pending.evidence === 'exact' || pending.evidence === 'onChannel' || isAuthorizedDeciderQ(identity, envelope.channel, envelope.userId)
+    if (!allowed) {
+      warn(`提问编号越权拒绝 ${pending.key}（evidence=${pending.evidence}，user ${envelope.userId} 非 owner）`)
+      sendFeedback('此提问不是你作答的（无权回答）')
+      return true
+    }
     const optIdxes = nums.map((num) => num - 1) // 展示 1 基 → 存储 0 基
     const outOfRange = optIdxes.some((idx) => idx < 0 || idx >= max)
     const wrongMultiplicity = row.multiSelect !== true && nums.length !== 1
@@ -363,6 +377,12 @@ export function createQuestionBridge(deps) {
     // 罕见竞态（作答瞬间恰好超时）：回执说明，同样消费避免把裸编号漏进对话路由
     sendFeedback(verdict.message ?? '该提问已回答或已过期')
     return true
+  }
+
+  /** CRACK-004：hint 编号兜底代答资格——仅该渠道绑定的 owner 可代答；identity 缺失/异常 fail-closed。 */
+  function isAuthorizedDeciderQ(identity, channel, userId) {
+    if (!identity) return false
+    try { return identity.list(channel).some((r) => String(r.userId) === String(userId) && r.role === 'owner') } catch { return false }
   }
 
   let disposeMessage = null

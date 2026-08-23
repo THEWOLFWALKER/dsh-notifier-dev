@@ -282,11 +282,13 @@ test('card.action.trigger：批准按钮 → bus.decide(token 核销) + toast + 
 
   const key = 'ap:rm:1'
   const token = vault.mint(key)
-  const outcome = bus.wait(key, 2000)
+  // CRACK-002：fail-closed 后 wait 必须登记 allowChats（对齐生产装配 approval/questions router）
+  const outcome = bus.wait(key, 2000, { allowChats: new Map([['feishu', new Set(['oc_1'])]]) })
   const toast = fake.state.dispatcher.handlers['card.action.trigger']({
     operator: { open_id: 'ou_1' },
     open_message_id: 'om_card1',
     action: { value: { act: buildApprovalAction('allowed-once', key, token) } },
+    context: { open_chat_id: 'oc_1' },
   })
   assert.equal(toast.toast.type, 'success')
   assert.equal((await outcome).decision, 'allowed-once')
@@ -309,9 +311,10 @@ test('card.action.trigger：重复点击同一审批 → already-resolved toast�
 
   const key = 'ap:x:1'
   const token = vault.mint(key)
-  const outcome = bus.wait(key, 2000)
+  const outcome = bus.wait(key, 2000, { allowChats: new Map([['feishu', new Set(['oc_2'])]]) })
   const fire = () => fake.state.dispatcher.handlers['card.action.trigger']({
     operator: { open_id: 'ou_1' },
+    context: { open_chat_id: 'oc_2' },
     action: { value: { act: buildApprovalAction('rejected', key, token) } },
   })
   const first = fire()
@@ -537,11 +540,12 @@ test('ap: 审批回调不受 v0.5 改动影响（回归）', async () => {
   await tick()
   const key = 'ap:rm:1'
   const token = vault.mint(key)
-  const outcome = bus.wait(key, 2000)
+  const outcome = bus.wait(key, 2000, { allowChats: new Map([['feishu', new Set(['oc_3'])]]) })
   const toast = fake.state.dispatcher.handlers['card.action.trigger']({
     operator: { open_id: 'ou_1' },
     open_message_id: 'om_7',
     action: { value: { act: buildApprovalAction('allowed-once', key, token) } },
+    context: { open_chat_id: 'oc_3' },
   })
   assert.equal(toast.toast.type, 'success')
   assert.match(toast.toast.content, /已批准/)
@@ -560,7 +564,7 @@ test('card.action.trigger：SEC-1 来源会话匹配通过 / 转发到其他会�
   await tick()
   const key = 'ap:sec1:1'
   const token = vault.mint(key)
-  const outcome = bus.wait(key, 2000)
+  const outcome = bus.wait(key, 2000, { allowChats: new Map([['feishu', new Set(['oc_orig'])]]) })
 
   const value = { act: buildApprovalAction('allowed-once', key, token), srcChat: 'oc_orig' }
   const makeEvent = (chatId, messageId) => ({
@@ -721,12 +725,12 @@ test('卡片终态 patch：messageId 读 data.context.open_message_id（#6），
   await tick()
   const key = 'ap:ctx:1'
   const token = vault.mint(key)
-  bus.wait(key, 2000)
+  bus.wait(key, 2000, { allowChats: new Map([['feishu', new Set(['oc_ctx'])]]) })
   const toast = fake.state.dispatcher.handlers['card.action.trigger']({
     // 真机实测负载形状：顶层 keys 只有 schema/event_id/…/operator/action/host/context
     operator: { open_id: 'ou_1' },
     action: { value: { act: buildApprovalAction('allowed-once', key, token) } },
-    context: { open_message_id: 'om_ctx_1' },
+    context: { open_message_id: 'om_ctx_1', open_chat_id: 'oc_ctx' },
   })
   assert.equal(toast.toast.type, 'success')
   await tick()

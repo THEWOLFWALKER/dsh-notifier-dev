@@ -274,14 +274,22 @@ export function createInboundBus(options = {}) {
         if (!verdict.ok) return { ok: false, reason: verdict.reason }
         if (verdict.key !== approvalKey) return { ok: false, reason: 'key-mismatch' }
       }
-      // v0.8.3 SEC-1：来源会话校验（仅按钮裁决路径）。wait 注册了允许会话范围时，
-      // 点击会话必须落在范围内；不匹配返回明确拒绝，不核销 wait 状态（合法原会话仍可裁决）。
-      // 缺省 allowChats=null 或 chatId 未传时跳过（编号回复/旧装配不受影响）。
+      // v0.8.3 SEC-1 → CRACK-002：来源会话校验（仅按钮裁决路径）改 fail-closed。
+      // 有源证据（allowChats 范围 + 点击 chatId）才算有效按钮路径，缺一即无来源授权 → 拒绝，
+      // 不核销 wait（合法原会话仍可裁决）；decideTrusted（编号回复）不走本分支，归属另校验。
       const entry = waiters.get(approvalKey)
-      if (entry !== undefined && entry.allowChats !== null && chatId !== undefined && chatId !== null && String(chatId) !== '') {
-        const allowed = entry.allowChats
+      if (entry === undefined) {
+        // 无 waiter：重放/已决。settle 会返回 already-resolved；不走本分支，保留 settle 语义。
+      } else {
+        const chatProvided = chatId !== undefined && chatId !== null && String(chatId) !== ''
+        const scopeProvided = entry.allowChats !== null && entry.allowChats !== undefined
+        if (!chatProvided || !scopeProvided) {
+          // 缺点击会话或缺来源范围：无法确证来源 → 显式拒绝，不核销 wait。
+          warn(`decide ${approvalKey} 来源校验失败（chatId 提供:${chatProvided}，allowChats:${scopeProvided}）`)
+          return { ok: false, reason: 'source-chat-mismatch', message: '请到原会话操作' }
+        }
         const channel = String(via ?? '').split(':')[0]
-        const chatSet = allowed.get(channel)
+        const chatSet = entry.allowChats.get(channel)
         if (chatSet === undefined || !chatSet.has(String(chatId))) {
           return { ok: false, reason: 'source-chat-mismatch' }
         }

@@ -11,6 +11,7 @@ import { registerApprovalHandler } from '../src/approval/router.mjs'
 import { createInboundBus } from '../src/inbound/bus.mjs'
 import { createTokenVault } from '../src/inbound/tokens.mjs'
 import { createStore } from '../src/inbound/store.mjs'
+import { createIdentity } from '../src/inbound/identity.mjs'
 import {
   normalizeInbound,
   buildApprovalAction,
@@ -99,7 +100,7 @@ function makeFake(channel, { targets = [], failCards = false, failEdit = false }
 }
 
 /** 组装 rig：真实 bus/vault/store + 假 ctx/notifier + 传入的交互通道列表。 */
-function makeRig({ interactive = [], telegram = null, approvalConfig = {}, router = null, channels = undefined } = {}) {
+function makeRig({ interactive = [], telegram = null, approvalConfig = {}, router = null, channels = undefined, identity = null } = {}) {
   const store = createStore(tempPath())
   const vault = createTokenVault({ secret: 'multi-secret' })
   const bus = createInboundBus({ allowUsers: ['u1', 'u2', 'u3', '10001'], store, vault })
@@ -117,6 +118,7 @@ function makeRig({ interactive = [], telegram = null, approvalConfig = {}, route
   }
   const dispose = registerApprovalHandler({
     ctx, notifier, bus, vault, store, router,
+    ...(identity !== null ? { identity } : {}),
     ...(telegram !== null ? { telegram } : { interactive }),
     approvalConfig: { mode: 'answer', timeoutMs: 400, ...approvalConfig },
   })
@@ -141,6 +143,7 @@ test('router 多通道：飞书+QQ 各收到卡片；广播文案含两渠道显
     token: feishu.state.cards[0].token,
     via: 'feishu:button',
     userId: 'u1',
+    chatId: 'oc_chat001',
   })
   assert.equal(await outcome, 'rejected')
   rig.dispose()
@@ -202,6 +205,7 @@ test('router 多通道：单渠道卡片失败降级——pushedTo 只剩成功�
     token: qq.state.cards[0].token,
     via: 'qq:button',
     userId: 'u2',
+    chatId: 'opengrp01',
   })
   assert.equal(await outcome, 'rejected')
   assert.equal(feishu.state.edits.length, 0) // 失败渠道没有卡片可编辑
@@ -276,7 +280,10 @@ test('router 多通道：intended 兜底正路径——分流渠道卡片发送�
   const feishu = makeFake('feishu', { targets: [{ chatId: 'oc_chat001', userId: 'u1' }], failCards: true })
   const telegram = makeFake('telegram', { targets: [{ chatId: '42', userId: 'u3' }] })
   const router = { resolveOutbound: () => ({ channelTypes: ['feishu'], quiet: false, source: 'agent-exact' }) }
-  const rig = makeRig({ interactive: [feishu, telegram], router })
+  // CRACK-003：intended 兜底命中他人卡片——回复者需意图渠道 owner 绑定才可代决（放行矩阵）
+  const identity = createIdentity({ store: createStore(tempPath()) })
+  identity.addBinding({ channel: 'feishu', userId: 'u1' }) // 首条绑定 = owner
+  const rig = makeRig({ interactive: [feishu, telegram], router, identity })
   const outcome = rig.handle({ toolName: 'bash', callId: 'call-i', agent: { id: 'agent-1' } })
   await new Promise((resolve) => setTimeout(resolve, 30))
   // 分流只到 feishu：意图渠道卡片发送失败，非意图渠道（telegram）不发卡

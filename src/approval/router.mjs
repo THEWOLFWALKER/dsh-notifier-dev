@@ -58,7 +58,7 @@ const DEFAULT_ESCALATION_STAGES = [
  * @returns {() => void} 反注册函数
  */
 export function registerApprovalHandler(deps) {
-  const { ctx, notifier, bus, vault, store } = deps
+  const { ctx, notifier, bus, vault, store, identity } = deps
   const router = deps.router ?? null
   const approvalConfig = deps.approvalConfig ?? {}
   const mode = approvalConfig.mode === 'answer' ? 'answer' : 'observe'
@@ -123,6 +123,8 @@ export function registerApprovalHandler(deps) {
      *     全局广播时 = 全部交互渠道）——堵住「卡片发送失败但广播文案教用户回复 1」的死路
      *     （审查 R1-P2-1）。注意 intended 只做 channel 级（广播无用户定向），跨渠道的
      *     非意图渠道（如分流只发 feishu 时 telegram 的日常裸 1）仍拒绝——收紧价值保留。
+     * CRACK-003：返回值带 evidence（exact|onChannel|intended）——编号回复归属闸据此区分
+     * 「卡片发本人」与「同渠道他人卡片/广播兜底」，后者仅 owner 可代决（fail-closed）。
      */
     latestPendingFor(channel, userId) {
       let exact = null
@@ -133,12 +135,12 @@ export function registerApprovalHandler(deps) {
         if (row?.status !== 'pending') continue
         const pushed = Array.isArray(row.pushedTo) ? row.pushedTo : []
         if (pushed.some((target) => target.channel === channel)) {
-          if (onChannel === null || row.createdAt > onChannel.row.createdAt) onChannel = { key, row }
+          if (onChannel === null || row.createdAt > onChannel.row.createdAt) onChannel = { key, row, evidence: 'onChannel' }
           if (pushed.some((target) => target.channel === channel && String(target.userId) === String(userId))) {
-            if (exact === null || row.createdAt > exact.row.createdAt) exact = { key, row }
+            if (exact === null || row.createdAt > exact.row.createdAt) exact = { key, row, evidence: 'exact' }
           }
         }
-        if (intended === null && isIntendedChannel(row, channel)) intended = { key, row }
+        if (intended === null && isIntendedChannel(row, channel)) intended = { key, row, evidence: 'intended' }
       }
       return exact ?? onChannel ?? intended
     },
@@ -263,6 +265,17 @@ export function registerApprovalHandler(deps) {
     if (choice !== '1' && choice !== '2') return false
     const pending = ledger.latestPendingFor(envelope.channel, envelope.userId)
     if (pending === null) return false
+    // CRACK-003 归属闸：exact（卡片发本人）直接放行；onChannel/intended 属他人卡片或
+    // 广播兜底——仅 owner 可代决。identity 缺失/异常一律 fail-closed 拒绝。
+    const allowed = pending.evidence === 'exact' || isAuthorizedDecider(identity, envelope.channel, envelope.userId)
+    if (!allowed) {
+      warn(`编号回复归属拒绝 ${pending.key}（evidence=${pending.evidence}，user ${envelope.userId} 非 owner）`)
+      const inbound = interactiveByChannel.get(envelope.channel)
+      if (inbound !== undefined) {
+        void inbound.sendText(envelope.chatId, '此审批不是发给你的(无权裁决)').catch(() => {})
+      }
+      return true
+    }
     const decision = choice === '1' ? OUTCOME_ALLOWED : OUTCOME_REJECTED
     const verdict = bus.decideTrusted({
       approvalKey: pending.key,
@@ -285,6 +298,12 @@ export function registerApprovalHandler(deps) {
   }
 
   const disposeMessage = bus.onMessage(handleNumberedReply)
+
+  /** CRACK-003：编号回复代决资格——仅该渠道绑定的 owner 可代决他人卡片；identity 缺失/异常 fail-closed。 */
+  function isAuthorizedDecider(identity, channel, userId) {
+    if (!identity) return false
+    try { return identity.list(channel).some((r) => String(r.userId) === String(userId) && r.role === 'owner') } catch { return false }
+  }
 
   const handler = async (request, next) => {
     const key = `ap:${request?.callId ?? request?.toolName ?? 'unknown'}:${(counter += 1)}`

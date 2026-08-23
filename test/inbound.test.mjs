@@ -379,13 +379,14 @@ test('bus：onMessage 退订后不再收到消息', () => {
   assert.equal(seen.length, 1)
 })
 
-test('bus：wait + decide（带合法 token）→ 决议送达等待者', async () => {
+test('bus：wait + decide（带合法 token，原会话点击）→ 决议送达等待者（CRACK-002 D-1 回归）', async () => {
   const vault = createTokenVault({ secret: 'k' })
   const bus = createInboundBus({ allowUsers: ['42'], vault })
-  const waiting = bus.wait('ap:rm:1', 5000)
+  const waiting = bus.wait('ap:rm:1', 5000, { allowChats: new Map([['telegram', new Set(['100'])]]) })
   assert.equal(bus.pendingCount(), 1)
   const token = vault.mint('ap:rm:1')
-  const verdict = bus.decide({ approvalKey: 'ap:rm:1', decision: 'allowed-once', token, via: 'telegram', userId: 42 })
+  // telegram 真机点击 chatId 是数字——钉死 String() 归一化
+  const verdict = bus.decide({ approvalKey: 'ap:rm:1', decision: 'allowed-once', token, via: 'telegram', userId: 42, chatId: 100 })
   assert.deepEqual(verdict, { ok: true })
   assert.deepEqual(await waiting, { decision: 'allowed-once', via: 'telegram', userId: '42' })
   assert.equal(bus.pendingCount(), 0)
@@ -421,15 +422,15 @@ test('bus：非法 decision 值被拒', () => {
 test('bus：首达采纳——同一审批的第二次裁决返回 already-resolved', async () => {
   const vault = createTokenVault({ secret: 'k' })
   const bus = createInboundBus({ allowUsers: ['42'], vault })
-  const waiting = bus.wait('ap:rm:1', 5000)
+  const waiting = bus.wait('ap:rm:1', 5000, { allowChats: new Map([['telegram', new Set(['100'])]]) })
   const token = vault.mint('ap:rm:1')
-  assert.equal(bus.decide({ approvalKey: 'ap:rm:1', decision: 'rejected', token }).ok, true)
-  // 同一枚 token 重放（按钮双击 / 消息重投）
+  assert.equal(bus.decide({ approvalKey: 'ap:rm:1', decision: 'rejected', token, via: 'telegram', userId: 42, chatId: '100' }).ok, true)
+  // 同一枚 token 重放（按钮双击 / 消息重投）——waiter 已核销摘除，走 settle 的 already-resolved
   assert.deepEqual(
     bus.decide({ approvalKey: 'ap:rm:1', decision: 'allowed-once', token }),
     { ok: false, reason: 'already-resolved' },
   )
-  assert.deepEqual(await waiting, { decision: 'rejected', via: 'unknown', userId: '(unknown)' })
+  assert.deepEqual(await waiting, { decision: 'rejected', via: 'telegram', userId: '42' })
 })
 
 test('bus：无等待者时裁决 → already-resolved（绝不凭空生效）', () => {
@@ -440,6 +441,88 @@ test('bus：无等待者时裁决 → already-resolved（绝不凭空生效）',
     bus.decide({ approvalKey: 'ap:gone:1', decision: 'allowed-once', token }),
     { ok: false, reason: 'already-resolved' },
   )
+})
+
+// ---------------------------------------------------------------- CRACK-002：decide 来源校验 fail-closed
+// 原语义：allowChats=null 或缺 chatId 时整段跳过来源校验直达 settle（无授权也放行）。
+// 新语义：有源证据才算有效按钮路径，缺一即拒绝且不核销 wait（28-plan §CRACK-002 边界 D-1~D-6）。
+
+test('bus：D-4 wait 缺省 allowChats=null → 按钮裁决 fail-closed 拒绝、不核销、必 warn', async () => {
+  const warns = []
+  const vault = createTokenVault({ secret: 'k' })
+  const bus = createInboundBus({ allowUsers: ['42'], vault, logger: { warn: (...parts) => warns.push(parts.join(' ')) } })
+  const waiting = bus.wait('ap:d4:1', 5000)
+  const token = vault.mint('ap:d4:1')
+  assert.deepEqual(
+    bus.decide({ approvalKey: 'ap:d4:1', decision: 'allowed-once', token, via: 'telegram', userId: 42, chatId: '100' }),
+    { ok: false, reason: 'source-chat-mismatch', message: '请到原会话操作' },
+  )
+  assert.equal(bus.pendingCount(), 1, 'fail-closed 拒绝不核销 wait（合法路径仍可裁决）')
+  assert.ok(warns.some((line) => line.includes('来源校验失败') && line.includes('ap:d4:1')), '拒绝必须留痕（静默即事故）')
+  bus.dispose()
+  assert.equal(await waiting, null, 'wait 未被按钮裁决 settle（dispose 以 null 收场证明仍挂在途）')
+})
+
+test('bus：D-4/D-6 联动——fail-closed 拒绝后 decideTrusted（编号回复降级）仍可裁决同一审批', () => {
+  const vault = createTokenVault({ secret: 'k' })
+  const bus = createInboundBus({ allowUsers: ['42'], vault })
+  bus.wait('ap:d46:1', 5000)
+  const token = vault.mint('ap:d46:1')
+  assert.equal(bus.decide({ approvalKey: 'ap:d46:1', decision: 'allowed-once', token, via: 'telegram', userId: 42, chatId: '100' }).ok, false)
+  // 降级链永不断：按钮路径被拒不锁死审批，编号回复（归属校验另走 CRACK-003）照常 settle
+  assert.deepEqual(
+    bus.decideTrusted({ approvalKey: 'ap:d46:1', decision: 'rejected', via: 'telegram:reply', userId: '42' }),
+    { ok: true },
+  )
+})
+
+test('bus：D-5 有 allowChats 但缺点击会话（未传 / 空串）→ 拒绝且不核销', () => {
+  const warns = []
+  const vault = createTokenVault({ secret: 'k' })
+  const bus = createInboundBus({ allowUsers: ['42'], vault, logger: { warn: (...parts) => warns.push(parts.join(' ')) } })
+  bus.wait('ap:d5:1', 5000, { allowChats: new Map([['telegram', new Set(['100'])]]) })
+  const token = vault.mint('ap:d5:1')
+  assert.deepEqual(
+    bus.decide({ approvalKey: 'ap:d5:1', decision: 'allowed-once', token, via: 'telegram', userId: 42 }),
+    { ok: false, reason: 'source-chat-mismatch', message: '请到原会话操作' },
+  )
+  // 空串同属「缺数据」：不放行
+  assert.deepEqual(
+    bus.decide({ approvalKey: 'ap:d5:1', decision: 'allowed-once', token, via: 'telegram', userId: 42, chatId: '' }),
+    { ok: false, reason: 'source-chat-mismatch', message: '请到原会话操作' },
+  )
+  assert.equal(bus.pendingCount(), 1, '缺会话拒绝两次均不核销')
+  assert.equal(warns.filter((line) => line.includes('来源校验失败')).length, 2, '每次拒绝都留痕')
+})
+
+test('bus：D-2/D-8 回归——错误会话 / 错误渠道点击 → source-chat-mismatch（无 message，与缺证据形状区分）', () => {
+  const vault = createTokenVault({ secret: 'k' })
+  const bus = createInboundBus({ allowUsers: ['42'], vault })
+  bus.wait('ap:d2:1', 5000, { allowChats: new Map([['telegram', new Set(['100'])]]) })
+  const token = vault.mint('ap:d2:1')
+  // 转发到非目标会话（SEC-1 已修行为保持）
+  assert.deepEqual(
+    bus.decide({ approvalKey: 'ap:d2:1', decision: 'allowed-once', token, via: 'telegram:button', userId: 42, chatId: '999' }),
+    { ok: false, reason: 'source-chat-mismatch' },
+  )
+  // 渠道不在 allowChats（跨渠道重放点击）
+  assert.deepEqual(
+    bus.decide({ approvalKey: 'ap:d2:1', decision: 'allowed-once', token, via: 'qq:button', userId: 'u2', chatId: '100' }),
+    { ok: false, reason: 'source-chat-mismatch' },
+  )
+  assert.equal(bus.pendingCount(), 1, '范围外点击不核销 wait')
+})
+
+test('bus：D-3 回归——空 allowChats Map（空目标）→ 任意点击均拒（AUTH-1 不放行 wildcard 保持）', () => {
+  const vault = createTokenVault({ secret: 'k' })
+  const bus = createInboundBus({ allowUsers: ['42'], vault })
+  bus.wait('ap:d3:1', 5000, { allowChats: new Map() })
+  const token = vault.mint('ap:d3:1')
+  assert.deepEqual(
+    bus.decide({ approvalKey: 'ap:d3:1', decision: 'allowed-once', token, via: 'telegram', userId: 42, chatId: '100' }),
+    { ok: false, reason: 'source-chat-mismatch' },
+  )
+  assert.equal(bus.pendingCount(), 1)
 })
 
 test('bus：wait 超时 → resolve(null)（静默永不批准）', async () => {

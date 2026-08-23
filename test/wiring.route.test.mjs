@@ -467,7 +467,7 @@ test('审批分流：request.agent 有 id 时 notifyAll 收到的 channelTypes �
   assert.equal(qq.state.cards.length, 1, '绑定的 qq 收到卡片')
   assert.equal(feishu.state.cards.length, 0, '未绑定的 feishu 不发卡片')
   const card = qq.state.cards[0]
-  rig.bus.decide({ approvalKey: card.approvalKey, decision: 'rejected', token: card.token, via: 'qq:button', userId: 'u2' })
+  rig.bus.decide({ approvalKey: card.approvalKey, decision: 'rejected', token: card.token, via: 'qq:button', userId: 'u2', chatId: 'opengrp01' })
   assert.equal(await outcome, 'rejected')
   rig.dispose()
 })

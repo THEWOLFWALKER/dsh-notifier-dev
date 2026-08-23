@@ -699,6 +699,7 @@ export function apply(ctx, config = {}) {
         bus,
         vault,
         store,
+        identity, // CRACK-003 编号回复归属校验：owner 才能代决非本人卡片
         interactive: interactiveInstances,
         approvalConfig: approvalRaw,
         router, // v0.3.2 审批分流：request.agent 可解析时只发绑定通道（quiet 对审批不生效）
@@ -724,6 +725,7 @@ export function apply(ctx, config = {}) {
           vault,
           store,
           notifier,
+          identity, // CRACK-004 hint 兜底编号回复归属闸：仅该渠道 owner 可代答，缺失 fail-closed
           interactive: () => interactiveRaw, // 惰性 getter：桥体每次裁决取最新实例表
           logger,
           config: resolved.questions,
