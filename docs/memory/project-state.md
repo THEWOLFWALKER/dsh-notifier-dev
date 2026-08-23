@@ -1,15 +1,14 @@
 # Project State
 
-Snapshot date: 2026-08-20 (Trae1 relay).
+Snapshot date: 2026-08-23 (ox-alpha relay).
 
 - Canonical development repository: private `https://github.com/THEWOLFWALKER/dsh-notifier-dev`.
 - Public release/source mirror: `https://github.com/THEWOLFWALKER/dsh-notifier`.
-- Branch topology (post-merge 2026-08-20, second merge): private `main` has merged the relay-prompt doc commits (`e576088`/`8ce3329`/`70a3a33`), Trae1's P1-1 protocol guards (`478b87d`, test contract 897), and Trae1's P1-2 error visibility (`fa96463`, merge `1a720ab`, test contract 902). `codex/plugin-security-hardening`, `codex/tech-debt-protocol-guards`, and `codex/tech-debt-error-visibility` are fully contained in `main` and retired as active lines.
+- Branch topology (post-merge 2026-08-23): private `main` (`5d9fdfa`) contains all prior relay work; the P1-3 state-stress branch (`codex/p1-3-state-stress`) adds the crash-stale-lock recovery fix and lands on top. Retired branches: `codex/plugin-security-hardening`, `codex/tech-debt-protocol-guards`, `codex/tech-debt-error-visibility`.
 - Active line: `main` (all relay work merged); new relay topics branch from `main` as `codex/<topic>`.
 - Security hardening commits `bb03f8a` and `ce68543` (A1/A2) are part of `main` history.
 - Canonical source commit: `3fc3f24` (`chore: import dsh-notifier v0.8.5 baseline`).
-- Package version: `0.8.5` (unchanged; P1-1 and P1-2 fixes are recorded under CHANGELOG `[Unreleased]`).
-- Test baseline: `902` total tests after the P1-2 error-visibility fixes (+5 on top of the 897 P1-1 contract). On `2026-08-20` the Linux relay host passed all; the earlier Windows validation passed `898` with 4 desktop adapter failures from the missing BurntToast/PowerShell capability.
+- Test baseline: `906` total tests after the P1-3 state-stress fix (+4 lock-recovery tests on top of the 902 contract). On `2026-08-23` the Linux relay host passed all; the earlier Windows validation passed `898` with 4 desktop adapter failures from the missing BurntToast/PowerShell capability (902-contract era).
 - Engineering archive: source authority. Attached npm archive: release artifact only.
 - Artifact observation: the two archives share source/tests/package metadata; `CHANGELOG.md` is the only common-file difference.
 - Workspace policy: no `node_modules/`, `package-lock.json`, credentials, state files, or generated logs in Git.
@@ -19,15 +18,14 @@ Snapshot date: 2026-08-20 (Trae1 relay).
 
 ## Validation Evidence
 
-- `npm test` (Linux relay host, 2026-08-20): `902 pass`, `0 fail` — includes the 6 P1-1 protocol-shape tests and the 5 P1-2 error-visibility tests; the post-merge `main` baseline also passed 897/897 before P1-2.
-- `node scripts/verify-release.mjs`: passed with documented tests = `902`.
-- `node scripts/gen-channel-matrix.mjs --check`, `node --check src/index.mjs`, `git diff --check`: passed.
+- `npm test` (Linux relay host, 2026-08-23): `906 pass`, `0 fail` — includes the 6 P1-1 protocol-shape tests, 5 P1-2 error-visibility tests, and 4 P1-3 lock-recovery tests.
+- `node scripts/verify-release.mjs`: passed with documented tests = `906`.
 
 ## Current Maintenance Direction
 
 - No new user-facing features are planned for the current cycle. Work is limited to technical debt, bug elimination, protocol/host validation, and documentation truth.
-- The ordered queue is `docs/TECHNICAL_DEBT.md`; P1-1 (Telegram card guards) and P1-2 (error visibility) are done locally and merged into `main`. Open: P1-1 real-device confirmation and long-connection lifecycle, P1-3 state stress, P1-4 admin UI audit, P0-2 registry acceptance (needs npm auth), A3-A6 security plan.
+- The ordered queue is `docs/TECHNICAL_DEBT.md`; P1-1 (Telegram card guards), P1-2 (error visibility), and P1-3 (state stress) are done and merged into `main`. Open: P1-1 real-device confirmation and long-connection lifecycle, P1-4 admin UI audit, P0-2 registry acceptance (needs npm auth), A3-A6 security plan.
 
 ## Next Gate
 
-Next release gate: authenticate npm, re-run the full validation and `npm pack --dry-run --json`, perform disposable-profile registry validation, then publish only after an explicit release decision. The 2026-08-20 relay sessions intentionally did not publish npm.
+Next release gate: authenticate npm, re-run the full validation and `npm pack --dry-run --json`, perform disposable-profile registry validation, then publish only after an explicit release decision. The 2026-08-23 relay session intentionally did not publish npm.

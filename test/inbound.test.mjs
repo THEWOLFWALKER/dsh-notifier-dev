@@ -120,6 +120,69 @@ test('store：跨进程写锁——陈锁（持锁进程已死）当次回收，
   assert.equal(existsSync(lockPath), false)
 })
 
+test('P1-3 store：属主已死的新鲜锁（kill -9 残留）当场回收，不再白等两轮降级裸写', () => {
+  const { path } = tempStorePath()
+  const store = createStore(path)
+  store.set('k', 'v')
+  // 模拟持锁进程 kill -9：锁残留、mtime 新鲜（<10s 陈旧线），但属主 pid 已不存在。
+  // 探测宽限期 500ms——先把 mtime 拨回 600ms 前越过宽限，内容仍是「pid:random」格式。
+  const lockPath = `${path}.lock`
+  writeFileSync(lockPath, '999999999:deadbeef', 'utf8')
+  const aged = new Date(Date.now() - 600)
+  utimesSync(lockPath, aged, aged)
+  const start = Date.now()
+  store.set('k2', 'v2')
+  assert.ok(Date.now() - start < 300, `死锁当场回收，不降级等待（实际 ${Date.now() - start}ms）`)
+  assert.equal(store.get('k2'), 'v2')
+  assert.equal(existsSync(lockPath), false, '回收后正常写入并清理锁文件')
+})
+
+test('P1-3 store：属主存活的新鲜锁绝不误抢——探测到存活进程仍走双轮降级', () => {
+  const { path } = tempStorePath()
+  const store = createStore(path)
+  store.set('k', 'v')
+  // 锁内容指向真实存活的 pid（本进程），mtime 越过探测宽限——必须判活，不能提前抢
+  const lockPath = `${path}.lock`
+  writeFileSync(lockPath, `${process.pid}:alive`, 'utf8')
+  const aged = new Date(Date.now() - 600)
+  utimesSync(lockPath, aged, aged)
+  const start = Date.now()
+  store.set('k2', 'v2')
+  assert.ok(Date.now() - start >= 300, `活锁照常双轮等待后降级（实际 ${Date.now() - start}ms）`)
+  assert.equal(store.get('k2'), 'v2', '降级强写保底可用性')
+  // 属主校验：内容不是自己 → 绝不误删他人锁
+  assert.equal(readFileSync(lockPath, 'utf8'), `${process.pid}:alive`)
+})
+
+test('P1-3 store：探测宽限期内（<500ms）的未知新鲜锁不做死亡推断，维持原语义', () => {
+  const { path } = tempStorePath()
+  const store = createStore(path)
+  store.set('k', 'v')
+  // 死 pid 但锁龄在宽限期内：防「刚创建即读」与 pid 复用竞态，不当场回收
+  const lockPath = `${path}.lock`
+  writeFileSync(lockPath, '999999999:fresh', 'utf8') // mtime = now
+  const start = Date.now()
+  store.set('k2', 'v2')
+  assert.ok(Date.now() - start >= 300, `宽限期内照常等待降级（实际 ${Date.now() - start}ms）`)
+  assert.equal(store.get('k2'), 'v2')
+  assert.equal(existsSync(lockPath), true, '宽限期内不误删外来锁')
+})
+
+test('P1-3 store：畸形/外来锁内容（无 pid 章）不做死亡推断，维持 10s mtime 判据', () => {
+  const { path } = tempStorePath()
+  const store = createStore(path)
+  store.set('k', 'v')
+  const lockPath = `${path}.lock`
+  writeFileSync(lockPath, 'garbage-without-pid-stamp', 'utf8')
+  const aged = new Date(Date.now() - 600)
+  utimesSync(lockPath, aged, aged)
+  const start = Date.now()
+  store.set('k2', 'v2')
+  assert.ok(Date.now() - start >= 300, `不可解析锁照常等待降级（实际 ${Date.now() - start}ms）`)
+  assert.equal(store.get('k2'), 'v2')
+  assert.equal(readFileSync(lockPath, 'utf8'), 'garbage-without-pid-stamp', '外来锁内容不被触碰')
+})
+
 test('store：跨进程写锁——新鲜锁占位时两轮等待后降级强写，他人锁绝不误删（v0.6.5 R4-1-P2-2 双轮等待）', () => {
   const { path } = tempStorePath()
   const store = createStore(path)

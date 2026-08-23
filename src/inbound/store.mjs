@@ -131,10 +131,36 @@ export function createStore(filePath) {
   const isStaleLock = () => {
     try { return Date.now() - statSync(lockPath).mtimeMs > 10_000 } catch { return false }
   }
+  // P1-3 跨进程状态压力审查（2026-08-23）：mtime>10s 的陈锁判据意味着「持锁进程崩溃
+  // （kill -9/断电/OOM）后，残留锁最长 10s 内不算陈旧」——窗口内所有进程的每次 save 都
+  // 白等两轮 ~480ms 再降级无锁写入（丢写保护失效），CLI↔宿主并发写可能静默丢键。
+  // 修复：利用 v0.6.5 属主落章的 pid:random 格式做死亡探测——锁龄超过 500ms 宽限期
+  // （防「刚创建就被读」与 pid 复用竞态）后 kill(pid,0)：ESRCH=确死，视同陈锁当场回收；
+  // 存活（含 EPERM 他用户进程）与无法解析的外来锁内容一律返回 false，维持旧行为。
+  // 方向保守：pid 被无关新进程复用只会让恢复退回 10s mtime 判据，绝不提前抢活锁。
+  const LOCK_PID_PROBE_MIN_AGE_MS = 500
+  const deadHolderLock = () => {
+    try {
+      const ageMs = Date.now() - statSync(lockPath).mtimeMs
+      if (ageMs <= LOCK_PID_PROBE_MIN_AGE_MS) return false
+      const pid = Number(readFileSync(lockPath, 'utf8').split(':')[0])
+      if (!Number.isInteger(pid) || pid <= 0) return false // 外来/畸形锁内容：不做死亡推断
+      try {
+        process.kill(pid, 0)
+        return false // 探测成功 = 持有者活着（慢/被调度延迟），继续等
+      } catch (probeError) {
+        return probeError.code === 'ESRCH' // 仅确死回收；EPERM 视同存活，不冒险
+      }
+    } catch {
+      return false // stat/read 失败（锁刚被清等）：交给正常抢占流程
+    }
+  }
+  const recoverableLock = () => isStaleLock() || deadHolderLock()
+
   const acquireLock = () => {
     try { mkdirSync(dirname(filePath), { recursive: true }) } catch { /* 目录已在/不可建：后续自然失败 */ }
-    // 陈锁清理：持锁进程崩溃没释放时，按 mtime 判死回收
-    if (isStaleLock()) {
+    // 陈锁清理：持锁进程崩溃没释放时，mtime 判死（>10s）或属主 pid 探测确死（P1-3）当场回收
+    if (recoverableLock()) {
       try { unlinkSync(lockPath) } catch { /* 竞态：他人已清/已抢，继续走抢占 */ }
     }
     const ownerId = `${process.pid}:${Math.random().toString(36).slice(2, 8)}`
@@ -152,18 +178,18 @@ export function createStore(filePath) {
             } catch { /* 锁已被回收：内容比对失败即放弃（锁已易主，不能删） */ }
           }
         } catch {
-          // 锁被占：自旋等待（首拍立即重试撞运气，之后 4ms 一拍；每 8 拍复查陈锁）
+          // 锁被占：自旋等待（首拍立即重试撞运气，之后 4ms 一拍；每 8 拍复查陈锁/死锁）
           if (attempt > 0) {
             syncSleep(4)
-            if (attempt % 8 === 0 && isStaleLock()) {
+            if (attempt % 8 === 0 && recoverableLock()) {
               try { unlinkSync(lockPath) } catch { /* 他人已清/已抢：下一拍抢占 */ }
             }
           }
           continue
         }
       }
-      // 首轮等满仍被占：锁若已陈旧上面就会清，仍新鲜说明持锁者活着——再等一轮
-      if (round === 0 && isStaleLock()) {
+      // 首轮等满仍被占：锁若可判回收上面就会清，仍不可回收说明持锁者大概率活着——再等一轮
+      if (round === 0 && recoverableLock()) {
         try { unlinkSync(lockPath) } catch { /* 他人已清/已抢 */ }
         continue
       }
