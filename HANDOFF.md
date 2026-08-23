@@ -13,7 +13,7 @@
 
 - 本轮 agent：`ox-alpha / span/ox-alpha / Linux sandbox (root, Node v22.23.2)`，两轮接力：
   ①P1-3 跨进程状态压力审查（merge `52c467a`，契约 902→906）；
-  ②公共镜像 v0.8.5 发布内容接力合入——issue #11 ask_user 编号回复修复（镜像 `74e5d54` cherry-pick 为 `4a1b8f7`）与 PR #9 飞书扫码 SDK 适配（镜像 `cbaab26` cherry-pick 为 `5e42768`），契约 906→909。分支 `codex/relay-mirror-v085-fixes`。
+  ②公共镜像 v0.8.5 发布内容接力合入——issue #11 ask_user 编号回复修复（镜像 `74e5d54` cherry-pick 为 `4a1b8f7`）与 PR #9 飞书扫码 SDK 适配（镜像 `cbaab26` cherry-pick 为 `5e42768`），契约 906→909，merge `d35f5e6`；分支已合并退役。
 - **镜像接力背景**：公共镜像 `THEWOLFWALKER/dsh-notifier` 的 main（`20bfff9`，2026-08-23）已发布 npm v0.8.5 并含 issue #11 修复（作者 @Lana0741 报告、维护者修复）与 PR #9（贡献者 @chenxiccc，已 merge）。私有 main 与公共镜像是两条无关历史，不能 git merge——按内容 cherry-pick 接力。私有侧 P1-1/P1-2/P1-3 三轮技术债成果**未在镜像中**，属私有线领先内容。
 - 镜像遗留卫生问题（记录不改）：镜像 main 提交了 `node_modules/`（947 文件）与 `package-lock.json`，违反项目军规；下次从镜像同步时严禁带入（`.gitignore` 已覆盖，cherry-pick 只取源码文件即可）。
 - 镜像开放 issue 与私有 main 对照（本轮核验）：#1/#6 飞书 WSClient logger:null → 私有已修（v0.7.3 noop sdkWsLogger）；#2 `${ENV:NAME}` 入站解析 → 私有已修（v0.6.1 resolveEnvRefs）；#4 飞书三问 → 私有 v0.7.3 闭环；#8 加签 19021 → 私有已修（feishu.mjs #8 注释）；#11 → 本轮合入。剩余开放项 #3/#5/#7 属功能请求（当前周期不新增功能，挂起）；#4 若真机复现残留再开新 workstream。
