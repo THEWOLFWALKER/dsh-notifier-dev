@@ -28,4 +28,4 @@
 - Do not touch: 其他 workstream 保留文件；admin UI；渠道 adapter 协议面——均未触碰。
 - Validation: `npm test` 906/906（67s）· `node scripts/verify-release.mjs` ok(tests=906) · `node scripts/gen-channel-matrix.mjs --check` ok(27 渠道) · `node --check src/index.mjs` ok · `git diff --check` ok
 - Known gaps: P1-3 余项——stale `file:`/copied-install 行为归 P0-2 registry 验收流程；SDK 重连/销毁生命周期归 P2-3 兼容矩阵；防御性 catch 覆盖已在 P1-2 完成。Windows 主机未复跑（pid 探测在 Node 全平台可用，EPERM→视同存活保守正确，但建议下一位在有条件时复验 4 项新测试）。
-- Handoff: 1 个逻辑 commit 推送至私有仓库；测试契约 902→906（四处引用同步：双 README 徽章/正文、HANDOFF、package.json dshQuality）。下一步见 HANDOFF 当前接力交代。
+- Handoff: 1 个逻辑 commit `8f442f1` 推送至私有仓库；测试契约 902→906（四处引用同步：双 README 徽章/正文、HANDOFF、package.json dshQuality）。2026-08-23 已 no-ff 合并回 `main`（merge `52c467a`），分支退役。下一步见 HANDOFF 当前接力交代。

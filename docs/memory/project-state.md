@@ -4,7 +4,7 @@ Snapshot date: 2026-08-23 (ox-alpha relay).
 
 - Canonical development repository: private `https://github.com/THEWOLFWALKER/dsh-notifier-dev`.
 - Public release/source mirror: `https://github.com/THEWOLFWALKER/dsh-notifier`.
-- Branch topology (post-merge 2026-08-23): private `main` (`5d9fdfa`) contains all prior relay work; the P1-3 state-stress branch (`codex/p1-3-state-stress`) adds the crash-stale-lock recovery fix and lands on top. Retired branches: `codex/plugin-security-hardening`, `codex/tech-debt-protocol-guards`, `codex/tech-debt-error-visibility`.
+- Branch topology (post-merge 2026-08-23): private `main` = `52c467a`, the no-ff merge of `codex/p1-3-state-stress` (P1-3 crash-stale-lock recovery, contract 902 → 906). All prior relay lines (security-hardening, protocol-guards, error-visibility) and the P1-3 branch are contained in `main` and retired.
 - Active line: `main` (all relay work merged); new relay topics branch from `main` as `codex/<topic>`.
 - Security hardening commits `bb03f8a` and `ce68543` (A1/A2) are part of `main` history.
 - Canonical source commit: `3fc3f24` (`chore: import dsh-notifier v0.8.5 baseline`).

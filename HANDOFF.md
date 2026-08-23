@@ -9,7 +9,7 @@
 ## 当前接力交代（2026-08-23）
 
 - 当前 canonical 开发仓库：私有 `THEWOLFWALKER/dsh-notifier-dev`；公共 `THEWOLFWALKER/dsh-notifier` 只做发布/公开源码镜像。
-- 分支拓扑（2026-08-23）：私有 `main`（`5d9fdfa`）已含全部历史接力成果；本轮 `codex/p1-3-state-stress` 从 main 拉出，完成 P1-3 状态压力审查并合入修复。历史接力分支（protocol-guards / error-visibility / security-hardening）均已退役包含于 main。
+- 分支拓扑（2026-08-23 合并后校准）：私有 `main` = `52c467a`（merge `codex/p1-3-state-stress`），已含全部接力成果——hardening 文档提交、P1-1 协议护栏（891→897）、P1-2 错误可见性（897→902）、本轮 P1-3 状态压力（902→906，分支 `8f442f1` 已合并退役）；下一位 agent 从 `main` 拉新分支。
 - 本轮 agent：`ox-alpha / span/ox-alpha / Linux sandbox (root, Node v22.23.2)`，完成 **P1-3 跨进程状态压力审查**：一次性多进程 harness 实测 9 场景（并发不相交键零丢失、读收敛 ~3ms、损坏自愈双取证、SIGKILL 风暴文件不撕裂）；确认并修复「崩溃残留新鲜锁 10s 内不被回收 → 每次写白等 ~480ms 降级裸写」缺陷（属主 pid 死亡探测 + 500ms 宽限，保守方向），+4 回归测试，契约 902→906。详见 `.agents/workstreams/p1-3-state-stress.md` 与 CHANGELOG Unreleased。
 - 历史接力：Terra 审查 agent（relay 流程审查，无代码提交）；Trae1 两轮（P1-1 Telegram 卡片协议护栏 891→897；P1-2 错误可见性审计 897→902）——记录见对应 workstream 文件。
 - 接力规则：每个 agent 必须更新自己的 workstream（身份、模型/工具、机器、文件、测试、review、风险、下一步、commit SHA），并在完成时刷新本节、提交、推送和确认工作树干净。
