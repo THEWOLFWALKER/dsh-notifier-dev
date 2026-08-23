@@ -13,6 +13,18 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 - 方向保守：pid 被无关新进程复用只会让恢复退回原 10s mtime 判据，绝不提前抢活锁；外来格式锁内容永不触碰。
 - 测试：+4（死属主新鲜锁当场回收不降级、活属主照常双轮降级且不误删、宽限期内不推断、畸形内容维持 mtime 判据）；测试契约 902 → 906，四处计数引用同步。
 
+### 修复：ask_user 编号回复在出站/入站异名与纯入站通道失效（issue #11，2026-08-23 自公共镜像接力合入）
+
+- `src/questions/router.mjs`：`pushQuestion` 计算 `hintChannels` 时，把「该问题目标用户已绑定、卡片未送达」的交互入站通道一并计入（如 `qq`/`wechat`），编号话术经入站 `sendText` 送达纯入站通道（wechat iLink 无出站文本可走）；已由出站文本送达的通道（同名 type 或别名对 `qq-bot↔qq`）只补通道名不重发，避免同号双发。修复 QQ 官方机器人（`qq-bot` 出站 ↔ `qq` 入站异名）与微信 iLink（inbound-only）场景下 `ask_user` 编号回复完全失效、并落入 conversation 路由污染对话的问题。
+- 安全约束不变：只加目标用户已绑定（`notifyTargets()` 三级解析非空）的通道，话术确实送达才入 `hintChannels`，维持 SEC-2 fail-closed——没收到话术的渠道/用户裸编号仍拒绝并 warn。
+- 测试：`test/questions.test.mjs` 新增 3 用例（QQ 异名命中且不双发、iLink 纯入站 sendText 送达后命中、未绑定目标通道不补入 hintChannels）。镜像侧 885→888；本仓库契约以 Unreleased 计数为准。
+
+### 修复：飞书扫码一键建应用适配新版 SDK 协议（PR #9，2026-08-23 自公共镜像接力合入）
+
+- `src/inbound/_feishu-register.mjs`：@larksuiteoapi/node-sdk ≥1.73 的 `registerApp` 回调名从 `onQrCode` 变更为 `onQRCodeReady`（接收 `{ url, expireIn }`），旧名会让 SDK 抛 "onQRCodeReady is not a function"；`addons` 从已弃用的 `resources` 名值映射改为 `normalizeAddons` 白名单协议（`preset/scopes/events/callbacks`），旧结构会抛 "addons.resources is not allowed" 导致扫码建应用失败。
+- `scopes.tenant` 扩展为与 feishu-bot 长连接收发能力一一对应的权限集（p2p/群 @/群消息只读 + `im:message:send_as_bot` 出站）；`events` 订阅 `im.message.receive_v1`，`callbacks` 订阅 `card.action.trigger`（审批/停止按钮回调）。
+- `test/channel-login.test.mjs`：fake SDK 与断言同步新协议（onQRCodeReady `{url}` → onQr 透传、scopes/events/callbacks 结构）。
+
 ### 修复：P1-2 错误可见性——三处静默故障路径补告警（2026-08-20）
 
 - 审计范围：全量扫描 src/ 的 356 个 catch 块（141 有日志可见 / 139 有注释的刻意静默 / 7 前端 UI / 61 无注释静默逐个核实）。`_shared.mjs` 5 处为误报（catch 后分类重抛）；`ledger.mjs` 静默是文档化设计军规（账本失败绝不影响推送）；tokens/verifyToken 等 fail-closed 静默为安全正确行为——均不动。
@@ -101,11 +113,6 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 - 新增用例覆盖：动作卡来源校验三态（命中/越界/历史卡兼容放行）、TG/飞书点击会话透传、提问 allowChats 与 onChannel 收紧、WxPusher uid 形态与公网 fail-closed、孤儿清扫联动（`test/actions.test.mjs`、`test/inbound.telegram.test.mjs`、`test/inbound.feishu.test.mjs`、`test/inbound.wxpusher.test.mjs`、`test/questions.test.mjs`、`test/wiring.route.test.mjs`、`test/approval.test.mjs`、`test/inbound.test.mjs`）。
 - `npm test`：历史版本记录为 885/885 通过（862 基线 + 23 新增）。
 
-### 修复：ask_user 编号回复在出站/入站异名与纯入站通道失效（issue #11，2026-08-23 自公共镜像接力合入）
-
-- `src/questions/router.mjs`：`pushQuestion` 计算 `hintChannels` 时，把「该问题目标用户已绑定、卡片未送达」的交互入站通道一并计入（如 `qq`/`wechat`），编号话术经入站 `sendText` 送达纯入站通道（wechat iLink 无出站文本可走）；已由出站文本送达的通道（同名 type 或别名对 `qq-bot↔qq`）只补通道名不重发，避免同号双发。修复 QQ 官方机器人（`qq-bot` 出站 ↔ `qq` 入站异名）与微信 iLink（inbound-only）场景下 `ask_user` 编号回复完全失效、并落入 conversation 路由污染对话的问题。
-- 安全约束不变：只加目标用户已绑定（`notifyTargets()` 三级解析非空）的通道，话术确实送达才入 `hintChannels`，维持 SEC-2 fail-closed——没收到话术的渠道/用户裸编号仍拒绝并 warn。
-- 测试：`test/questions.test.mjs` 新增 3 用例（QQ 异名命中且不双发、iLink 纯入站 sendText 送达后命中、未绑定目标通道不补入 hintChannels）。镜像侧 885→888；本仓库契约以 Unreleased 计数为准。
 
 ## [0.8.3] - 2026-08-18
 
