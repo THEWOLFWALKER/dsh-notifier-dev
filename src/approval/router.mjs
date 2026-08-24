@@ -12,6 +12,7 @@
 import { createEscalationChain } from './escalation.mjs'
 import { normalizeInbound } from '../inbound/_contract.mjs'
 import { guardTargets } from '../inbound/target-guard.mjs'
+import { createInteractionLedger } from '../interaction/ledger.mjs'
 import { workspaceOf } from '../routing/session-registry.mjs'
 
 const OUTCOME_ALLOWED = 'allowed-once'
@@ -100,58 +101,44 @@ export function registerApprovalHandler(deps) {
     .map((entry) => DISPLAY_NAMES[entry.channel] ?? entry.channel)
     .join('/')
 
-  const ledger = {
-    add(key, row) {
-      store.set(key, { ...row, status: 'pending', createdAt: Date.now() })
-    },
-    get(key) {
-      return store.get(key)
-    },
-    resolve(key, decision) {
-      const row = store.get(key)
-      if (row === undefined) return false
-      store.set(key, { ...row, status: 'resolved', decision, resolvedAt: Date.now() })
-      return true
-    },
-    terminate(key, extra = {}) {
-      const row = store.get(key)
-      if (row === undefined || row.status !== 'pending') return false
-      store.set(key, { ...row, ...extra, status: 'resolved', decision: 'terminated', resolvedAt: Date.now() })
-      return true
-    },
-    /**
-     * 最近一条待决审批（编号回复降级用）。匹配优先级：
-     *  1) 精确：卡片实际送达过该 (channel,userId)；
-     *  2) 同渠道：卡片送达过该 channel（他人代决兜底）；
-     *  3) v0.6.4 intended 兜底：该 channel 属于本审批的意图送达渠道（分流解析结果；
-     *     全局广播时 = 全部交互渠道）——堵住「卡片发送失败但广播文案教用户回复 1」的死路
-     *     （审查 R1-P2-1）。注意 intended 只做 channel 级（广播无用户定向），跨渠道的
-     *     非意图渠道（如分流只发 feishu 时 telegram 的日常裸 1）仍拒绝——收紧价值保留。
-     * CRACK-003：返回值带 evidence（exact|onChannel|intended）——编号回复归属闸据此区分
-     * 「卡片发本人」与「同渠道他人卡片/广播兜底」，后者仅 owner 可代决（fail-closed）。
-     */
-    latestPendingFor(channel, userId) {
-      let exact = null
-      let onChannel = null
-      let intended = null
-      for (const key of store.keys('ap:')) {
-        const row = store.get(key)
-        // C2（P1-5）：无存活 waiter 的 pending 行不参与编号回复匹配。
-        // 进程崩溃、重启或 ledger.resolve 写盘失败会留下 pending 僵尸行；跳过它们
-        // 让后续真实待决审批仍有机会被裁决，也避免「已被处理」误导回执。
-        if (row?.status !== 'pending' || !liveWaiters.has(key)) continue
-        const pushed = Array.isArray(row.pushedTo) ? row.pushedTo : []
-        if (pushed.some((target) => target.channel === channel)) {
-          if (onChannel === null || row.createdAt > onChannel.row.createdAt) onChannel = { key, row, evidence: 'onChannel' }
-          if (pushed.some((target) => target.channel === channel && String(target.userId) === String(userId))) {
-            if (exact === null || row.createdAt > exact.row.createdAt) exact = { key, row, evidence: 'exact' }
-          }
+  // Interaction Core：ap: 行统一状态机（pending→resolved，decision 终态裁决）。
+  // latestPendingFor 归属/兜底启发式（exact/onChannel/intended + liveWaiters 僵尸过滤）
+  // 是审批特有语义，保留在链内——核心只提供原子账本操作（见 interaction/ledger.mjs）。
+  const core = createInteractionLedger({ keyPrefix: 'ap:', store })
+  /**
+   * 最近一条待决审批（编号回复降级用）。匹配优先级：
+   *  1) 精确：卡片实际送达过该 (channel,userId)；
+   *  2) 同渠道：卡片送达过该 channel（他人代决兜底）；
+   *  3) v0.6.4 intended 兜底：该 channel 属于本审批的意图送达渠道（分流解析结果；
+   *     全局广播时 = 全部交互渠道）——堵住「卡片发送失败但广播文案教用户回复 1」的死路
+   *     （审查 R1-P2-1）。注意 intended 只做 channel 级（广播无用户定向），跨渠道的
+   *     非意图渠道（如分流只发 feishu 时 telegram 的日常裸 1）仍拒绝——收紧价值保留。
+   * CRACK-003：返回值带 evidence（exact|onChannel|intended）——编号回复归属闸据此区分
+   * 「卡片发本人」与「同渠道他人卡片/广播兜底」，后者仅 owner 可代决（fail-closed）。
+   */
+  const latestPendingFor = (channel, userId) => {
+    let exact = null
+    let onChannel = null
+    let intended = null
+    for (const key of core.scanKeys()) {
+      const row = core.get(key)
+      // C2（P1-5）：无存活 waiter 的 pending 行不参与编号回复匹配。
+      // 进程崩溃、重启或 ledger.resolve 写盘失败会留下 pending 僵尸行；跳过它们
+      // 让后续真实待决审批仍有机会被裁决，也避免「已被处理」误导回执。
+      if (!core.isPending(row) || !liveWaiters.has(key)) continue
+      const pushed = Array.isArray(row.pushedTo) ? row.pushedTo : []
+      if (pushed.some((target) => target.channel === channel)) {
+        if (onChannel === null || row.createdAt > onChannel.row.createdAt) onChannel = { key, row, evidence: 'onChannel' }
+        if (pushed.some((target) => target.channel === channel && String(target.userId) === String(userId))) {
+          if (exact === null || row.createdAt > exact.row.createdAt) exact = { key, row, evidence: 'exact' }
         }
-        if (intended === null && isIntendedChannel(row, channel)) intended = { key, row, evidence: 'intended' }
       }
-      return exact ?? onChannel ?? intended
-    },
+      if (intended === null && isIntendedChannel(row, channel)) intended = { key, row, evidence: 'intended' }
+    }
+    return exact ?? onChannel ?? intended
   }
+  // 核心账本 + 审批专用归属启发式合成同一 ledger 面（其余调用点零改动）。
+  const ledger = { ...core, latestPendingFor }
 
   /** v0.6.4：row 的意图渠道判定——intended 数组含该渠道，或 null（全局广播）时任意交互渠道。 */
   function isIntendedChannel(row, channel) {
