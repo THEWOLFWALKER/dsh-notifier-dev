@@ -18,7 +18,12 @@
 - 镜像卫生问题已清理（2026-08-23）：公共镜像 `main` 删除误提交的 `node_modules/`（947 文件）与 `package-lock.json`，tracked 文件从 1104 降至 156；`.gitignore` 已覆盖，不会再入。
 - 镜像开放 issue 与私有 main 对照（本轮核验）：#1/#6 飞书 WSClient logger:null → 私有已修（v0.7.3 noop sdkWsLogger）；#2 `${ENV:NAME}` 入站解析 → 私有已修（v0.6.1 resolveEnvRefs）；#4 飞书三问 → 私有 v0.7.3 闭环；#8 加签 19021 → 私有已修（feishu.mjs #8 注释）；#11 → 本轮合入。剩余开放项 #3/#5/#7 属功能请求（当前周期不新增功能，挂起）；#4 若真机复现残留再开新 workstream。
 - 项目本地 neat-freak canonical skill：`.agents/skills/neat-freak/SKILL.md`；`.claude/skills/`、`.codex/skills/`、`.opencode/skills/` 只有入口指针。
-- **在途未发布分支 `crack-fix-batchA-v0.8.7`（2026-08-23）**：破甲修复分批推进，尚未合 main、未发版，故四处版本/计数串仍停在已发布的 v0.8.6 / 909 契约。已完成批次 A（CRACK-001/002/003/004 越权裁决族 fail-closed，`013ec48`，契约 927）与批次 B-1（引导码 0600 文件交付 + 过期码泵码堵死 + 文案去 stderr，契约 940，workstream `.agents/workstreams/crack-fix-b1-bootstrap-code.md`）。批次计划在 `.agents/workstreams/crack-fix-plan/`（`PLAN.md` 总表、`PLAN-B1.md` 批次 B-1），残差与后续批次登记在 `~/dsh-notifier-handoff/20-techdebt.md`。合 main / 发版前需补真机验收（引导码文件流程、越权裁决回归）。
+- **在途未发布分支 `crack-fix-batchA-v0.8.7`（2026-08-23 起，快照刷新 2026-08-24 neat 轮）**：破甲修复分批推进，**尚未合 main、未发版**，故四处版本/计数串仍停在已发布的 v0.8.6 / 909 契约（发版轮再统一提到 v0.8.7 / 1012）。
+  - 已提交：批次 A（CRACK-001~004 越权裁决族 fail-closed，`013ec48`，契约 909→927 —— 该提交遗漏 CHANGELOG，本轮已回补）、批次 B-1（引导码 0600 文件交付 + 过期码泵码堵死 + 文案去 stderr，`8e6739c`，契约 927→940，workstream `.agents/workstreams/crack-fix-b1-bootstrap-code.md`）、批次 B-键族4（入站内存表/`wechat:ctx:` 收上界，`f3fce85`，契约 940→994）。
+  - **工作区未提交**（按各轮任务约束）：批次 C1（TG/飞书来源比对 fail-closed，994→1001）、C2（审批桥 `liveWaiters` 僵尸行闸门，1001→1004）、C3（复合键冒号截断，1004→1007）、REVIEW-ABC 独立审查的 6 个 bug 修复（1007→**1012**）。改动落在 `src/actions.mjs`、`src/admin/api.mjs`、`src/approval/router.mjs`、`src/inbound/{telegram-bot,feishu-bot,identity,wxpusher-callback}.mjs` 与 8 份对应测试。
+  - **审查结论**：批次 A+B+C 已过一轮非实现者独立 review（`.agents/workstreams/crack-fix-plan/REVIEW-ABC.md`），**发现 6 个 bug 全部修完、0 遗留** —— 含一个致命语法错（`identity.mjs` 多括号 → 插件 import 即崩，而交接摘要却声称全绿）、一个过度收紧引入的新缺陷（管理台清理入口被锁死）、三个恒绿摆设、一个装配缝（删掉 `index.mjs` 两处 `identity` 传参仍 1011 全绿）。全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1012/1012**，连跑 3 轮一致。
+  - **真机门（合 main / 发版前必过，宪法 #8）**：引导码文件交付端到端（起真引导实例 → `cat` 码文件 → 手机 `/pair`）、越权裁决回归（owner 代决 / 非 owner 被拒）、TG 卡片消息删除后回调的真实形状、飞书长连接负载 `context.open_chat_id` 恒带性（不恒带则 C1 会误拒真实点击 —— 主要回滚触发条件）、钉钉/QQ 超上限淘汰行为、微信真实 `context_token` 长度分布、C2 真实 kill -9 重启后僵尸行与新审批并存的裁决走向。清单基线见 `~/dsh-notifier-handoff/06-retest-checklist.md`。
+  - 计划与残差：批次计划在 `.agents/workstreams/crack-fix-plan/`（`PLAN.md` 总表、`PLAN-B1.md`、`PLAN-B-k4-fin.md`、`REVIEW-ABC.md`、各轮 `SHORT-*.md`）；残差逐条登记在 `~/dsh-notifier-handoff/20-techdebt.md`。
 - 下一步：真机闭环清单见 `docs/memory/risks.md`（TG 护栏边界、长连接重连可见性、其他渠道 payload 证据、BurntToast 主机、npm 验收）。当前周期不再新增功能；继续 P1-4 admin UI 审计、安全计划 A3-A6、P2 结构性债务。
 
 ---
@@ -65,7 +70,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 用户文档 | `docs/guide.md` · `docs/upgrade-guide.md` · `docs/upgrade-guide.en.md` | README 双语均链接 guide；升级/回滚是装包用户高频需求 |
 | 互操作契约 | `PLUGINS.md` | 其他插件作者消费 notifier 服务时的契约（README 链接） |
 | CLI | `scripts/`（channel-login · test-channel · route · gen-channel-matrix 等） | guide.md 教用户直接 `node scripts/...` |
-| 测试 | `test/` | 行为契约随包分发是项目惯例（906 用例，装包即可 `npm test`） |
+| 测试 | `test/` | 行为契约随包分发是项目惯例（909 用例，装包即可 `npm test`） |
 
 **仅工程仓库（不进 npm 包）**：
 
@@ -245,7 +250,7 @@ src/
 ## 8. 快速上手
 
 ```bash
-npm test                    # 906 测试，约 2 分钟
+npm test                    # 909 测试（已发布 v0.8.6 契约），约 2 分钟
 npm run lint 2>/dev/null || node --check src/index.mjs   # 无 lint 配置的话用 node --check
 node scripts/route.mjs --help        # 路由 CLI
 node scripts/channel-login.mjs --help

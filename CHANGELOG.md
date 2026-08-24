@@ -5,6 +5,55 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 审查修复：批次 A+B+C 独立 review 修掉 6 个缺陷（REVIEW-ABC，2026-08-24）
+
+由非实现者身份的独立审查员按 `.agents/workstreams/crack-fix-plan/task-review-abc.md` 复审已落地的批次 A（`013ec48`）、B-1（`8e6739c`）、B-键族4（`f3fce85`）与工作区的 C1/C2/C3，报告见同目录 `REVIEW-ABC.md`。**发现 6 个缺陷、全部修完、0 遗留**；其中 3 个是「注释宣称了但测试不咬人」的恒绿摆设，1 个是致命语法错，1 个是过度收紧引入的新缺陷，1 个是装配缝。
+
+- **致命：`src/inbound/identity.mjs` 多一个右花括号（BUG-1）**。C3 改动在 `readPending()` 的 for 循环后遗留一层 `}`，`return` 落在函数体外 → `node --check` 直接报 `SyntaxError: Illegal return statement`。该文件是 `src/index.mjs` 的静态 import，语法错等于**整个插件 import 即崩**（身份层、审批归属闸、管理台成员页全线不可用）。交接摘要 `SHORT-C3.md` 却声称 `node --check` OK / 1004 全绿 —— 说明该摘要写于错误引入之前、工作区实际状态从未复验，是宪法 #8 的典型漏网形态。已删除多余括号，并对全部改动文件 + `src/index.mjs` 重跑 `node --check`。
+- **过度收紧反锁死清理入口（BUG-3，行为回退）**：C3 曾在 `src/admin/api.mjs` 的 `parseMemberKey` 增加「userId 含 `:` 即拒收」。但该函数只服务四条**读改删**路由（`PUT` 改角色 / `DELETE` 删成员 / `confirm` / `dismiss`），而 C3 之前落盘的存量冒号绑定行（旧 wxpusher `UID_PATTERN` 放行冒号 → `wxpusher:UID:EVIL` 直落，实测 `ok:true` 且升级后 `identity.allows()` 仍为 `true`）**仍照常准入**，却再也无法经管理台降级或删除 —— 等于把一条可能越权的 owner 身份永久钉死在白名单里，是宪法 #7「fail-open 要有度」的反面。已撤回该行拒收、恢复「只按第一个冒号切」的容忍语义，并在函数注释写明**为何故意不在此拒**：C3 的纵深防御设在**写入面**（`addBinding` / `addPending` + wxpusher `UID_PATTERN` 均已 fail-closed，新的冒号身份进不来），读改删面必须保留补救能力；`confirm` 不构成提权面（`confirmPending` 末端仍走 `addBinding`，冒号 userId 在那里被拒，实测 `ok:false`）。
+- **三处恒绿摆设补上守卫（源码判据正确，只补测试）**：① CRACK-001 的注释宣称「异常形状 `srcChats`（数组等）一律 fail-closed」，把 `graceSourceAllowed` 的形状判据整条短路成 `if (false)` 后 `test/actions.test.mjs` 25 例**全绿**（BUG-4）—— 风险实体是数组形状 `srcChats` 过不了严校验分支的 plain-object 判定、若又能吃宽限窗则窗内任意会话可点；② `readPending` 的冒号过滤删掉后 `identity` + `admin-members` 54 例全绿（BUG-5）—— 旧版 `app_subscribe` 可把 `wxpusher:UID:EVIL` 写进待确认表，读盘仍认这类键则管理台会展示歧义身份、点「确认」即触碰越权路径；③ 顺手把 `src/actions.mjs` 该分支的判据与注释对齐（异常形状不再借道 `undefined/null` 分支的宽限窗）。
+- **装配缝：删掉 `src/index.mjs` 两处 `identity` 传参，1011 例仍全绿（BUG-6）**。CRACK-003（审批编号回复归属闸）与 CRACK-004（提问 hint 兜底归属闸）的生效完全依赖 `index.mjs` 把 `identity` 传进 `registerApprovalHandler` 与 `createQuestionBridge`，而两处 `isAuthorizedDecider*` 都是 `if (!identity) return false` —— identity 缺失时**静默 fail-closed**：owner 代决能力整条消失、零告警、零测试可见，真机表现为「owner 回复 1 被拒『此审批不是发给你的』」而 mock 全绿。根因是所有函数级用例都自己显式传 `identity`，天然测不到装配缝。已补装配级用例走真实 `apply()` 并对两个装配点做源码级钉死（行为级要跑通 owner 代决需真卡片往返，属真机门；而这条缝的失效模式恰恰是「静默不报错」）。该用例自审时还发现初版断言失败会跳过 `cleanup()`、`apply()` 起的 wxpusher HTTP 句柄悬空把测试文件从 0.35s 吊到 120s（node:test 超时），已改 `try/finally`，变异下现在 391ms 快速见红。
+- **测试自身的墙钟竞态（BUG-2）**：`test/identity.test.mjs` 三例过期码用例用 `pairing.mint({ ttlMs: 1 })` 后立刻走 `bus.accept`（该路径不注入 `now`，用真实钟），`expiresAt = mintedAt + 1` 在同毫秒内完成时码**尚未过期** → 断言前提被静默破坏，全量偶发红（`B1-6b` 实际收到「配对成功」而非「已重铸一枚引导码」）。3000 次采样实测：`ttlMs:1` 有 2867/3000（~95%）概率码仍有效，`ttlMs:0` 为 0/3000（确定性过期）。三处改 `ttlMs: 0` 并就地写明「为何是 0 不是 1」防改回；其余 `ttlMs:1` 用例都显式注入 `now: Date.now() + 5000`，不受墙钟影响，故意不动。`test/identity.test.mjs` 连跑 40 轮全绿。
+- 测试：+5（`actions` 异常形状 `srcChats` 四态在宽限窗内一律 fail-closed；`admin-members` 存量冒号行仍可降级/删除 + confirm 冒号键不得落成绑定；`identity` `readPending` 冒号键清扫且不复活为绑定；`wiring.route` 装配完整性）+ 3 处去竞态。测试契约 1007 → **1012**。
+- 计数订正：`REVIEW-ABC.md` 把本轮记作「1006 → 1012（+6）」，但其自身改动清单只列出 5 条新用例；2026-08-24 在 `f3fce85` worktree 与当前工作区上逐文件实测复核为 **994（B-k4 基线）+ C1 7 + C2 3 + C3 3 = 1007 → 1012（+5）**，以本行为准。
+- 验证：`node --test test/*.test.mjs test/*.spec.mjs` = 1012/1012，连跑 3 轮一致；`verify-release.mjs`（v0.8.6，documented tests=909）/ `gen-channel-matrix --check`（27 渠道）/ 全量 `node --check` 通过；9 次变异验证中 7 次立即见红、2 次存活即上述 BUG-4/BUG-5，补测后复验全部见红。
+- **未闭环（登记不遮掩）**：真机门仍未过（C1/C2/B1 的真实回调形状与飞书 `open_chat_id` 字段位置只有 mock 覆盖，按 `06-retest-checklist.md` 过真机后再发版）；四处版本串与测试计数仍停在 v0.8.6 / 909（发版轮动作，本分支未发版）；`src/inbound/_shared` 侧 `createDedupLedger` 的 `!== undefined` 判空转与 `_bounded` 已修正的写法不一致但当前不可达，按宪法 #1 不把重构混进修复轮，已登记技术债。
+
+### 安全修复：复合键 `<channel>:<userId>` 冒号截断（批次 C3 / INJ-1 延伸，2026-08-24）
+
+依据 `.agents/workstreams/crack-fix-plan/PLAN.md §批次C C3`。身份复合键是 `<channel>:<userId>` 的字符串拼接，而三处解析各写各的：wxpusher UID 形态校验**放行冒号**、`identity` 读盘用 `split(':')` 取前两段、管理台 `parseMemberKey` 用 `indexOf(':')` 只切第一个冒号。攻击者构造 `UID:EVIL` 一类 uid 即可让身份层把冒号后内容**截断丢弃**，落成 `wxpusher:UID` 覆盖他人绑定或降级 owner —— 同一份数据在两个模块里是两个身份，正是复合键设计的固有裂缝。
+
+- **写入面 fail-closed（`src/inbound/identity.mjs`）**：`addBinding` 与 `addPending` 对含 `:` 的 userId 一律拒绝并 warn（warn 只截前 32 字符，不整串回显）。这是本条的主防线 —— 新的冒号身份再也进不来。
+- **解析对齐（`src/inbound/identity.mjs`）**：`normalizeBinding` 与 `readPending` 改用 `indexOf(':')` 切分（`colon > 0` 才认，与管理台 `parseMemberKey` 同语义），含冒号的 userId 不再被截断成另一个人；`readPending` 另把存量含冒号的坏键**读盘即剔除**（旧版 `app_subscribe` 可能写入），并随统一写回一并清扫落盘，清扫必 warn（宪法 #3）。
+- **wxpusher 形态收紧（`src/inbound/wxpusher-callback.mjs`）**：`UID_PATTERN` 去掉 `:` → `/^[A-Za-z0-9_.\-]+$/`，冒号 uid 在入站最外层即被拒并 warn。
+- **读改删面故意保持容忍**：管理台 `parseMemberKey` 不拒冒号 —— 理由与实证见上方 REVIEW-ABC BUG-3 条目（否则存量越权行无法清理）。
+- 测试：+3（`identity`：`addBinding` 拒绝冒号 userId 并 warn、`normalizeBinding` 用 `indexOf` 切分不截断；`wxpusher`：`INJ-1` 含冒号 uid 被形态校验拒绝并 warn）。测试契约 1004 → 1007。
+- 变异验证：`addBinding` 冒号拒收、`normalizeBinding` 的 `split`、wxpusher `UID_PATTERN` 三处还原均立即见红。
+- 注：`SHORT-C3.md` 记载的「1004/1004 pass、`node --check` OK」写于 BUG-1 语法错引入之前，与当时工作区实际状态不符；该摘要已就地标注更正。
+
+### 修复：审批桥僵尸 `pending` 账本行吞掉编号回复（批次 C2 / P1-5，2026-08-24）
+
+依据 `.agents/workstreams/crack-fix-plan/PLAN.md §批次C C2`。审批的「单次核销」此前只靠进程内 `entry.settled`；进程崩溃、重启或 `ledger.resolve` 写盘失败会在账本里留下 `status='pending'` 但**已无对应 waiter** 的僵尸行。`latestPendingFor` 迭代 `ap:` 前缀时会命中这些行 → 后续编号回复被僵尸行吸走、真实待决审批反而无人裁决，用户还收到「该审批已被处理」的误导回执（宪法 #5「账本先落终态」在崩溃缝隙下的残留形态）。
+
+- `src/approval/router.mjs`：新增进程内 `liveWaiters` Set，仅在 `bus.wait(key)` 真的创建/复用 waiter 时登记（`mode === 'observe'` 不注册 waiter，天然不参与编号回复匹配 —— 与 observe「只旁观」语义一致）。`latestPendingFor` 的筛选条件从 `row?.status !== 'pending'` 加严为 `|| !liveWaiters.has(key)`，无存活 waiter 的僵尸行不参与匹配，消息落回对话路由而非被吞。
+- **清扫归宿（宪法 #4）**：`decisionPromise.then(ok, err)` 双回调删 key —— `bus.wait` 的 promise 在四条路径（超时 null / settle 裁决 / abandon / dispose）全部会 settle，故每个 key 都有归宿；`dispose` 时清空整个 Set。审查复核确认无泄漏、无 settle 竞态。
+- **E-2 已决竞态语义保持不变**：`settle` 后微任务尚未执行的窗口内，waiter 仍被视为存活 → `decideTrusted` 返回 `already-resolved` 后照旧走「该审批已被处理」消费路径（v0.8.3 E-2 的 4 例既有用例全绿）。
+- 未动 `store.mjs` / `bus.mjs`；不新增 store 键族（`liveWaiters` 是纯内存集合，随实例生命周期消亡）。
+- 测试：+3（僵尸 pending 行不参与编号回复匹配、消息落回对话路由；编号回复优先命中存活 waiter 并忽略更晚的僵尸行；崩溃恢复后持久化僵尸行不吞编号回复）。测试契约 1001 → 1004。
+- 变异验证：还原 `liveWaiters` 闸门即见红。
+- **真机验收未过（宪法 #8）**：证据来自 mock 与临时 `state.json`；真机需观测一次真实 kill -9 后重启、旧卡编号回复与新审批并存时的裁决走向。
+
+### 安全修复：TG/飞书按钮来源比对「缺点击会话即放行」改为 fail-closed（批次 C1 / P1-4，2026-08-24）
+
+依据 `.agents/workstreams/crack-fix-plan/PLAN.md §批次C C1`（宪法 #7「fail-open 要有度——守卫不能对缺关键信息时静默放行」）。SEC-1/F-08 建立的「点击会话 vs 卡片原始会话」比对，两个通道都在**点击侧元数据缺失**时放行 —— 攻击面等价于「把缺数据的回调形状造出来即绕过来源校验」，而这条正是既有测试全没覆盖的缝（转发拒绝用例一律用正常形状构造，mock 假定形状 ≠ 真实异常负载，宪法 #8）。
+
+- **Telegram（`src/inbound/telegram-bot.mjs`）**：旧判据 `clickedChat !== undefined && originChat 非空 && 不相等` 是三项合取，`query.message?.chat?.id` 读不到（消息被删、事件形状异常、非 message 承载的回调）会把整式短路成 `false` → 直接放行裁决。现在拆成三级：`origin.chatId` 缺失（升级前在途卡片，本仓库所有 mint 点都带 chatId）→ warn 后兼容放行，窗口由 ref TTL 15min 天然封顶；`origin` 在场而点击会话读不到 → **拒绝**且不 `take()` 引用（原卡在 TTL 内仍可正常点，宪法 #6 不锁死）；两者在场且不相等 → 拒绝。判据用显式 `undefined`/`null` 比较而非真值 —— `chatId === 0` 是合法会话，`!clickedChat` 会把真实点击误判成缺数据（正控测试钉死）。**行为变化**：缺点击会话的回调由「静默放行裁决」变为回执「请到原会话操作」。
+- **飞书（`src/inbound/feishu-bot.mjs` `sourceChatAllowed`）**：`clicked === ''`（负载缺 `context.open_chat_id` 且顶层兜底也缺，或值为空串）由 warn + `return true` 改为 `return false`。三个调用点（`ac:`/`aq:`/`ap:`）本就把 `false` 转成 toast「请到原会话操作」，不裁决、不 patch 终态、不核销 `wait`，所以收紧无需改调用点 —— 但此前只有审批分支有覆盖，本轮补上 `ac`/`aq` 平行面测试，防装配回归悄悄绕过。`srcChat === ''` 的旧卡兼容半边按 PLAN §C1(b) 显式保留不动。
+- **拒绝路径全部 warn 出声（宪法 #3）**：两个通道的「缺数据拒绝」与「会话不一致拒绝」都补日志（TG mismatch 此前静默）；warn 只带 chatId/srcChat（非凭证，既有 warn 已带 userId）。
+- 测试：+7（TG 4 例：缺 `message` 整块 → 拒绝且原会话仍可裁决、缺 `chat.id` → 拒绝、`chatId === 0` 正控放行、`origin` 缺 chatId 的旧卡兼容放行且 warn；飞书 3 例：缺 `context` → 拒绝且不 patch 不核销 wait + `open_chat_id` 空串 → 拒绝 + 原会话仍可裁决、`ac`/`aq` 平行面缺点击会话不执行不作答、`srcChat` 缺失旧卡维持兼容）。测试契约 994 → 1001。
+- 变异验证（证明测试真的咬人）：TG 缺数据分支还原放行 → 2 红；TG 判据改 `!clickedChat` → 1 红（`chatId === 0` 正控咬住）；飞书 `clicked === ''` 还原 `return true` → 2 红。每次变异后以 `git diff --stat` 确认逐字节还原。
+- **真机验收未过（宪法 #8）**：证据全来自 mock fetch 与 fake SDK。真机需观测：TG 卡片消息被删除后回调的真实形状（`message` 是否真会缺）、飞书长连接负载是否恒带 `context.open_chat_id`（若某些卡片类型不带，收紧会误拒真实点击 —— 这是本条最主要的回滚触发条件）。已记入 `docs/memory/risks.md`。
+
 ### 修复：入站内存学习表与 `wechat:ctx:` 键族全部收上界（批次 B-键族4 / P1-7，2026-08-24）
 
 依据 `.agents/workstreams/crack-fix-plan/PLAN.md §批次B B4` 与 `PLAN-B-k4-fin.md`（宪法 #4「状态必须有界」）。这些表以 chatId/uid 为键**只增不减**——键的数量由外部（群数量、陌生人来消息）决定，长跑进程或被灌水时内存/`state.json` 单调膨胀，是 F-8 写放大与内存 DoS 的底座。
@@ -16,7 +65,7 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 - **D-7 廉价半边（`context_token` 形状校验）**：`context_token` 由对端消息携带，陌生人可塞任意长/带控制字符的串进 `state`（膨胀 + 污染日志与后续 JSON 载荷）。现在 >512 字符或含空白/控制字符一律拒收并 warn，**本条消息其余处理照常入站**（宪法 #6 不因一个字段失误吞掉消息）。
 - **防抖表与宽限窗（`src/event-listener.mjs` / `src/rules.mjs`）——行为变化**：`createTrailingDebounce` 与 `createGraceQueue` 的在途表以 sessionId 为键、靠各自定时器到点自清，但 `debounceMs`/`graceSeconds` 可配且**无上限**（`config.mjs` 只钳下限 0），配成分钟/小时级 + 会话高频轮换时两表可无界堆积（每条还挂一个活定时器）。现在各加 256 个 key 上限，**溢出时立即触发最旧一条**并 warn。行为变化仅限「本该再等窗口末尾/宽限期的那一条被提前推送」——绝不静默丢弃通知（宪法 #3）；装配处两个 `onOverflow` 都接 `warn`。
 - **同轮自审修掉三个自引入/既存缺陷**：① `_bounded.mjs` 的空转护栏原写作「最旧键 `=== undefined` 即 break」，键本身为 `undefined` 时会被当成空表、淘汰停摆而表越过上限——改判迭代器的 `done`；② 钉钉去重表的清扫阈值 `>` 在有了硬上限后**永不成立**（`setBounded` 保证写后 `size <= max`），惰性清扫成死代码、稳态高流量主机每条新消息都走「淘汰 + 告警」白丢去重记录还刷日志——改为 `>=`，表满先清过窗条目、清不出空位才淘汰；③ `createTrailingDebounce.flush()` 只 `timers.clear()` 却不 `clearTimeout`，卸载后最多 256 个已挂起定时器留在事件循环里，`debounceMs` 配长时进程要等整个窗口才退出（本仓库测试套件因此被吊住约 60s，修复后全量耗时 121s → 68s）——与 `grace.flush()` 对齐逐个清除。
-- 测试：+54（`test/bounded.test.mjs` 新建 22 例：LRU 触摸/淘汰回调/回调抛错不致命/cap 正常与上下边界与越界五态/`Infinity` 与 `0` 的宽容语义/存量收敛/3000 条压测/`undefined` 键；钉钉 +5、QQ +4、微信 +7、`grace` +8、`debounce` +8 含两条装配级 300 会话零丢失与定时器泄漏钉死）。测试契约 956 → 1010。
+- 测试：+54（`test/bounded.test.mjs` 新建 22 例：LRU 触摸/淘汰回调/回调抛错不致命/cap 正常与上下边界与越界五态/`Infinity` 与 `0` 的宽容语义/存量收敛/3000 条压测/`undefined` 键；钉钉 +5、QQ +4、微信 +7、`grace` +8、`debounce` +8 含两条装配级 300 会话零丢失与定时器泄漏钉死）。测试契约 940 → 994（本条原记作「956 → 1010」，绝对数偏高 16；2026-08-24 在 `f3fce85^` 与 `f3fce85` 上实测复核为 940 → 994，+54 增量不变，以本行为准）。
 - 变异验证（证明测试真的咬人）：短路 `setBounded` 淘汰 → 19 例红；短路 `grace` 腾位 → 6 例红；短路 `debounce` 腾位 → 4 例红；`wechat:ctx` 淘汰置空 → 4 例红；去重阈值改回 `>` → 1 例红；`flush` 去掉 `clearTimeout` → 1 例红。每次变异后均以 `git diff` 确认逐字节还原。
 - **真机验收未过（宪法 #8）**：全部结论来自 mock fetch/WebSocket 与临时 `state.json`。真机需观测：钉钉 60s 内 >1024 条消息的去重与告警节流、QQ >1024 个目标的接口选择回落、微信真实 `context_token` 的长度与字符集分布（512 上限是否误伤）、防抖/宽限窗溢出提前推送的用户体感。已记入 `docs/memory/risks.md`。
 
@@ -33,6 +82,18 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 - 保留 `【引导配对码】` 前缀（既有 `test/admin-wiring.test.mjs` 断言不破）；不新增 store 键族，无新增运行时依赖（`node:fs` 内置）。
 - 测试：+13（引导码文件 mode 0600/单行码面、码面零泄漏正负控双钉、写失败不回退印码面、symlink 不被写穿、非引导态启动清陈旧文件、管理台撤销经真 HTTP 面触发删文件且 API 响应无码面、过期码 5 次锁出、锁出上下边界第 4/第 5 次、复合键隔离不牵连他人、重铸节流、回调异常 warn 出声、有在铸码时不谎报重铸失败、单次过期回执语义不变）；测试契约 927 → 940。
 - 未收口的残差已登记技术债：admin UI 与 `bus.mjs` whoami 文案仍引 stderr、README/`docs/guide.md` 仍写「终端日志里打引导码」、跨进程节流不共享。
+
+### 安全修复：越权裁决族四条 P0 全部改 fail-closed（批次 A / CRACK-001~004，2026-08-23）
+
+依据 `~/dsh-notifier-handoff/27-crack.md` 破解轮与 `.agents/workstreams/crack-fix-plan/PLAN.md §批次A`（commit `013ec48`，契约 909 → 927；本条目于 2026-08-24 neat 轮回补 —— 提交时遗漏 CHANGELOG，违反军规 2.2#5「每个审查发现的修复都要写进 CHANGELOG 并注明审查编号」，登记为文档同步缺陷）。四条同属一族：**来源/归属证据不足时旧实现选择放行**，攻击者只要把证据缺掉就能越权裁决他人的审批、动作与提问。
+
+- **CRACK-001 动作卡缺来源元数据即兼容放行（`src/actions.mjs`）**：F-08 建立的 `ac:` 来源校验对 `srcChats === undefined` 的历史卡 warn 后放行 —— 该放行**无时限**，等于永久免检卡，转发 ⏹ 卡即可取消他人任务。现在收成 `LEGACY_SOURCE_GRACE_MS = 10min` 的升级迁移宽限窗（上界对齐 `tokens.mjs` 的 token TTL：升级瞬间在途的旧卡本就只剩 ≤10min 生命期），窗外一律拒绝；放行与拒绝**两条路径都 warn**（宪法 #3）。
+- **CRACK-002 `bus.decide` 的 `allowChats=null` 时来源校验整段跳过（`src/inbound/bus.mjs`）**：旧判据是「注册了范围**且**带了 chatId 才校验」的合取，缺任一侧整段短路 → SEC-1 的按钮来源校验被绕过。现在改为「有源证据才算有效按钮路径」：缺点击会话或缺来源范围一律拒绝并 warn，**不核销 wait**（合法原会话仍可裁决，宪法 #6）；无 waiter 的重放/已决路径不进本分支，保留 `settle` 的 `already-resolved` 语义。
+- **CRACK-003 编号回复无归属校验（`src/approval/router.mjs`）**：`decideTrusted` 路径不过 token，任何白名单 member 回复 `1` 即可裁决同渠道任意待决审批。`latestPendingFor` 现在给命中结果带 `evidence`（`exact` | `onChannel` | `intended`）：`exact`（卡片发本人）直接放行，`onChannel`/`intended`（他人卡片或广播兜底）**仅该渠道绑定的 owner 可代决**，拒绝时回执「此审批不是发给你的(无权裁决)」并 warn。`identity` 缺失或 `list()` 抛异常一律 `return false`（fail-closed）。
+- **CRACK-004 提问 hint 兜底跨渠道越权作答（`src/questions/router.mjs`）**：同构改造 —— `evidence` 为 `exact`/`onChannel`（questions 侧两者都已是同 user 命中，见 SEC-5/6）放行，`hint`（广播编号话术兜底）仅 owner 可代答，拒绝时消费裸编号 + 回执「此提问不是你作答的（无权回答）」，**问题保持待决**、原提问者仍可作答（宪法 #6 不锁死）。
+- **装配**：`src/index.mjs` 把 `identity` 传进 `registerApprovalHandler` 与 `createQuestionBridge` —— 两处归属闸的生效完全依赖这两行，缺失即静默 fail-closed（该装配缝后由 REVIEW-ABC BUG-6 补上装配级守卫）。
+- 测试：+18（`actions` / `approval` / `approval.multi` / `inbound` / `questions` / `inbound.feishu` 六个文件）。测试契约 909 → 927。
+- 残差已登记 `~/dsh-notifier-handoff/20-techdebt.md`：CRACK-001-R1（畸形 `srcChats` 形态，后由 REVIEW-ABC BUG-4 补测试钉死）、CRACK-001-R2（`createdAt` 在未来时宽限窗无上界，同进程可信写入方不可达）。
 
 ## [0.8.6] - 2026-08-23
 

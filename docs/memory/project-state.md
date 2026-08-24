@@ -20,6 +20,7 @@ Snapshot date: 2026-08-23 (ox-alpha relay, second round).
 
 - `npm test` (Linux relay host, 2026-08-23): `909 pass`, `0 fail` — includes the 6 P1-1 protocol-shape tests, 5 P1-2 error-visibility tests, 4 P1-3 lock-recovery tests, and 3 issue-#11 question-reply tests.
 - `node scripts/verify-release.mjs`: passed with documented tests = `909`.
+- In-flight branch `crack-fix-batchA-v0.8.7` (2026-08-24): `node --test test/*.test.mjs test/*.spec.mjs` reports `1001 pass`, `0 fail` after batch C1 (+7 over the 994 batch-B-k4 baseline). The documented release count stays at `909` until the branch merges and a version is cut, so `verify-release.mjs` is checked against the released v0.8.6 contract, not the branch count.
 
 ## Current Maintenance Direction
 
