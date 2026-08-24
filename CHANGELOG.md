@@ -5,6 +5,15 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 维护批 5：入站 text/image/file 统一消息结构（MNT-5，2026-08-24）
+
+六通道适配器当前只产文字信封（`{ channel, userId, chatId, messageId, text }`），非文本消息要么静默丢弃（telegram），要么拼成 `[不支持的消息类型：x]` 占位文本（feishu）。本批补上内容模型的正规层：一座归一结构与一条 QQ 单聊图片解析**接口**，**全网不接线**（无协议证据不启用解析——QQ 官方机器人 C2C 媒体事件真实字段形状无真机样本）。
+
+- **`src/inbound/message.mjs` 统一消息结构**：`INBOUND_KINDS`（text/image/file）+ `normalizeInboundMessage`。文字兼容——既有 `{ text }` 信封（含 channel/userId 等透传字段）原样归一为 `{ kind:'text', text, … }`，bus.accept / conversation router 消费面零改动；结构化 image/file 要求附件对象含有效 url，缺失一律 null（fail-closed）。text 与附件同载时按 text 归一（附件路径待证据，绝不旁路）。
+- **QQ 单聊图片解析接口 `parseQQImageMessage`**：按「文档描述的常见实现」（`d.extra` 为 JSON 字符串/预解析数组，段 `type === 'image' | 1` 且 `image.url` 非空）解析 C2C 事件负载，返回 `{ kind:'image', image:{ url, width?, height? } }`；无 extra / 无图片段 / 段缺 url / extra 畸形一律 null。**不接线**——qq-gw.mjs 及其余适配器均不 import；附带 `parseExtraSegments` 供未来网关预解析复用。
+- **fixture**：`test/fixtures/qq-c2c-image.json`（C2C 图片事件样本，文档假设形状），作真机校验时的对照样本；测试同时覆盖拒绝矩阵（空段/非图片段/缺 url/畸形 extra/非对象）与预解析数组直通。新增 8 例。
+- 验证：全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1060** 契约（1059 通过 + 1 win32 skip，基线 1052 + 8 新增）；`verify-release.mjs` / `gen-channel-matrix --check` / 全量 `node --check` 通过。
+
 ### 维护批 4：Interaction Core 统一交互状态账本（MNT-4，2026-08-24）
 
 三条交互链（动作 actions / 审批 approval / 提问 questions）各自内联实现了一遍几乎相同的账本状态机（`add` 覆写式 pending+createdAt、`resolve` 有行即翻终态、`terminate` 仅 pending→terminated 的 C2/P1-5 僵尸守卫）。本次把状态机收敛为一份共享核心 `src/interaction/ledger.mjs` 的 `createInteractionLedger`，迁移顺序按维护计划定的 actions → approval → questions，每阶段全量契约零降、独立提交。

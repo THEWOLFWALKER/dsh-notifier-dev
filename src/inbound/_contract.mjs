@@ -22,6 +22,9 @@
 // 入站方向统一走 bus.accept(envelope)；按钮回调统一走 bus.decide({ approvalKey,
 // decision, token, via, userId })，回调负载格式用本文件的 buildApprovalAction 生成、
 // parseApprovalAction 解析（与 telegram callback_data 完全同构，复用同一套 token 核销）。
+// text/image/file 统一消息结构见 message.mjs：文字信封（{text}）原样兼容，结构化
+// 附件（kind/image/file）由协议证据确认后的适配器产出——当前无证据不接线（批 5）。
+// parseApprovalAction 解析（与 telegram callback_data 完全同构，复用同一套 token 核销）。
 
 export const APPROVAL_ACTION_PREFIX = 'ap'
 
