@@ -5,6 +5,17 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 维护：测试平台自适应（Windows 主机基线稳定，2026-08-24 mnt）
+
+维护计划 batch-0：修 Windows 主机 8 个平台性测试失败。**纯测试维护，未改任何生产代码、未动安全边界**；POSIX/Linux 断言全部保留原强度。
+
+- **desktop send 协议测试钉死平台（4 例）**：`send*` 家族是 send 协议语义测试，原跑宿主原生平台——win32 下 `send()` 会先起一个 BurntToast 能力探测子进程，破坏「单 spawn + 一次 close」假设导致挂死 10s。文件内本有 `withPlatform` helper（注明「三平台 CI runner 行为必须一致」），现把 4 个协议例包进 `withPlatform('linux')`；win32 探测行为由既有专属测试覆盖，语义不减。
+- **store 锁新鲜锁定死 age<宽限（2 例）**：`P1-3 探测宽限期内` 与 `跨进程写锁双轮等待` 原依赖「自旋总耗时 < 500ms 宽限」——Windows `Atomics.wait` 粒度粗，两轮自旋跨过 500ms 后在死 pid 上触发死亡探测误删测试锚锁。改为把锁 mtime 拨到未来 60s（ageMs 恒负），结构性锁定「新鲜锁不做死亡推断」分支，平台无关；`属主已死的新鲜锁当场回收`（L123）与 `属主存活不误抢`（L140）仍用真实年龄交叉覆盖探测边界。
+- **B1-1 码文件 0600 位只在 POSIX 断言**：win32 的 Node stat 不反映 Unix 权限位（写后仍报 666，实际边界是用户目录 ACL），仅把「精确 0600」断言收窄到非 win32；存在性/单行内容/warn 含路径/码面无泄漏断言全平台保留。
+- **B1-1c symlink 攻击面按能力跳过**：win32 非管理员/非开发者模式主机 `symlinkSync` EPERM，测试无法铺前置；加能力探测，不具备即 `skip`（node:test 计 skipped，不占失败）。支持 symlink 的平台依旧全量断言写穿防护。
+- **B1-1 warn 路径匹配归一化分隔符**：Windows 上生产 warn 的路径是「目录反斜杠 + 文件名斜杠」混合分隔符，逐字节 `w.includes(codePath)` 误判；归一化 `\`→`/` 后语义比对。
+- 验证：本机（win32, Node v22）全量 = 1012 契约、1011 通过 + 1 跳过（B1-1c 能力缺失）、0 失败；Linux 主机预期 1012/1012（B1-1c 运行且过）。
+
 ### 审查修复：批次 A+B+C 独立 review 修掉 6 个缺陷（REVIEW-ABC，2026-08-24）
 
 由非实现者身份的独立审查员按 `.agents/workstreams/crack-fix-plan/task-review-abc.md` 复审已落地的批次 A（`013ec48`）、B-1（`8e6739c`）、B-键族4（`f3fce85`）与工作区的 C1/C2/C3，报告见同目录 `REVIEW-ABC.md`。**发现 6 个缺陷、全部修完、0 遗留**；其中 3 个是「注释宣称了但测试不咬人」的恒绿摆设，1 个是致命语法错，1 个是过度收紧引入的新缺陷，1 个是装配缝。

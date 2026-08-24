@@ -158,9 +158,14 @@ test('P1-3 store：探测宽限期内（<500ms）的未知新鲜锁不做死亡�
   const { path } = tempStorePath()
   const store = createStore(path)
   store.set('k', 'v')
-  // 死 pid 但锁龄在宽限期内：防「刚创建即读」与 pid 复用竞态，不当场回收
+  // 死 pid 但锁龄在宽限期内：防「刚创建即读」与 pid 复用竞态，不当场回收。
+  // mtime 拨到未来 60s：ageMs 恒为负 → 探测分支（age>500ms 才可能触发）结构性不可达，
+  // 不再依赖「自旋耗时 < 500ms」这一平台性假设（Windows Atomics.wait 粒度粗，会跨过
+  // 宽限后在死 pid 上触发死亡探测而误删——挡的是平台时间抖动，不挡判定语义）。
   const lockPath = `${path}.lock`
-  writeFileSync(lockPath, '999999999:fresh', 'utf8') // mtime = now
+  writeFileSync(lockPath, '999999999:fresh', 'utf8')
+  const future = new Date(Date.now() + 60_000)
+  utimesSync(lockPath, future, future)
   const start = Date.now()
   store.set('k2', 'v2')
   assert.ok(Date.now() - start >= 300, `宽限期内照常等待降级（实际 ${Date.now() - start}ms）`)
@@ -187,9 +192,13 @@ test('store：跨进程写锁——新鲜锁占位时两轮等待后降级强写
   const { path } = tempStorePath()
   const store = createStore(path)
   store.set('k', 'v')
-  // 模拟他进程持锁进行中：锁新鲜（<10s，持锁者大概率活着）
+  // 模拟他进程持锁进行中：锁新鲜（<10s，持锁者大概率活着）。
+  // mtime 拨到未来 60s：ageMs 恒为负，走「不可判定陈旧」的原语义分支，两轮等待后降级；
+  // 平台无关（死 pid 在 Windows 上探测可能触发误删，锁龄钉死为新鲜即结构性绕开）。
   const lockPath = `${path}.lock`
   writeFileSync(lockPath, '1:alive', 'utf8')
+  const future = new Date(Date.now() + 60_000)
+  utimesSync(lockPath, future, future)
   const start = Date.now()
   store.set('k2', 'v2') // 等满两轮自旋（≈480ms）后降级无锁写入（保底不丢可用性）
   assert.ok(Date.now() - start >= 300, `确实等待了锁（实际 ${Date.now() - start}ms）`)

@@ -201,10 +201,17 @@ test('B1-1 引导码文件交付：bootstrap-paircode.txt 存在、mode 0600、�
   try {
     const codePath = join(stateDir, 'bootstrap-paircode.txt')
     assert.ok(existsSync(codePath), `引导态必须写码文件（warn：${rig.warnings.join(' | ')}）`)
-    assert.equal((statSync(codePath).mode & 0o777).toString(8), '600', '仅所有者可读写（同组/其他人零权限）')
+    // POSIX 才是 0600 权限位语义面：强断言同组/他人零权限。win32 的 Node stat 不反映
+    // Unix 权限位（writeFileSync mode:0o600 后 stat 仍报 666），实际边界是用户目录 ACL
+    // 继承私有——存在性/单行内容/路径告警/无泄漏断言仍在全平台执行，权限面在 POSIX 锁定。
+    if (process.platform !== 'win32') {
+      assert.equal((statSync(codePath).mode & 0o777).toString(8), '600', '仅所有者可读写（同组/其他人零权限）')
+    }
     assert.match(readFileSync(codePath, 'utf8'), /^[A-Z2-9]{8}\n$/, '文件只放码面本体 + 换行，无标签无说明')
-    // stderr/logger 只印路径与时长，不印码面
-    assert.ok(rig.warnings.some((w) => /【引导配对码】/.test(w) && w.includes(codePath)),
+    // stderr/logger 只印路径与时长，不印码面。路径分隔符归一化：Windows 上 warn 可能混合
+    // `\` 与 `/`（dirname 是反斜杠、文件名拼接是斜杠），逐字节匹配会误报——归一后比语义。
+    const norm = (p) => p.replace(/\\/g, '/')
+    assert.ok(rig.warnings.some((w) => /【引导配对码】/.test(w) && norm(w).includes(norm(codePath))),
       `warn 必须给出码文件路径（实际：${rig.warnings.join(' | ')}）`)
   } finally {
     await rig.cleanup()
@@ -250,7 +257,21 @@ test('B1-1b 引导码文件写入失败：warn 指引管理台且绝不回退印
   }
 })
 
-test('B1-1c 引导码文件写入前先 unlink：预置 symlink 不被跟随写穿（symlink 攻击面）', async () => {
+// win32 非管理员/非开发者模式主机不允许创建 symlink（EPERM）——探测能力，不具备即跳过
+// （挡的是沙箱/主机能力，不挡攻击面语义；支持 symlink 的平台依旧全量断言写穿防护）。
+const CAN_CREATE_SYMLINK = (() => {
+  try {
+    const probeDir = mkdtempSync(join(tmpdir(), 'dsh-notifier-symlink-probe-'))
+    const probeFile = join(probeDir, 'victim.txt')
+    writeFileSync(probeFile, 'x')
+    symlinkSync(probeFile, join(probeDir, 'link'))
+    return true
+  } catch {
+    return false
+  }
+})()
+
+test('B1-1c 引导码文件写入前先 unlink：预置 symlink 不被跟随写穿（symlink 攻击面）', { skip: !CAN_CREATE_SYMLINK }, async () => {
   const stateDir = mkdtempSync(join(tmpdir(), 'dsh-notifier-b1-symlink-'))
   const victim = join(stateDir, 'victim.txt')
   writeFileSync(victim, 'ORIGINAL')
