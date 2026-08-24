@@ -14,18 +14,20 @@ import { normalizeInbound } from '../inbound/_contract.mjs'
 import { guardTargets } from '../inbound/target-guard.mjs'
 import { createInteractionLedger } from '../interaction/ledger.mjs'
 import { workspaceOf } from '../routing/session-registry.mjs'
+// 维护批 6 前置：跨渠道能力矩阵作为单一事实来源
+import { displayNameOf } from '../inbound/capability-matrix.mjs'
 
 const OUTCOME_ALLOWED = 'allowed-once'
 const OUTCOME_REJECTED = 'rejected'
 
-// 通道名 → 用户可读名（广播文案用；telegram 显示名保持 v0.2.0 原样，测试契约不破）
+// 通道名 → 用户可读名（广播文案用；统一从 capability-matrix.mjs 读取，单一事实来源）
 const DISPLAY_NAMES = {
-  telegram: 'Telegram',
-  feishu: '飞书',
-  qq: 'QQ',
-  wxpusher: 'WxPusher',
-  wechat: '微信',
-  dingtalk: '钉钉',
+  get telegram() { return displayNameOf('telegram') },
+  get feishu() { return displayNameOf('feishu') },
+  get qq() { return displayNameOf('qq') },
+  get wxpusher() { return displayNameOf('wxpusher') },
+  get wechat() { return displayNameOf('wechat') },
+  get dingtalk() { return displayNameOf('dingtalk') },
 }
 
 // 升级链默认节奏：30s / 60s 各再提醒一轮（timeoutMs 默认 120s 内完成两轮升级）

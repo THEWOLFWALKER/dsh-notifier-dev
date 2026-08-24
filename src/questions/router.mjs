@@ -28,31 +28,10 @@ import { guardTargets } from '../inbound/target-guard.mjs'
 import { createEscalationChain } from '../approval/escalation.mjs'
 import { createInteractionLedger } from '../interaction/ledger.mjs'
 import { createRateLimiter, compileParameters } from '../tool-register.mjs'
+// 维护批 6 前置：跨渠道能力矩阵作为单一事实来源
+import { isCoveredByOutbound } from '../inbound/capability-matrix.mjs'
 
 const KEY_PREFIX = 'aq:'
-
-const DISPLAY_NAMES = {
-  telegram: 'Telegram',
-  feishu: '飞书',
-  qq: 'QQ',
-  wxpusher: 'WxPusher',
-  wechat: '微信',
-  dingtalk: '钉钉',
-}
-
-// issue #11：出站文本渠道 type 与交互入站 channel 命名不一致的别名对。
-// 出站 qq-bot（adapter type）与入站 qq（inbound channel）是同一 QQ 机器人，只是
-// 出站/入站命名不同。编号话术「是否已由出站文本送达该入站通道用户」据此判定，
-// 避免同号双发（qq-bot 已发编号话术时，qq 入站不再重发一遍）。
-const OUTBOUND_TO_INBOUND_ALIAS = {
-  'qq-bot': 'qq',
-}
-
-/** issue #11：该入站通道的编号话术是否已由出站文本送达（同名出站 type 或别名对如 qq-bot↔qq）。 */
-function isCoveredByOutbound(inboundChannel, textTypes) {
-  if (textTypes.includes(inboundChannel)) return true
-  return textTypes.some((type) => OUTBOUND_TO_INBOUND_ALIAS[type] === inboundChannel)
-}
 
 // 升级链默认节奏（与审批一致：30s / 60s 各再提醒一轮）
 const DEFAULT_ESCALATION_STAGES = [
