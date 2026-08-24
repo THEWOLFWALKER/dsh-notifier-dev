@@ -26,6 +26,7 @@ import { randomBytes } from 'node:crypto'
 import { normalizeInbound } from '../inbound/_contract.mjs'
 import { guardTargets } from '../inbound/target-guard.mjs'
 import { createEscalationChain } from '../approval/escalation.mjs'
+import { createInteractionLedger } from '../interaction/ledger.mjs'
 import { createRateLimiter, compileParameters } from '../tool-register.mjs'
 
 const KEY_PREFIX = 'aq:'
@@ -97,55 +98,41 @@ export function createQuestionBridge(deps) {
     logger,
   })
 
-  const ledger = {
-    add(key, row) {
-      store.set(key, { ...row, status: 'pending', createdAt: Date.now() })
-    },
-    get(key) {
-      return store.get(key)
-    },
-    resolve(key, decision, extra = {}) {
-      const row = store.get(key)
-      if (row === undefined) return false
-      store.set(key, { ...row, ...extra, status: 'resolved', decision, resolvedAt: Date.now() })
-      return true
-    },
-    terminate(key, extra = {}) {
-      const row = store.get(key)
-      if (row === undefined || row.status !== 'pending') return false
-      store.set(key, { ...row, ...extra, status: 'resolved', decision: 'terminated', resolvedAt: Date.now() })
-      return true
-    },
-    /**
-     * 最近一条待决提问（编号回复降级）。匹配优先级：
-      *  1) exact 推送过该 (channel,userId)；
-      *  2) onChannel 该 channel 推送过且 userId 一致；
-      *  3) hint 该 channel 收到过本问题的编号话术（=aq 行 hintChannels 含该渠道）——
-      *     替代旧 `any` 无条件兜底（SEC-2 / C-2 / BUG-11：关死「既没送卡、又没广播编号
-      *     话术的渠道裸数字越权仲裁」的面）。无卡片渠道的合法编号作答由 hint 接住。
-     * CRACK-004：返回值带 evidence（exact|onChannel|hint）——handleNumberedReply 的
-     * 归属闸据此放行当事人级命中、对 hint 要求 owner。questions 的 exact 与 onChannel
-     * 都是同 user 命中（SEC-5/6），只透归属证词等级，不改匹配语义。
-     */
-    latestPendingFor(channel, userId) {
-      let exact = null
-      let onChannel = null
-      let hint = null
-      for (const key of store.keys(KEY_PREFIX)) {
-        const row = store.get(key)
-        if (row?.status !== 'pending') continue
-        const pushed = Array.isArray(row.pushedTo) ? row.pushedTo : []
-        if (pushed.some((target) => target.channel === channel)) {
-          if (pushed.some((target) => target.channel === channel && String(target.userId) === String(userId))) {
-            if (exact === null || row.createdAt > exact.row.createdAt) exact = { key, row, evidence: 'exact' }
-            if (onChannel === null || row.createdAt > onChannel.row.createdAt) onChannel = { key, row, evidence: 'onChannel' }
-          }
+  // Interaction Core：aq: 行统一状态机（pending→resolved，decision 终态裁决）。
+  // latestPendingFor 归属/兜底启发式（exact/onChannel/hint）是提问特有语义，保留在
+  // 链内——核心只提供原子账本操作（见 interaction/ledger.mjs）。
+  const core = createInteractionLedger({ keyPrefix: KEY_PREFIX, store })
+  /**
+   * 最近一条待决提问（编号回复降级）。匹配优先级：
+    *  1) exact 推送过该 (channel,userId)；
+    *  2) onChannel 该 channel 推送过且 userId 一致；
+    *  3) hint 该 channel 收到过本问题的编号话术（=aq 行 hintChannels 含该渠道）——
+    *     替代旧 `any` 无条件兜底（SEC-2 / C-2 / BUG-11：关死「既没送卡、又没广播编号
+    *     话术的渠道裸数字越权仲裁」的面）。无卡片渠道的合法编号作答由 hint 接住。
+   * CRACK-004：返回值带 evidence（exact|onChannel|hint）——handleNumberedReply 的
+   * 归属闸据此放行当事人级命中、对 hint 要求 owner。questions 的 exact 与 onChannel
+   * 都是同 user 命中（SEC-5/6），只透归属证词等级，不改匹配语义。
+   */
+  const latestPendingFor = (channel, userId) => {
+    let exact = null
+    let onChannel = null
+    let hint = null
+    for (const key of core.scanKeys()) {
+      const row = core.get(key)
+      if (!core.isPending(row)) continue
+      const pushed = Array.isArray(row.pushedTo) ? row.pushedTo : []
+      if (pushed.some((target) => target.channel === channel)) {
+        if (pushed.some((target) => target.channel === channel && String(target.userId) === String(userId))) {
+          if (exact === null || row.createdAt > exact.row.createdAt) exact = { key, row, evidence: 'exact' }
+          if (onChannel === null || row.createdAt > onChannel.row.createdAt) onChannel = { key, row, evidence: 'onChannel' }
         }
-        if (hint === null && isHintedChannel(row, channel)) hint = { key, row, evidence: 'hint' }
       }
-      return exact ?? onChannel ?? hint
-    },
+      if (hint === null && isHintedChannel(row, channel)) hint = { key, row, evidence: 'hint' }
+    }
+    return exact ?? onChannel ?? hint
   }
+  // 核心账本 + 提问专用归属启发式合成同一 ledger 面（其余调用点零改动）。
+  const ledger = { ...core, latestPendingFor }
 
   /** SEC-2：该渠道是否被本问题「广播过编号话术」（=aq 行 hintChannels）。无该字段的旧行不兜底（从严，fail-closed）。 */
   function isHintedChannel(row, channel) {

@@ -5,6 +5,16 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 维护批 4：Interaction Core 统一交互状态账本（MNT-4，2026-08-24）
+
+三条交互链（动作 actions / 审批 approval / 提问 questions）各自内联实现了一遍几乎相同的账本状态机（`add` 覆写式 pending+createdAt、`resolve` 有行即翻终态、`terminate` 仅 pending→terminated 的 C2/P1-5 僵尸守卫）。本次把状态机收敛为一份共享核心 `src/interaction/ledger.mjs` 的 `createInteractionLedger`，迁移顺序按维护计划定的 actions → approval → questions，每阶段全量契约零降、独立提交。
+
+- **核心语义对齐（迁移时逐条核对，行为零变）**：`add` 总是覆写 pending+createdAt（旧行/僵尸行按「非 pending」判非待决，fail-closed）；`resolve` 无前态检查（approval/questions 既有语义；actions 的「首达采纳 → 执行 → 终局」多步落地也靠它）；`terminate` 仅待决可翻、已决/缺失返回 false（防 onAbandon 已决行二次改写）；过期不设独立 status（token TTL + decision `'timeout'` 表达，与三条链现状一致）；`resolve`/`terminate` 的 extra 只并入旁注字段，不能覆盖 status/decision/resolvedAt。
+- **state key 格式保留**：键空间 `act:`/`ap:`/`aq:` 不动；决策字段名由各链声明——actions 传 `decisionField: 'outcome'`（保住 `act:` 行历史形状），approval/questions 用默认 `'decision'`。对外接口（`createActionDispatcher` / `registerApprovalHandler` / `createQuestionBridge`）签名未改。
+- **各链 `latestPendingFor` 归属启发式有意留链内**：approval（exact/onChannel/intended + liveWaiters 僵尸过滤）与 questions（exact/onChannel/hint + hintChannels 广播凭据）的匹配语义差异过大，强行抽进核心会引入行为漂移。核心只暴露 `statuses/add/get/isPending/resolve/terminate/scanKeys` 六个原子操作，各链用 `{ ...core, latestPendingFor }` 合成同一 ledger 面，其余调用点零改动。未加 approval.parallel（计划明确非目标）。
+- 提交拆分：阶段 1（核心模块 + 6 例单测 + actions 迁移）、阶段 2（approval 迁移）、阶段 3（questions 迁移 + 本文档）。actions 的 `markSource`/`unmarkSource`（srcChats 旁注字段原地微调）与两条链的 pushedTo 增量落账不是账本生命周期操作，保留直接 store 访问。
+- 验证：全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1052** 契约（1051 通过 + 1 win32 skip，基线 1046 + 6 新增）；`verify-release.mjs` / `gen-channel-matrix --check` / 全量 `node --check` 通过。
+
 ### 维护批 3：降低 index.mjs 装配复杂度（MNT-3，2026-08-24）
 
 `src/index.mjs` 的 `apply()` 从 885 行散装收束到分段装配，按「先移动代码不改变行为、每阶段补装配测试」分三阶段，每阶段独立提交、四扇门全过（行为零变的契约锚 = 既有 apply() 级测试 + 各阶段新增模块边界测试）。块的具体职责与内联注释随原样搬入各模块，`apply()` 只留组装调用与晚绑定。
