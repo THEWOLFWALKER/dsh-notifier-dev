@@ -8,6 +8,7 @@
 // 「不发出卡片」，绝不影响通知文本主链路（文本 hint「回复 /stop 取消」全通道兜底）。
 
 import { randomBytes } from 'node:crypto'
+import { createInteractionLedger } from './interaction/ledger.mjs'
 
 // CRACK-001（破甲轮 P0）：缺来源元数据的动作卡的升级迁移宽限窗，上界对齐 token TTL
 // （tokens.mjs 默认 10min）——升级瞬间在途的旧卡本就只剩 ≤10min 生命期，窗外一律
@@ -37,6 +38,10 @@ export function createActionDispatcher({ vault = null, store = null, logger = nu
   const warn = (message) => {
     try { logger?.warn?.('[dsh-notifier/actions]', message) } catch { /* 日志失败绝不致命 */ }
   }
+  // Interaction Core：act: 行统一状态机（pending→resolved，outcome 字段名保留，
+  // 见 interaction/ledger.mjs）。markSource/unmarkSource 只是 srcChats 旁注字段的
+  // 原地微调，不走账本生命周期操作。
+  const ledger = createInteractionLedger({ keyPrefix: 'act:', store, decisionField: 'outcome' })
 
   return {
     /** 注册动作 handler（内置白名单由装配层注册；重复注册后到者赢）。 */
@@ -72,9 +77,7 @@ export function createActionDispatcher({ vault = null, store = null, logger = nu
           ? { [meta.channel]: [meta.chatId] }
           : null
         try {
-          const row = { kind: normalizedKind, payload, status: 'pending', createdAt: Date.now() }
-          if (srcChats !== null) row.srcChats = srcChats
-          store?.set(key, row)
+          ledger.add(key, { kind: normalizedKind, payload, ...(srcChats !== null ? { srcChats } : {}) })
         } catch (error) {
           // 账本失败 = 无法核销 = 绝不能发出卡片（发出即无首达保障）
           warn(`动作账本写入失败，降级不发卡片: ${error instanceof Error ? error.message : String(error)}`)
@@ -168,7 +171,7 @@ export function createActionDispatcher({ vault = null, store = null, logger = nu
         if (verdict.key !== actionKey) {
           return { ok: false, reason: 'key-mismatch', message: '该操作已处理或已过期（token 单次核销）' }
         }
-        const row = store?.get(actionKey)
+        const row = ledger.get(actionKey)
         if (row === undefined) {
           // 账本行缺失（重启清账 / 极旧卡片）：按过期处理，绝不执行
           return { ok: false, reason: 'unknown-action', message: '该操作已过期' }
@@ -206,23 +209,23 @@ export function createActionDispatcher({ vault = null, store = null, logger = nu
         const handler = handlers.get(row.kind)
         if (handler === undefined) {
           // 先落终态再反馈：防未知 kind 的重试风暴
-          try { store.set(actionKey, { ...row, status: 'resolved', outcome: 'unknown-kind', via, resolvedAt: Date.now() }) } catch { /* 账本失败不致命 */ }
+          try { ledger.resolve(actionKey, 'unknown-kind', { via }) } catch { /* 账本失败不致命 */ }
           return { ok: false, reason: 'unknown-kind', message: '未知操作类型' }
         }
         // 首达采纳：先落 resolved 再执行（并发双击只执行一次）
-        try { store.set(actionKey, { ...row, status: 'resolved', outcome: 'executing', via, resolvedAt: Date.now() }) } catch { /* 账本失败不致命 */ }
+        try { ledger.resolve(actionKey, 'executing', { via }) } catch { /* 账本失败不致命 */ }
         try {
           const result = handler({ actionKey, payload: row.payload, via, userId }) ?? {}
           const ok = result.ok !== false
           const message = typeof result.message === 'string' && result.message !== ''
             ? result.message
             : (ok ? '✅ 已执行' : '操作未生效')
-          try { store.set(actionKey, { ...row, status: 'resolved', outcome: ok ? 'done' : 'handler-declined', via, resolvedAt: Date.now() }) } catch { /* 账本失败不致命 */ }
+          try { ledger.resolve(actionKey, ok ? 'done' : 'handler-declined', { via }) } catch { /* 账本失败不致命 */ }
           warn(`动作 ${actionKey} 裁决 via ${via}（user ${userId}）: ${ok ? 'done' : 'handler-declined'}`)
           return { ok: true, message }
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error)
-          try { store.set(actionKey, { ...row, status: 'resolved', outcome: 'handler-error', via, resolvedAt: Date.now() }) } catch { /* 账本失败不致命 */ }
+          try { ledger.resolve(actionKey, 'handler-error', { via }) } catch { /* 账本失败不致命 */ }
           warn(`动作 handler 异常（已核销）: ${reason}`)
           return { ok: true, message: '动作已核销，但执行异常（任务状态请以 /agent 为准）' }
         }
