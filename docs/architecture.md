@@ -60,6 +60,8 @@ The shared file is `<stateDir>/state.json` (default `$DSH_HOME/dsh-notifier/stat
 
 Other durable files include `ledger.jsonl`, `ledger-state.json`, and `admin-audit.jsonl` in the same state directory when those features are enabled. Credentials are masked in admin responses and must never be copied into docs, tests, or logs.
 
+Every state key family and every in-process learning table must have a bound and a reclamation path. Persistent families are reclaimed by the `sweepOnce` pass in `src/index.mjs` (dedup window, resolved approvals/actions/questions, orphan pending rows, observe-mode retention) or by their owner's lifecycle (`bind:*` follows session-registry reclamation, `wechat:ctx:` caps at 256 uids). In-process tables use `src/inbound/_bounded.mjs`: `setBounded` evicts the oldest entry past the cap and refreshes an updated key's freshness (LRU touch), and `createThrottledWarn` keeps eviction visible without flooding logs. Current caps are 1024 for the dingtalk (`sessionWebhooks`, `chatSenders`, `seenMsgIds`) and qq (`targetKinds`, `msgSeqs`) tables, and 256 in-flight keys for the debounce and grace queues, which fire the oldest entry early rather than dropping it. Eviction must always degrade into an existing fallback path, never into a lost notification.
+
 ## Admin Boundary
 
 The server is a zero-dependency `node:http` wrapper around `admin/api.mjs`. It is loopback-only, requires `Authorization: Bearer`, caps request bodies at 1 MiB, caps SSE connections, and maps business errors to safe status/message responses. The UI is embedded in `src/admin/ui.mjs`; the API and CLI share the same router/store semantics.

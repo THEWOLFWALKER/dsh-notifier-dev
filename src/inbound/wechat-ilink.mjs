@@ -3,7 +3,8 @@
 // 协议细节全部在 _ilink-api.mjs（Hermes weixin.py MIT 移植）；本文件只做通道编排：
 //  - 轮询节奏：连续失败 <3 等待 2s，≥3 退避 30s 后计数清零（weixin.py 行 110-112）
 //  - 游标 wechat:sync_buf 必须持久化（丢失/回退会重复收消息）
-//  - context_token：入站消息永远最新（收到即缓存 wechat:ctx:<uid>），发送回显最新值
+//  - context_token：入站消息永远最新（收到即缓存 wechat:ctx:<uid>），发送回显最新值。
+//    v0.8.7：写入前做形状校验（≤512 字符、无空白/控制字符）+ 键族 256 上限淘汰最旧（宪法#4）
 //  - 发送分块（默认 2000 字/块，块间 2s 降密度）
 //  - 错误语义：
 //      会话过期（-14 / 伪装的 -2 unknown error）→ 剥 context_token 重试一次；
@@ -21,11 +22,22 @@ import {
   extractIlinkText,
 } from './_ilink-api.mjs'
 import { createBreaker } from './_breaker.mjs'
+import { createThrottledWarn } from './_bounded.mjs'
 import { resolveNotifyTargets } from './target-guard.mjs'
 
 const SYNC_BUF_KEY = 'wechat:sync_buf'
 const ACCOUNT_KEY = 'wechat:account'
 const CTX_PREFIX = 'wechat:ctx:'
+// v0.8.7 P1-7（宪法#4 状态必须有界）：wechat:ctx:<uid> 此前每个发过消息的 uid 永久占一条
+// state 键，唯一归宿是 sessionExpired 全清 —— 群/陌生人来一条消息就留一条，state.json
+// 无界膨胀。上限 256 个 uid（真实场景：审批目标 + 若干成员，两个数量级余量），
+// 超限从最旧一端淘汰。淘汰安全：ctx 只是「发送时回显最新 context_token」的缓存，
+// 缺失走既有「不带 token 发 → -14/伪装 -2 → 剥 token 重试」路径，功能不丢。
+const CTX_MAX_ENTRIES = 256
+// D-7 廉价半边：context_token 由对端消息携带，陌生人可塞任意长/带控制字符的串进 state
+// （膨胀 + 污染日志/后续 JSON 载荷）。真实 token 是短的可见字符串；超长或含空白/控制
+// 字符一律拒收并 warn（宪法#3 不静默），本条消息其余处理照常。
+const CTX_TOKEN_MAX_LEN = 512
 
 /** content → 6 位十六进制摘要（合成 messageId 用）。 */
 function hash6(content) {
@@ -118,6 +130,59 @@ export function createWechatIlinkInbound(options = {}) {
     return `${CTX_PREFIX}${uid}`
   }
 
+  // 淘汰/拒收都是高频路径（每条入站消息一次）：warn 走 60s 节流并报累计次数，
+  // 既不静默（宪法#3）也不刷屏。
+  const warnCtxEvicted = createThrottledWarn(warn, { now: options.now })
+  const warnCtxRejected = createThrottledWarn(warn, { now: options.now })
+
+  /**
+   * D-7 廉价半边：context_token 形状校验。真实 token 是短的单行可见字符串；
+   * 超长（>512）或含空白/控制字符视为异常载荷，拒收不落盘。
+   */
+  function isSaneContextToken(token) {
+    if (token.length > CTX_TOKEN_MAX_LEN) return false
+    return !/[\s\u0000-\u001f\u007f]/.test(token)
+  }
+
+  /**
+   * 学习 context_token：形状校验 → 有界写入（键族 256 上限，超限淘汰最旧的先见 uid）。
+   * 任何一步失败都只 warn：ctx 缺失只是回退到「不带 token 发 → 剥 token 重试」路径。
+   */
+  function rememberContextToken(uid, contextToken) {
+    if (!isSaneContextToken(contextToken)) {
+      warnCtxRejected((count) => `context_token 形状异常已拒收（长度 ${contextToken.length}，上限 ${CTX_TOKEN_MAX_LEN}，不接受空白/控制字符）：来自 ${uid} 的本条消息照常处理，发送将走无 token 重试路径${count > 1 ? `（近期累计 ${count} 次）` : ''}`)
+      return
+    }
+    if (store === null) return
+    const key = ctxKey(uid)
+    try {
+      const existing = store.get(key)
+      if (existing === contextToken) return // 值未变：不写盘（省一次全量 save）
+      if (existing === undefined) {
+        // 新 uid 才可能撑破上限；键族按首见顺序淘汰（Object 键序 = 插入序，跨重启保序）。
+        // 存量超量（上限调小 / 旧版本遗留）在此一并收敛。
+        // store 无 keys()（精简 mock / 老实现）：跳过淘汰但照常写入——宁可无界也不丢功能，
+        // 这条降级路径由测试钉死（不静默失败）。
+        const keys = typeof store.keys === 'function' ? store.keys(CTX_PREFIX) : null
+        if (Array.isArray(keys)) {
+          let overflow = keys.length + 1 - CTX_MAX_ENTRIES
+          let evicted = 0
+          for (const stale of keys) {
+            if (overflow <= 0) break
+            if (stale === key) continue
+            store.delete(stale)
+            evicted += 1
+            overflow -= 1
+          }
+          if (evicted > 0) {
+            warnCtxEvicted((count) => `wechat:ctx 键族达上限 ${CTX_MAX_ENTRIES}，已淘汰 ${evicted} 个最旧会话的 context_token（缓存性质，受影响会话下次发送走无 token 重试）${count > 1 ? `（近期累计 ${count} 次）` : ''}`)
+          }
+        }
+      }
+      store.set(key, contextToken)
+    } catch { /* 落盘/清扫失败不致命 */ }
+  }
+
   /** 会话过期善后：清缓存态 + 凭证，停用通道（需人工重新扫码）。 */
   function sessionExpired(detail) {
     warn(`iLink 会话过期（${detail}）：已清空游标/context_token/凭证并停用通道，请重新执行 node scripts/wechat-login.mjs 扫码登录`)
@@ -137,9 +202,7 @@ export function createWechatIlinkInbound(options = {}) {
     if (from === '' || from === config.accountId) return
     breaker.reset() // 任一入站消息复位熔断（新消息即解锁配额）
     const contextToken = String(msg.context_token ?? '').trim()
-    if (contextToken !== '') {
-      try { store?.set(ctxKey(from), contextToken) } catch { /* 落盘失败不致命 */ }
-    }
+    if (contextToken !== '') rememberContextToken(from, contextToken)
     const text = extractIlinkText(msg.item_list)
     if (text === '') return // 非文本（图片/语音/视频）暂不支持，静默忽略
     const rawId = String(msg.message_id ?? '').trim() || String(msg.client_id ?? '').trim()

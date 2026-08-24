@@ -14,11 +14,18 @@
 // （带 msg_id 关联事件）有独立配额，5 条内免主动消息权限。
 
 import { createTokenManager, createRateGate } from '../adapters/_tokens.mjs'
+import { setBounded, createThrottledWarn } from './_bounded.mjs'
 import { resolveNotifyTargets } from './target-guard.mjs'
 
 const TOKEN_URL = 'https://bots.qq.com/app/getAppAccessToken'
 const DEFAULT_API_BASE = 'https://api.sgroup.qq.com'
 const INTENT_GROUP_AND_C2C = 1 << 25
+// v0.8.7 P1-7（宪法#4 状态必须有界）：targetKinds/msgSeqs 以 chatId（user_openid /
+// group_openid）为键只增不减 —— 群消息与陌生单聊由外部决定数量，长跑进程内存单调膨胀。
+// 1024 条上限（真实用途是审批目标与少量群，三个数量级余量），超限淘汰最旧（写入即触摸，
+// 活跃会话不会被误淘汰）。淘汰安全：targetKinds 缺失回落 notifyGroups 配置判定，
+// msgSeqs 缺失从 1 重新递增（msg_seq 只需在同一 msg_id 下不重复，跨消息重置无害）。
+const CHAT_STATE_MAX = 1024
 
 // WS op codes（QQ 网关协议）
 const OP_DISPATCH = 0
@@ -122,8 +129,18 @@ export function createQqInbound(options = {}) {
   let reconnectAttempts = 0
   let reconnectTimer = null
   // 发送侧运行态：目标类型学习表（事件来时记下 chatId 是单聊还是群）+ 每目标 msg_seq
+  // 两表均有界（CHAT_STATE_MAX，setBounded 淘汰最旧；见文件头常量注释）
   const targetKinds = new Map() // chatId -> 'user' | 'group'
   const msgSeqs = new Map() // chatId -> 递增 seq
+  const warnChatStateEvicted = createThrottledWarn(warn)
+
+  /** 学习目标类型（有界；淘汰只导致回落配置判定）。 */
+  function learnTargetKind(chatId, kind) {
+    const evicted = setBounded(targetKinds, String(chatId), kind, CHAT_STATE_MAX, undefined)
+    if (evicted > 0) {
+      warnChatStateEvicted((count) => `QQ 目标类型学习表达上限 ${CHAT_STATE_MAX}，已淘汰最旧会话（受影响目标回落 notifyGroups 配置判定单聊/群）${count > 1 ? `（近期累计 ${count} 次）` : ''}`)
+    }
+  }
 
   function targetKindOf(chatId) {
     const learned = targetKinds.get(String(chatId))
@@ -214,7 +231,7 @@ export function createQqInbound(options = {}) {
         const messageId = String(d?.id ?? '')
         const text = String(d?.content ?? '').trim()
         if (messageId === '' || userId === '' || text === '') return
-        targetKinds.set(userId, 'user')
+        learnTargetKind(userId, 'user')
         // v0.7：accept 返回值消费——拒绝/命令回执不再已读不回。
         // msg_id 必带（R5 审查 R5-3-P2-3：C2C 不带 msg_id 走主动消息额度，真机大概率被
         // 平台 4xx 拒掉——mock fetch 不校验被动回复权限，单测测不出；带 msg_id 走被动回复）
@@ -232,7 +249,7 @@ export function createQqInbound(options = {}) {
         const messageId = String(d?.id ?? '')
         const text = stripMention(d?.content)
         if (messageId === '' || userId === '' || chatId === '' || text === '') return
-        targetKinds.set(chatId, 'group')
+        learnTargetKind(chatId, 'group')
         // v0.7：群聊拒绝回执发回群（含「请私聊发送 /pair」引导）
         const result = bus.accept({ channel: 'qq', userId, chatId, messageId, text })
         if (result?.reply !== undefined) {
@@ -327,7 +344,7 @@ export function createQqInbound(options = {}) {
     await rateGate.gate()
     const target = String(chatId)
     const seq = (msgSeqs.get(target) ?? 0) + 1
-    msgSeqs.set(target, seq)
+    setBounded(msgSeqs, target, seq, CHAT_STATE_MAX)
     const kind = targetKindOf(target)
     const url = kind === 'group'
       ? `${apiBase}/v2/groups/${target}/messages`

@@ -124,12 +124,41 @@ export function createDedupLedger(maxEntries = 1000, windowMs = 24 * 60 * 60 * 1
   }
 }
 
-/** 尾沿防抖：每 key 一个定时器，窗口内连续触发只推送最后一次。 */
-export function createTrailingDebounce(windowMs = 10000) {
+/** 尾沿防抖：每 key 一个定时器，窗口内连续触发只推送最后一次。
+ *  v0.8.7 P1-7（宪法#4 状态必须有界）：timers/pending 以 sessionId 为键，条目靠自己的
+ *  定时器到点自清——窗口 `debounceMs` 可配且无上限（config.mjs:207 只钳下限 0），
+ *  配成分钟/小时级 + 会话高频轮换时两表可无界堆积（每条还挂一个活定时器）。
+ *  补 maxKeys 上限：新 key 撑破上限时**立即触发最旧一条**（提前送达，绝不静默丢弃——
+ *  宪法#3；语义退化仅限「本该再等窗口末尾」），并交给调用方 warn。
+ * @param {number} [windowMs=10000]
+ * @param {object} [options]
+ * @param {number} [options.maxKeys=256] - 在途 key 上限（会话并发量的三个数量级余量）
+ * @param {(key: string, pendingCount: number) => void} [options.onOverflow] - 提前触发通报（异常被吞）
+ */
+export function createTrailingDebounce(windowMs = 10000, { maxKeys = 256, onOverflow } = {}) {
   const timers = new Map()
   const pending = new Map()
+  const cap = Math.max(1, Math.trunc(Number(maxKeys)) || 256)
+  const fireNow = (key) => {
+    const timer = timers.get(key)
+    if (timer !== undefined) clearTimeout(timer)
+    timers.delete(key)
+    const fn = pending.get(key)
+    pending.delete(key)
+    if (typeof fn === 'function') { try { return fn() } catch { /* 任务异常绝不外抛 */ } }
+    return undefined
+  }
   return {
     schedule(key, task) {
+      // 腾位在写入前：只有「新 key」才可能撑破上限（同 key 重排不增长）
+      while (!pending.has(key) && pending.size + 1 > cap) {
+        const oldest = pending.keys().next().value
+        if (oldest === undefined) break
+        if (typeof onOverflow === 'function') {
+          try { onOverflow(oldest, pending.size) } catch { /* 通报失败不致命 */ }
+        }
+        fireNow(oldest)
+      }
       pending.set(key, task)
       const previous = timers.get(key)
       if (previous !== undefined) clearTimeout(previous)
@@ -146,6 +175,11 @@ export function createTrailingDebounce(windowMs = 10000) {
       for (const [key, fn] of pending) {
         triggered.push(typeof fn === 'function' ? fn() : undefined)
       }
+      // v0.8.7（宪法#4）：必须逐个 clearTimeout 再清表——只 `timers.clear()` 会让已挂起的
+      // 定时器留在事件循环里（回调本身已是空转，但 Node 进程要等它们全部到点才退出）。
+      // debounceMs 配成分钟级 + 有界表满 256 条时，卸载后进程可被吊住整个窗口时长。
+      // grace 侧 flush 一直是这么做的（rules.mjs:152），此处对齐。
+      for (const timer of timers.values()) clearTimeout(timer)
       timers.clear()
       pending.clear()
       return triggered
@@ -189,10 +223,16 @@ export function createEventListener(ctx, notifier, resolvedConfig, wiring = {}) 
   const actionsFn = typeof wiring.actions === 'function' ? wiring.actions : null
   const interactiveFn = typeof wiring.interactive === 'function' ? wiring.interactive : null
   const keywords = createKeywordFilter(resolvedConfig.keywords)
-  const debounce = createTrailingDebounce(resolvedConfig.debounceMs ?? 10000)
+  // 有界防抖（宪法#4）：溢出时提前触发最旧会话的待推送并告警（warn 在下方定义前先声明引用）
+  const debounce = createTrailingDebounce(resolvedConfig.debounceMs ?? 10000, {
+    onOverflow: (key, size) => warn(`防抖表达上限（在途 ${size} 个会话），提前推送最旧会话 ${key} 的待发通知（合并窗提前收口，不丢通知）`),
+  })
   // 空闲宽限窗：turn 结束后等 N 秒再打扰；期间用户输入（user/* 事件）即取消。
   // approval/agent/error 不进宽限窗——它们等人决策，晚到等于没到。
-  const grace = createGraceQueue({ seconds: resolvedConfig.graceSeconds ?? 0 })
+  const grace = createGraceQueue({
+    seconds: resolvedConfig.graceSeconds ?? 0,
+    onOverflow: (key, size) => warn(`宽限窗表达上限（在途 ${size} 个会话），提前推送最旧会话 ${key} 的待发通知（宽限提前收口，不丢通知）`),
+  })
   const dedup = createDedupLedger()
   const warn = (message) => {
     try { ctx?.logger?.warn?.('[dsh-notifier]', message) } catch { /* 日志失败绝不致命 */ }

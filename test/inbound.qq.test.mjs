@@ -345,6 +345,106 @@ test('notifyTargets：notifyUsers + notifyGroups 优先，缺省回落全局白�
   await rig.inbound.stop()
 })
 
+// ---------------------------------------------------------------- 有界内存表（v0.8.7 P1-7，宪法#4）
+
+const CHAT_STATE_MAX = 1024 // 与 qq-gw.mjs 的常量对齐（改源码上限须同步本值）
+
+/** 灌 n 个群 @ 事件（各自独立 group_openid + messageId，逐个进 targetKinds）。 */
+function floodGroupEvents(ws, count, { prefix = 'g_', from = 0 } = {}) {
+  for (let i = from; i < from + count; i += 1) {
+    ws.serverSend({
+      op: 0,
+      t: 'GROUP_AT_MESSAGE_CREATE',
+      s: 100 + i,
+      d: { id: `evt_flood_${prefix}${i}`, group_openid: `${prefix}${i}`, content: '<@!BOT> hi', author: { member_openid: 'u_open' } },
+    })
+  }
+}
+
+test('targetKinds 有界：第 1025 个群挤掉最旧 → 该目标回落配置判定（默认单聊接口），并 warn 出声', async () => {
+  const rig = makeRig()
+  const ws = await driveReady(rig)
+  floodGroupEvents(ws, CHAT_STATE_MAX + 1)
+  await tick()
+  assert.ok(
+    rig.lines.some((line) => line.includes('目标类型学习表达上限')),
+    '学习表淘汰必须可见（受影响目标的单聊/群判定降级，不可静默）',
+  )
+  // 最旧群：学习记录已淘汰 且 不在 notifyGroups ⇒ 回落「未知目标按单聊」既有语义
+  assert.equal(await rig.inbound.sendText('g_0', '最旧'), true)
+  assert.ok(rig.calls.some((entry) => entry.url === `${API}/v2/users/g_0/messages`), '被淘汰目标回落单聊接口')
+  // 最新群：学习记录仍在，照旧走群接口
+  assert.equal(await rig.inbound.sendText(`g_${CHAT_STATE_MAX}`, '最新'), true)
+  assert.ok(rig.calls.some((entry) => entry.url === `${API}/v2/groups/g_${CHAT_STATE_MAX}/messages`), '未淘汰目标仍走群接口')
+  await rig.inbound.stop()
+})
+
+test('targetKinds 淘汰后配置判定仍生效：notifyGroups 里的群被淘汰后依然走群接口（回落不是回落成错）', async () => {
+  const rig = makeRig({ config: { notifyGroups: ['g_0'] } })
+  const ws = await driveReady(rig)
+  floodGroupEvents(ws, CHAT_STATE_MAX + 1)
+  await tick()
+  assert.equal(await rig.inbound.sendText('g_0', '配置群'), true)
+  assert.ok(
+    rig.calls.some((entry) => entry.url === `${API}/v2/groups/g_0/messages`),
+    '配置里声明过的群即使学习记录被淘汰，也必须仍按群投递',
+  )
+  await rig.inbound.stop()
+})
+
+test('targetKinds LRU：活跃群（中途再来消息）不因「首次学习早」被淘汰', async () => {
+  const rig = makeRig()
+  const ws = await driveReady(rig)
+  const learnHot = (seq) => ws.serverSend({
+    op: 0,
+    t: 'GROUP_AT_MESSAGE_CREATE',
+    s: seq,
+    d: { id: `evt_hot_${seq}`, group_openid: 'g_hot', content: '<@!BOT> hi', author: { member_openid: 'u_open' } },
+  })
+  learnHot(1) // 最早学习
+  floodGroupEvents(ws, CHAT_STATE_MAX - 1, { prefix: 'g_pad_' }) // 表正好填满 1024
+  learnHot(2) // 活跃触摸
+  floodGroupEvents(ws, 1, { prefix: 'g_final_' }) // 撑破上限 ⇒ 淘汰最旧
+  await tick()
+  assert.equal(await rig.inbound.sendText('g_hot', '热键'), true)
+  assert.ok(
+    rig.calls.some((entry) => entry.url === `${API}/v2/groups/g_hot/messages`),
+    '被触摸过的活跃群必须存活（首次学习早不是淘汰理由）',
+  )
+  assert.equal(await rig.inbound.sendText('g_pad_0', '最旧'), true)
+  assert.ok(
+    rig.calls.some((entry) => entry.url === `${API}/v2/users/g_pad_0/messages`),
+    '淘汰的是未被触摸的最旧目标（回落单聊接口）',
+  )
+  await rig.inbound.stop()
+})
+
+test('msgSeqs 有界：第 1025 个目标挤掉最旧 → 该目标 msg_seq 从 1 重新递增；活跃目标 seq 不被重置', async () => {
+  const rig = makeRig()
+  await driveReady(rig)
+  // rateGate 固定 1050ms 节流：本用例要发 1000+ 条，压掉真实等待（仅本用例内，finally 还原）
+  const realSetTimeout = globalThis.setTimeout
+  globalThis.setTimeout = (fn, ms, ...rest) => realSetTimeout(fn, ms > 0 ? 0 : ms, ...rest)
+  try {
+    assert.equal(await rig.inbound.sendText('t_0', 'a'), true)
+    assert.equal(rig.calls.at(-1).body.msg_seq, 1)
+    assert.equal(await rig.inbound.sendText('t_0', 'b'), true)
+    assert.equal(rig.calls.at(-1).body.msg_seq, 2, '同目标 seq 递增（既有语义）')
+    for (let i = 1; i < CHAT_STATE_MAX; i += 1) {
+      assert.equal(await rig.inbound.sendText(`t_${i}`, 'x'), true)
+    }
+    // 此刻表正好 1024 条且 t_0 是最旧（第 2 次写 t_0 时 LRU 触摸过，但之后再无触摸）
+    assert.equal(await rig.inbound.sendText(`t_${CHAT_STATE_MAX}`, 'y'), true) // 撑破上限
+    assert.equal(await rig.inbound.sendText('t_0', 'c'), true)
+    assert.equal(rig.calls.at(-1).body.msg_seq, 1, '被淘汰目标 seq 从 1 重起（跨消息重置无害：msg_seq 只需同 msg_id 下不重复）')
+    assert.equal(await rig.inbound.sendText(`t_${CHAT_STATE_MAX}`, 'z'), true)
+    assert.equal(rig.calls.at(-1).body.msg_seq, 2, '未淘汰目标的 seq 连续递增')
+  } finally {
+    globalThis.setTimeout = realSetTimeout
+  }
+  await rig.inbound.stop()
+})
+
 // ---------------------------------------------------------------- 生命周期
 
 test('stop：关闭连接、清定时器，close 不再触发重连；start 幂等', async () => {

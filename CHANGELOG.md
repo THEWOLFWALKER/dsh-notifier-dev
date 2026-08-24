@@ -5,6 +5,21 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 修复：入站内存学习表与 `wechat:ctx:` 键族全部收上界（批次 B-键族4 / P1-7，2026-08-24）
+
+依据 `.agents/workstreams/crack-fix-plan/PLAN.md §批次B B4` 与 `PLAN-B-k4-fin.md`（宪法 #4「状态必须有界」）。这些表以 chatId/uid 为键**只增不减**——键的数量由外部（群数量、陌生人来消息）决定，长跑进程或被灌水时内存/`state.json` 单调膨胀，是 F-8 写放大与内存 DoS 的底座。
+
+- **新增 `src/inbound/_bounded.mjs`（零依赖工具）**：`setBounded(map, key, value, max, onEvict)` 写超上限即从最旧一端淘汰（`Map` 迭代序 = 插入序），写已存在的键先 `delete` 再 `set` = **LRU 触摸**，活跃会话不会因「首次学习早」被误淘汰；`while` 而非 `if` 让上限调小/历史遗留的超量也能一次收敛。`createThrottledWarn(warn, { intervalMs, now })` 把淘汰这类高频降级的告警按 60s 窗节流，窗内累计次数随下次告警一并报出——既不静默（宪法 #3）也不刷屏。既有先例（`bus.mjs` 的 fifo/replyThrottle、`callback-refs.mjs` 的 `DEFAULT_MAX`、`turn-tracker` 的 `MAX_TRACKED`）收成一处，避免各通道抄歪。
+- **钉钉（`src/inbound/dingtalk-stream.mjs`）**：`sessionWebhooks` / `chatSenders` 加 1024 上限（真实企业几十个会话，三个数量级余量）。淘汰安全 —— 前者缺失回落 `batchSend` 主动推送，后者缺失回落「chatId 当 staffId」，两条都是既有路径。`seenMsgIds` 的惰性窗口清扫此前**只在 `size > 1024` 时触发**，60s 内涌入上万条新 msgId（群灌水）时无一条过窗、表继续无界涨；现在补硬上限淘汰最旧（最旧条目离过窗最近，窗口内去重语义不变）。
+- **QQ（`src/inbound/qq-gw.mjs`）**：`targetKinds` / `msgSeqs` 同加 1024 上限。淘汰安全 —— 前者缺失回落 `notifyGroups` 配置判定单聊/群（配置里声明过的群即使学习记录被淘汰仍按群投递），后者缺失从 1 重新递增（`msg_seq` 只需在同一 `msg_id` 下不重复）。
+- **微信 iLink（`src/inbound/wechat-ilink.mjs`）**：`wechat:ctx:<uid>` 此前每个发过消息的 uid 永久占一条 `state` 键、唯一归宿是 `sessionExpired` 全清；现在键族收 256 个 uid 上限，超限按**首见顺序**淘汰最旧（`Object` 键序 = 插入序，跨重启保序），存量超量在下一次写入时一并收敛。淘汰安全：ctx 只是「发送时回显最新 `context_token`」的缓存，缺失走既有「不带 token 发 → -14/伪装 -2 → 剥 token 重试」路径。`store` 无 `keys()` 的精简实现走**显式 fail-open**（跳过淘汰但照常写入，宁可无界也不丢功能），该降级路径由测试钉死不静默。
+- **D-7 廉价半边（`context_token` 形状校验）**：`context_token` 由对端消息携带，陌生人可塞任意长/带控制字符的串进 `state`（膨胀 + 污染日志与后续 JSON 载荷）。现在 >512 字符或含空白/控制字符一律拒收并 warn，**本条消息其余处理照常入站**（宪法 #6 不因一个字段失误吞掉消息）。
+- **防抖表与宽限窗（`src/event-listener.mjs` / `src/rules.mjs`）——行为变化**：`createTrailingDebounce` 与 `createGraceQueue` 的在途表以 sessionId 为键、靠各自定时器到点自清，但 `debounceMs`/`graceSeconds` 可配且**无上限**（`config.mjs` 只钳下限 0），配成分钟/小时级 + 会话高频轮换时两表可无界堆积（每条还挂一个活定时器）。现在各加 256 个 key 上限，**溢出时立即触发最旧一条**并 warn。行为变化仅限「本该再等窗口末尾/宽限期的那一条被提前推送」——绝不静默丢弃通知（宪法 #3）；装配处两个 `onOverflow` 都接 `warn`。
+- **同轮自审修掉三个自引入/既存缺陷**：① `_bounded.mjs` 的空转护栏原写作「最旧键 `=== undefined` 即 break」，键本身为 `undefined` 时会被当成空表、淘汰停摆而表越过上限——改判迭代器的 `done`；② 钉钉去重表的清扫阈值 `>` 在有了硬上限后**永不成立**（`setBounded` 保证写后 `size <= max`），惰性清扫成死代码、稳态高流量主机每条新消息都走「淘汰 + 告警」白丢去重记录还刷日志——改为 `>=`，表满先清过窗条目、清不出空位才淘汰；③ `createTrailingDebounce.flush()` 只 `timers.clear()` 却不 `clearTimeout`，卸载后最多 256 个已挂起定时器留在事件循环里，`debounceMs` 配长时进程要等整个窗口才退出（本仓库测试套件因此被吊住约 60s，修复后全量耗时 121s → 68s）——与 `grace.flush()` 对齐逐个清除。
+- 测试：+54（`test/bounded.test.mjs` 新建 22 例：LRU 触摸/淘汰回调/回调抛错不致命/cap 正常与上下边界与越界五态/`Infinity` 与 `0` 的宽容语义/存量收敛/3000 条压测/`undefined` 键；钉钉 +5、QQ +4、微信 +7、`grace` +8、`debounce` +8 含两条装配级 300 会话零丢失与定时器泄漏钉死）。测试契约 956 → 1010。
+- 变异验证（证明测试真的咬人）：短路 `setBounded` 淘汰 → 19 例红；短路 `grace` 腾位 → 6 例红；短路 `debounce` 腾位 → 4 例红；`wechat:ctx` 淘汰置空 → 4 例红；去重阈值改回 `>` → 1 例红；`flush` 去掉 `clearTimeout` → 1 例红。每次变异后均以 `git diff` 确认逐字节还原。
+- **真机验收未过（宪法 #8）**：全部结论来自 mock fetch/WebSocket 与临时 `state.json`。真机需观测：钉钉 60s 内 >1024 条消息的去重与告警节流、QQ >1024 个目标的接口选择回落、微信真实 `context_token` 的长度与字符集分布（512 上限是否误伤）、防抖/宽限窗溢出提前推送的用户体感。已记入 `docs/memory/risks.md`。
+
 ### 安全修复：引导码文件交付 + 过期码泵码堵死 + 文案不再指引 stderr（批次 B-1，2026-08-23）
 
 依据 `.agents/workstreams/crack-fix-plan/PLAN-B1.md`（solution2.md 推荐方案 A + B2 + B4）。三条缺陷同属一条泄露链：引导码明文进持久化日志 + 过期码可无限重铸 + 文案把用户往日志里引。
