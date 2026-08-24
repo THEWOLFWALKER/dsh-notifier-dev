@@ -6,6 +6,7 @@
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
 > 2026-08-23 接力合入公共镜像 v0.8.5 发布内容（issue #11 ask_user 编号回复修复 + PR #9 飞书扫码 SDK 适配），见「当前接力交代」。
 > 上一稳定发布位 v0.8.6 = `bf03a1c`（npm `dsh-notifier@0.8.6`，公共镜像 `db42908` 已清理 node_modules/package-lock）。
+> 快照刷新：2026-08-24，维护批 1..3 完成。**当前开发线 `codex/maintenance-architecture`**（私有 `dsh-notifier-dev`，未合 main、未发版，版本/计数串仍停在已发布 v0.8.6 / 909；发版轮再统一提）。已提交：批 1 管理台 token 流程（`777455b`，契约 1024）、批 2 QQ 心跳 ACK 连丢计数重连（`777455b` 后序，契约 1027）、批 3 index.mjs 装配拆分三阶段（`f307950` + `9fd6341` + `deda003`，契约 **1046**）。批 3 把出站 overlay、admin token 决策、六通道入站启用信号抽进 `src/assembly/{outbound,admin-token,inbound-signals}.mjs`；身份/迁移/引导/逐通道装载块**有意不抽**（耦合面宽、漂移风险高，留待更深的批次）。工作流登记 `.agents/workstreams/maintenance-architecture.md`；下一步批 4（Interaction Core 统一交互状态）。规则照旧：私有库为开发唯一基线、绝不直接改 main、维护批期只做代码维护与自动化测试。
 
 ## 当前接力交代（2026-08-23，第二轮：镜像接力合入）
 
@@ -129,6 +130,10 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 ```
 src/
 ├── index.mjs            # 装配总入口（apply）：装配顺序是刻意的，见注释
+├── assembly/            # v0.8.7（维护批 3）抽出的纯「决策」装配段
+│   ├── outbound.mjs     # 出站凭证 state overlay + testRawConfigOf（composeOutboundChannels/accountOf）
+│   ├── admin-token.mjs  # admin token 三路决策 + verifyToken（resolveAdminToken）
+│   └── inbound-signals.mjs # 六通道入站 resolve/启用信号（resolveInboundSignals）
 ├── config.mjs           # 配置解析与默认值
 ├── notify.mjs           # 出站核心：notify()/notifyAll()，分段、限流、重试
 ├── routing.mjs          # level → 渠道语义矩阵（active/passive/timeSensitive）

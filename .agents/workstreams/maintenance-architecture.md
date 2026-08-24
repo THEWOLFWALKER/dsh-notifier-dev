@@ -17,6 +17,13 @@
   8. 第七批：全量验证 + 文档一致性（CHANGELOG/HANDOFF/README 双语/guide/risks 版本与测试数对齐）+ neat-freak 收尾
 - Owned files: `src/admin/ui.mjs` `src/admin/api.mjs` `src/inbound/qq-gw.mjs` `src/index.mjs` `src/actions.mjs` `src/approval/router.mjs` `src/questions/router.mjs` `src/inbound/_contract.mjs` + 对应测试与文档
 - Do not touch: 其他 workstream 保留的 `.agents/workstreams/*` 现有文件；公共镜像 `THEWOLFWALKER/dsh-notifier`。
-- Validation: `npm test`（node --test test/*.test.mjs test/*.spec.mjs）= 1012 契约；`node scripts/verify-release.mjs`；`node scripts/gen-channel-matrix.mjs --check`；`node --check src/index.mjs`（每批至少这四项）
+- Validation: `npm test`（node --test test/*.test.mjs test/*.spec.mjs）= **1046 契约**（批 3 后；1045 pass + 1 win32 skip，基线 1012 → 1024 → 1027 → 1046）；`node scripts/verify-release.mjs`；`node scripts/gen-channel-matrix.mjs --check`；`node --check src/index.mjs`（每批至少这四项）
 - Adversarial review: 每批独立复核——token 单飞/401 门、重连定时器泄漏、装配拆分行为等价、交互状态机并发/首达/超时/dispose、内容模型兼容性、PR #12 越权/重复点击路径。
 - Handoff: 见 commit 记录与批次汇报；每批先测后汇报再继续；遇安全边界/状态格式/公共 API/真机门问题先停下汇报。
+- Commit record:
+  - 批 1（管理台 init/token 流程，契约 1024）：`777455b`
+  - 批 2（QQ 心跳 ACK 连丢计数重连 + stop 清理，契约 1027）：`777455b` 后序（CHANGELOG 条目 MNT-2）
+  - 批 3 阶段 1（出站 overlay → `src/assembly/outbound.mjs`，契约 1034）：`f307950`
+  - 批 3 阶段 2（admin token 决策 → `src/assembly/admin-token.mjs`，契约 1038）：`9fd6341`
+  - 批 3 阶段 3（六通道入站启用信号 → `src/assembly/inbound-signals.mjs`，契约 1046）：`deda003`
+- 批 3 有意不抽：身份/配对/迁移/引导/逐通道装载/admin 装配块（耦合面宽，漂移风险 > 精简收益；留待更深的批次）。

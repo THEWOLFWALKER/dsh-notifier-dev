@@ -5,6 +5,16 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 维护批 3：降低 index.mjs 装配复杂度（MNT-3，2026-08-24）
+
+`src/index.mjs` 的 `apply()` 从 885 行散装收束到分段装配，按「先移动代码不改变行为、每阶段补装配测试」分三阶段，每阶段独立提交、四扇门全过（行为零变的契约锚 = 既有 apply() 级测试 + 各阶段新增模块边界测试）。块的具体职责与内联注释随原样搬入各模块，`apply()` 只留组装调用与晚绑定。
+
+- **阶段 1（`f307950`）**：出站凭证 state overlay + 连通性测试 `testRawConfigOf` 抽为 `src/assembly/outbound.mjs` 的 `composeOutboundChannels`/`accountOf`。admin 关闭时 `channels` **数组引用同一性**逐字节保持（原 apply 语义）；`accountOf` 改 (store, key) 双参，7 处调用点同步。新增模块测试 7 例（防御读取/透传引用/合并优先级/双域永不过 overlay/按类型去重）。
+- **阶段 2（`9fd6341`）**：admin token 三路决策（显式/复用/首启生成）+ `verifyToken` 抽为 `src/assembly/admin-token.mjs` 的 `resolveAdminToken`。state 只存 SHA-256 哈希、明文不落盘的既有红线原样随模块走；`verifyToken` 先比长度再 `timingSafeEqual`。新增模块测试 4 例（三路/损坏哈希/恒时安全面/store.get 抛错容忍）；`node:crypto` 移入模块，index.mjs 不再直接依赖。
+- **阶段 3（`deda003`）**：六通道入站 resolve/启用信号（allowUsers / tg 便捷回退链 / approvalWanted / feishu-qq-dingtalk-wxpusher-wechat 的 wanted+resolved）抽为 `src/assembly/inbound-signals.mjs` 的 `resolveInboundSignals`。tg 回退次序（显式 > 出站渠道 > store 账号）、admin 关闭零执行语义逐字节保持；wxpusher 密径首铸落盘是这处唯一受控副作用；wechat 仅出 wanted/raw 信号，resolve 仍在 apply 的 guided 装配块晚绑定。新增模块测试 8 例；不再被引用的 4 个 `resolveXxxInboundConfig` 与 `resolveEnvRefs` 导入清理。
+- 后续候选（身份/配对/迁移/引导、「已启通道」装配段）耦合面过宽（约 10 个出入值 + 审计 late-bound 回闭），继续抽的漂移风险高于精简收益，按「不要一次性重写」留待维护计划更深的批次或发版轮单独处理。
+- 验证：apply() 体 885 → **737 行**（-17%）；全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1046** 契约（1045 通过 + 1 win32 skip，基线 1027 + 7 + 4 + 8）；`verify-release.mjs` / `gen-channel-matrix --check` / 全量 `node --check` 通过。
+
 ### 维护批 2：QQ 心跳 ACK 连续丢失计数重连（MNT-2，2026-08-24）
 
 `src/inbound/qq-gw.mjs` 心跳判死逻辑：原「任一拍未 ACK，下一拍即主动断开重连」对单次网络抖动/网关瞬时滞留过激——QQ 心跳间隔按 30s 级计，一拍没回应就断开重连等于让一次抖动杀掉会话。改为**连续丢失计数**：连续 `maxMissedAcks` 拍未确认才判死重连。
@@ -12,7 +22,7 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 - 默认阈值 **2**（可经构造器选项 `maxMissedAcks` 覆盖，1..10 语义，合法值 `>=1` 取整后钳上限 10，**0/NaN/负数回落默认 2**——顺带修掉 `Number(0)||2` 把显式 0 变相改成 1 的坑）。单拍丢失只 warn 出「已连续丢失 1/2（下一拍仍无 ACK 才断线重连）」；ACK 到达即清零计数（抖动恢复不算数）；连丢满阈值才 cleanupSocket + 退避重连。
 - `stop()` 定时器回收已就位，新增用例钉死「断线已调度重连但未执行时 stop → `clearTimeout(reconnectTimer)` 撤销，绝不新建连接」（`stopRequested` 布尔 + clearTimeout 双保险）。
 - 测试用 node:test `t.mock.timers` 确定性推进心跳节奏（不再靠真实 50ms 间隔数拍），新增 4 例、替换 1 例：连丢 2 拍判死重连 / 单拍丢失 ACK 恢复不清零不重连 / 阈值 1 保留旧语义 + 0 回落默认 2 / stop 清理未决重连定时器。
-- 未真机验证 QQ（按计划不整合假`"真实 QQ 已验证"`）；协议行为（op10/op11、RESUME）保持原样。
+- 未真机验证 QQ（按计划不声称「真实 QQ 已验证」）；协议行为（op10/op11、RESUME）保持原样。
 - 验证：全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1027** 契约（1026 通过 + 1 win32 skip）；`verify-release.mjs` / `gen-channel-matrix --check` / 全量 `node --check` 通过。
 
 ### 维护批 1：管理台初始化与 token 流程（MNT-1，2026-08-24）

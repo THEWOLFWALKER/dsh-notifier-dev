@@ -10,12 +10,13 @@ The sub-agent console and any admin-facing GUI are part of DSH, not a separate p
 
 ## Runtime Shape
 
-`src/index.mjs` is the Cordis plugin assembly root. It resolves configuration, creates the shared state store, overlays admin-managed credentials when enabled, builds the notifier, and then wires optional services. Disposal is collected and executed in reverse assembly order.
+`src/index.mjs` is the Cordis plugin assembly root. It resolves configuration, creates the shared state store, overlays admin-managed credentials when enabled, builds the notifier, and then wires optional services. Pure "decision" stages of assembly — the outbound credential overlay, the admin token strategy, and the six-channel inbound enable signals — live as documented in `src/assembly/*.mjs` (`outbound.mjs`, `admin-token.mjs`, `inbound-signals.mjs`); `index.mjs` calls them and wires the results in place. Disposal is collected and executed in reverse assembly order.
 
 ```text
 Cordis context
   -> config.mjs
   -> store / ledger / routing registry
+  -> src/assembly/*.mjs (outbound credential overlay, admin token, inbound enable signals)
   -> createNotifier (adapters + level routing + segmentation + retry)
   -> event-listener (automatic events + turn tracker)
   -> tools (notify, notify_test, ask_user)
