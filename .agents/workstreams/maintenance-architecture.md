@@ -29,7 +29,7 @@
   - 批 4 阶段 1（Interaction Core 统一状态账本 `src/interaction/ledger.mjs` + 6 单测 + actions 迁移，契约 1052）：`cc130e8`
   - 批 4 阶段 2（approval 账本迁移，latestPendingFor 留链内）：`1a4a2a3`
   - 批 4 阶段 3（questions 账本迁移 + CHANGELOG MNT-4）：`6f323a0`
-- 批 5（入站 text/image/file 统一消息结构 + QQ 单聊图片解析接口/fixture，契约 1060）：`<待提交>`
+- 批 5（入站 text/image/file 统一消息结构 + QQ 单聊图片解析接口/fixture，契约 1060）：`e72bf75`
 - 批 3 有意不抽：身份/配对/迁移/引导/逐通道装载/admin 装配块（耦合面宽，漂移风险 > 精简收益；留待更深的批次）。
 - 批 4 有意不抽：各链 `latestPendingFor` 归属/兜底启发式（approval exact/onChannel/intended + liveWaiters；questions exact/onChannel/hint + hintChannels）——匹配语义差异过大，抽进核心会引入行为漂移；核心只留六个原子账本操作。未加 approval.parallel（非目标）。
 - 批 5 纪律：`parseQQImageMessage` 与 fixture 只测**不接线**——QQ 官方机器人 C2C 媒体事件真实字段形状无真机证据，qq-gw 及所有适配器均不 import；真机确认 `d.extra` 段形状后翻转启用并落 CHANGELOG 说明依据。
