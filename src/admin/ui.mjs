@@ -279,27 +279,114 @@ function sourceLabel(s) {
   return map[s] || s || '(未知)'
 }
 
-// ---------- 鉴权：Bearer token，localStorage 持久化，401 清除并重新询问（重试一次） ----------
+// ---------- 鉴权：Bearer token，localStorage 持久化；单飞门 + 成功后持久化 + 401 单次重登录 ----------
+// 维护批 1 改掉原实现三处缺陷（mnt-1）：
+//  ① 并发 api() 首次访问各弹一次 window.prompt → N 个叠加窗（loadAll 一次 5 个）；
+//  ② prompt 输入的 token 从不持久化 → 刷新必重输；
+//  ③ 并发 401 各递归重询一次 → 风暴刷窗。
+// 改法：
+//  - acquireToken 单飞门：并发调用共享同一次询问（authGate）；
+//  - adoptToken 只在「成功响应（非 401）」执行：正确 token 刷新不重输，错的不残留；
+//  - 401 走 reloginGate 单飞重登录：一次询问 + 新 token 恰好重试一次；autoReloginUsed 门
+//    在每个成功响应后被 markAuthOk 重新武装——错 token 绝不循环弹窗；authGen 世代计数让
+//    「用旧 token 发出的迟到 401」判为过期请求，不再触发第二轮弹窗。
+var authGate = null
+var reloginPromise = null
+var autoReloginUsed = true
+var authGen = 0
 function getToken() { try { return window.localStorage.getItem(TOKEN_KEY) || '' } catch (e) { return '' } }
 function setToken(v) {
   try { if (v) window.localStorage.setItem(TOKEN_KEY, v); else window.localStorage.removeItem(TOKEN_KEY) } catch (e) {}
 }
 function askToken() {
-  var t = window.prompt('请输入管理台访问 token（服务启动时打印）：', '')
+  var t = window.prompt('请输入管理台访问 token（服务启动时打印；保存在本浏览器，仅 401 时才再询问）：', '')
   return t && t.trim() ? t.trim() : ''
+}
+/** token 询问单飞门：并发调用共享同一次弹窗；resolve 空串 = 用户取消。询问本身不持久化。 */
+function acquireToken() {
+  if (!authGate) {
+    authGate = Promise.resolve().then(function () {
+      var t = askToken()
+      authGate = null
+      return t
+    })
+  }
+  return authGate
 }
 function renderTokenState() {
   var t = getToken()
   $('#tokenState').textContent = t ? 'token：' + t.slice(0, 4) + '****（点击更换）' : '未设置 token（点击输入）'
 }
-function api(path, options, retried) {
-  options = options || {}
-  var token = getToken() || askToken()
-  if (!token) return Promise.reject(new Error('未提供 token，点击右上角 token 状态重新输入'))
+/** 低层 Bearer 请求（不含 401 处理；401 由 apiWith/relogin 统一裁决）。 */
+function request(path, options, token) {
   var init = { method: options.method || 'GET', headers: { Authorization: 'Bearer ' + token } }
   if (options.body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(options.body) }
-  return fetch(path, init).then(function (res) {
-    if (res.status === 401 && !retried) { setToken(''); renderTokenState(); return api(path, options, true) }
+  return fetch(path, init)
+}
+/** 成功响应（非 401）才持久化：刷新不重输，错的绝不残留在本地。 */
+function adoptToken(t) { if (t) setToken(t) }
+/** 任何非 401 响应说明当前 token 当时有效 → 重新武装自动重登录（下一次 401 才再问一次）。 */
+function markAuthOk() { autoReloginUsed = true }
+/** 401 单飞重登录门：清旧 token → 单次询问 → 返回新 token（空串 = 取消）。并发 401 共享。 */
+function reloginGate() {
+  if (!reloginPromise) {
+    reloginPromise = Promise.resolve().then(function () {
+      setToken('')
+      renderTokenState()
+      return acquireToken()
+    }).then(function (t) {
+      reloginPromise = null
+      authGen += 1 // 世代推进：此后老 token 发出的迟到 401 = 过期请求，不再自动弹窗
+      return t
+    })
+  }
+  return reloginPromise
+}
+/** 用新 token 恰好重试一次；仍 401 = 抛错（不循环）。成功则持久化并重新武装。 */
+function retryRelogin(path, options, t) {
+  return request(path, options, t).then(function (res) {
+    if (res.status === 401) throw new Error('鉴权失败：token 无效或已失效（已按一次自动重登录处理，请点击右上角 token 状态手动更新）')
+    markAuthOk()
+    adoptToken(t)
+    return res
+  })
+}
+function api(path, options) {
+  options = options || {}
+  var token = getToken()
+  var gen = authGen
+  if (!token) return acquireToken().then(function (t) {
+    if (!t) throw new Error('未提供 token，点击右上角 token 状态重新输入')
+    return apiWith(path, options, t, gen)
+  })
+  return apiWith(path, options, token, gen)
+}
+/** 一次请求 + 单次 401 裁决（并发 401 共享 reloginGate，只弹一次窗）。 */
+function apiWith(path, options, token, gen) {
+  return request(path, options, token).then(function (res) {
+    if (res.status !== 401) {
+      markAuthOk()
+      adoptToken(token)
+      return res
+    }
+    if (gen < authGen) {
+      // 用已作废 token 发出的迟到 401：请求本身过期，不重登录、只拒掉这一条
+      throw new Error('鉴权失败：该请求基于已失效的 token，请刷新后重试')
+    }
+    if (reloginPromise) {
+      // 已有在途重登录（并发 401）→ 等它，用新 token 各自重试一次
+      return reloginGate().then(function (t) {
+        if (!t) throw new Error('登录已取消')
+        return retryRelogin(path, options, t)
+      })
+    }
+    if (!autoReloginUsed) throw new Error('鉴权失败：token 无效或已失效（已自动重试一次，请点击右上角 token 状态手动更新）')
+    autoReloginUsed = false
+    return reloginGate().then(function (t) {
+      if (!t) throw new Error('登录已取消')
+      return retryRelogin(path, options, t)
+    })
+  }).then(function (res) {
     return res.json().catch(function () { throw new Error('HTTP ' + res.status + '：响应不是 JSON') }).then(function (data) {
       if (!res.ok) throw new Error(data && data.error ? data.error : 'HTTP ' + res.status)
       return data
@@ -966,13 +1053,27 @@ function renderNotifyLog() {
       + '<td class="small">' + (row.replay ? '重放' : '实时') + '</td></tr>'
   }).join('')
 }
-/** SSE 客户端（fetch 流式读：EventSource 不支持 Authorization 头）；断线 5s 退避重连。 */
-function startNotifyStream() {
+/** SSE 客户端（fetch 流式读：EventSource 不支持 Authorization 头）；断线 5s 退避重连。
+ * 401 与 api 共用同一 reloginGate：并发时只弹一次窗，重登录成功后原流重播。 */
+function startNotifyStream(explicitToken) {
   if (notifyStreamTimer) { clearTimeout(notifyStreamTimer); notifyStreamTimer = null }
-  var token = getToken()
-  if (!token) { setStreamState('未设置 token'); return }
+  var token = explicitToken || getToken()
+  if (!token) {
+    // 首访无 token：与并行 loadAll 共享同一单飞询问（不重复弹窗）
+    acquireToken().then(function (t) {
+      if (t) startNotifyStream(t)
+      else setStreamState('未设置 token，点击右上角 token 状态输入')
+    })
+    return
+  }
+  var gen = authGen
   fetch('/api/events', { headers: { Authorization: 'Bearer ' + token } }).then(function (res) {
-    if (res.status === 401) { setToken(''); renderTokenState(); setStreamState('token 失效'); return }
+    if (res.status === 401) {
+      if (gen >= authGen) { handleStream401(token); return } // 活 token 失效 → 走共享重登录门
+      setToken(''); renderTokenState(); setStreamState('token 失效（已更换，请刷新）'); return // 过期流
+    }
+    markAuthOk()
+    adoptToken(token) // 连接正常 → 持久化（首访 prompt 输入的 token 在此落库）
     if (!res.ok || !res.body) throw new Error('HTTP ' + res.status)
     setStreamState('已连接')
     var reader = res.body.getReader()
@@ -997,6 +1098,19 @@ function startNotifyStream() {
   }).catch(function () {
     setStreamState('已断开，5 秒后重连')
     notifyStreamTimer = setTimeout(startNotifyStream, 5000)
+  })
+}
+/** SSE 401 单次重登录（与 api 共享门；并发已由 reloginGate 兜住）。 */
+function handleStream401(lastToken) {
+  if (reloginPromise) {
+    reloginGate().then(function (t) { if (t) startNotifyStream(t); else setStreamState('token 失效（未重新登录，请点击右上角重试）') })
+    return
+  }
+  if (!autoReloginUsed) { setStreamState('token 失效（已自动重试一次，请刷新或点击右上角更新）'); return }
+  autoReloginUsed = false
+  reloginGate().then(function (t) {
+    if (t) startNotifyStream(t)
+    else { setToken(''); renderTokenState(); setStreamState('token 失效（未重新登录，请点击右上角重试）') }
   })
 }
 var NOTIFY_PREF_IDS = { npEnable: 'enable', npActive: 'active', npSound: 'sound', npHidden: 'hiddenOnly' }
@@ -1030,7 +1144,7 @@ function init() {
   $('#btnRefresh').addEventListener('click', function () { loadAll() })
   $('#tokenState').addEventListener('click', function () {
     var t = askToken()
-    if (t) { setToken(t); renderTokenState(); loadAll() }
+    if (t) { authGen += 1; adoptToken(t); renderTokenState(); loadAll() } // 手动换 token 也推进世代：旧请求的迟到 401 不再触发自动弹窗
   })
   $('#tab-bindings').addEventListener('change', onBindingsChange)
   $('#tab-bindings').addEventListener('click', onBindingsClick)

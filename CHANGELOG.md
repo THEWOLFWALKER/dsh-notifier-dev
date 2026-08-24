@@ -5,6 +5,16 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 维护批 1：管理台初始化与 token 流程（MNT-1，2026-08-24）
+
+修理管理台前端鉴权三处缺陷（对应 `test/admin-ui-behavior.test.mjs` 9 例 + `test/admin-wiring.test.mjs` 就绪日志 3 例）。**不改变任何安全边界**：token 仍只存 SHA-256 哈希、明文不落盘不重发、管理台仍只绑 127.0.0.1。
+
+- **单飞询问门（① 叠窗）**：原 `api()` 缺 token 时各自 `window.prompt()`——首访 `loadAll` 并行 5 个 api 一次弹 5 个叠加窗。改为 `acquireToken()` 单飞门（`authGate`）：并发调用共享同一次询问，一次 resolve 的结果各自复用。
+- **成功后才持久化（② 刷新必重输）**：原 prompt 输入的 token 从不 `setToken()`，刷新必重输；且 `clickToken` 手动输入与 api 自动询问两条路行为分裂。新增 `adoptToken(t)`——只在**成功响应（非 401）**后才落 localStorage；SSE 连接成功同样落库。错 token/code 永不在本地残留。
+- **401 单次重登录（③ 风暴刷窗）**：原并发 401 各自沿调用链递归重询，N 个 401 弹 N 次窗，错 token 可死循环。改为 `reloginGate()` 单飞重登录门：一次询问 + 新 token 恰好重试一次；`autoReloginUsed` 门在每个成功响应后由 `markAuthOk()` 重新武装，失败后解除武装不再自动弹窗；`authGen` 世代计数使「用旧 token 发出的迟到 401」判为过期请求直接拒绝，绝不触发第二轮弹窗。SSE 的 401 与 api 共用同一把门（`handleStream401`）。
+- **启动日志明确 token 获取方式（唯一新增 info 文案）**：`Web 管理台已就绪: http://127.0.0.1:<端口>` 就绪行按三态补充 token 来源——`explicit`（YAML admin.token）、`reused`（沿用首启打印旧值）、`generated`（已打印到上方日志，仅此一次）——重启后不再迷茫「token 从哪来」，也绝不重发明文。
+- 验证：全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1024** 契约（1023 通过 + 1 win32 跳过，基线 1012 + 12 新增）；`verify-release.mjs` / `gen-channel-matrix --check` / 全量 `node --check` 通过。UI 行为测试用 node:vm 真执行内联 `<script>`（剥离末尾 `init()` 自启），非复制粘贴断言。
+
 ### 维护：测试平台自适应（Windows 主机基线稳定，2026-08-24 mnt）
 
 维护计划 batch-0：修 Windows 主机 8 个平台性测试失败。**纯测试维护，未改任何生产代码、未动安全边界**；POSIX/Linux 断言全部保留原强度。

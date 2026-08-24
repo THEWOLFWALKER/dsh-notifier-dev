@@ -823,11 +823,14 @@ export function apply(ctx, config = {}) {
       const storedHashOk = typeof storedHash === 'string' && HEX_64.test(storedHash)
 
       let activeHash = '' // 生效哈希（verifyToken 比对基准；明文无需保留在内存外）
+      let tokenMode = '' // 就绪日志明确 token 获取方式（explicit/reused/generated）
       if (explicitToken !== '') {
         activeHash = sha256HexOf(explicitToken)
         if (storedHash !== activeHash) store.set('admin:token-hash', activeHash) // 同步到 state
+        tokenMode = 'explicit'
       } else if (storedHashOk) {
         activeHash = storedHash // 沿用首启打印过的 token（校验靠哈希，不重发明文）
+        tokenMode = 'reused'
       } else {
         // 首次生成（或既有哈希损坏视为无）：打印一次 + 落哈希。打印先于 server 启动——
         // 端口被占等启动失败时 token 已可知，重启成功后凭哈希继续有效。
@@ -836,6 +839,7 @@ export function apply(ctx, config = {}) {
         store.set('admin:token-hash', activeHash)
         info(`admin token（仅此一次打印，请妥善保存）: ${generated}`)
         info('忘记 token 时：删除 state.json 的 admin:token-hash 键（或在配置写 admin.token）后重启即重新生成')
+        tokenMode = 'generated'
       }
       /** Bearer 校验：candidate 的 SHA-256 与生效哈希恒时比对；任何异常一律 false。 */
       const verifyToken = (candidate) => {
@@ -884,7 +888,13 @@ export function apply(ctx, config = {}) {
       })
       adminServer.start()
         .then(({ port, address }) => {
-          info(`Web 管理台已就绪: http://${address}:${port}（仅本机回环${explicitToken !== '' ? '；token 用 YAML 显式配置的 admin.token' : ''}）`)
+          // mnt 批 1：就绪行永远给出 URL/端口/token 获取方式（不再出现「重启后不知 token 从哪来」）
+          const acquireHint = tokenMode === 'explicit'
+            ? 'token 用 YAML 显式配置的 admin.token'
+            : (tokenMode === 'reused'
+                ? 'token 沿用首启打印的旧值（见首次启动日志或删 admin:token-hash 后重启再生成）'
+                : 'token 已打印到上方日志（仅此一次，请妥善保存）')
+          info(`Web 管理台已就绪: http://${address}:${port}（仅本机回环；${acquireHint}）`)
         })
         .catch((error) => {
           const detail = error?.code === 'EADDRINUSE'
