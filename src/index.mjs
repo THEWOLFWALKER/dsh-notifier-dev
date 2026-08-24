@@ -4,7 +4,8 @@
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
-import { ADAPTERS, resolveConfig, resolveEnvRefs, CHANNEL_TYPES } from './config.mjs'
+import { resolveConfig, resolveEnvRefs } from './config.mjs'
+import { composeOutboundChannels, accountOf } from './assembly/outbound.mjs'
 import { createNotifier } from './notify.mjs'
 import { createEventListener } from './event-listener.mjs'
 import { registerNotifyTool, registerNotifyTestTool } from './tool-register.mjs'
@@ -162,12 +163,9 @@ export function apply(ctx, config = {}) {
   // 日志聚合（journald/Loki/ELK）不再承载 owner 级凭证。
   const BOOTSTRAP_CODE_FILE = `${stateDir}/bootstrap-paircode.txt`
 
-  // v0.3.3 出站凭证 state 回退（设计稿 §5）：admin.enabled 开启时，store 里每个非双域出站
-  // 类型的 `<type>:account`（UI putChannel / 手写产物）与 YAML 行字段级合并（store 字段
-  // 覆盖同名 YAML 字段——UI 改过的即为准），重新过 adapter.resolve 后替换/追加
-  // resolved.channels；admin 关闭时零执行——存量用户行为逐字节不变（§6 兼容红线）。
-  // 双域通道（feishu/dingtalk）不回退：其 `<type>:account` 键域归入站机器人凭证
-  // （v0.3.1 扫码落盘语义），出站 webhook 只走 YAML bootstrap（与 admin/api.mjs 同款裁定）。
+  // v0.3.3 出站凭证 state 回退（设计稿 §5）+ 连通性测试 rawConfig 来源：维护批 3 阶段 1
+  // 抽到 src/assembly/outbound.mjs composeOutboundChannels/accountOf（纯移动，行为零变；
+  // 详注见模块头）。admin 关闭时零执行——存量用户行为逐字节不变（§6 兼容红线）。
   const adminEnabled = resolved.admin?.enabled === true
   const yamlRowOf = new Map()
   for (const row of (Array.isArray(config.channels) ? config.channels : [])) {
@@ -175,43 +173,15 @@ export function apply(ctx, config = {}) {
     const type = typeof row.type === 'string' ? row.type.trim() : ''
     if (type !== '' && !yamlRowOf.has(type)) yamlRowOf.set(type, row)
   }
-  /** store 账号防御读取：非普通对象（null/数组/标量/损坏）一律按无账号。 */
-  const accountOf = (key) => {
-    try {
-      const value = store.get(key)
-      return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null
-    } catch {
-      return null
-    }
-  }
-  const DUAL_INBOUND_DOMAIN_TYPES = new Set(['feishu', 'dingtalk'])
-  const mergedRowOf = new Map() // type → 合并后的原始行（channelTest 的 rawConfig 来源）
-  if (adminEnabled) {
-    const byType = new Map(resolved.channels.map((entry) => [entry.type, entry]))
-    for (const type of CHANNEL_TYPES) {
-      if (DUAL_INBOUND_DOMAIN_TYPES.has(type)) continue
-      const account = accountOf(`${type}:account`)
-      if (account === null) continue
-      const merged = { ...yamlRowOf.get(type) ?? {}, ...account, type }
-      try {
-        byType.set(type, { type, config: ADAPTERS[type].resolve(resolveEnvRefs(merged)) })
-        mergedRowOf.set(type, merged)
-      } catch (error) {
-        // resolve 失败：YAML 条目原样保留（未破坏 byType），只记原因；store-only 类型即「暂不启用」
-        const reason = error instanceof Error ? error.message : String(error)
-        if (byType.has(type)) warn(`渠道 "${type}" state 凭证合并失败，沿用 YAML 配置: ${reason}`)
-        else warn(`渠道 "${type}" 跳过（state 凭证不完整）: ${reason}`)
-      }
-    }
-    resolved.channels = [...byType.values()]
-  }
-  /** 连通性测试的 rawConfig（合并行优先，回落 YAML 行；ENV 引用由 runChannelTest 自行解析）。 */
-  const testRawConfigOf = (type) => {
-    const row = mergedRowOf.get(type) ?? yamlRowOf.get(type)
-    if (row === undefined) return null
-    const { type: _drop, ...rest } = row
-    return rest
-  }
+  const overlay = composeOutboundChannels({
+    channels: resolved.channels,
+    yamlRows: yamlRowOf,
+    store,
+    adminEnabled,
+    warn,
+  })
+  resolved.channels = overlay.channels
+  const testRawConfigOf = overlay.testRawConfigOf
 
   // v0.4.0 通知事件 hub（A 路线「管理台通知页」）：admin 开启时 notifier.onSend 旁路进
   // hub，GET /api/events 以 SSE 实时推给浏览器（系统通知数据源）。admin 关闭零开销——
@@ -348,7 +318,7 @@ export function apply(ctx, config = {}) {
   // v0.3.3：admin 下再回落 store 的 telegram:account（UI/手写产物；出站 overlay 已含同源凭证，
   // 这里是 overlay resolve 失败时的兜底链尾）。
   const tgOutbound = resolved.channels.find((entry) => entry.type === 'telegram')
-  const tgAccount = adminEnabled ? accountOf('telegram:account') : null
+  const tgAccount = adminEnabled ? accountOf(store, 'telegram:account') : null
   const inboundBotToken = String(tgRaw.botToken ?? tgOutbound?.config?.botToken ?? tgAccount?.botToken ?? '').trim()
   const notifyChatIds = Array.isArray(tgRaw.notifyChatIds) && tgRaw.notifyChatIds.length > 0
     ? tgRaw.notifyChatIds.map(String)
@@ -364,7 +334,7 @@ export function apply(ctx, config = {}) {
   // 网页扫码授权后无需再改 YAML（inbound.feishu: {} 语义的自然延伸）。
   // 注意门槛是「显式提供了对象」而非「对象非空」——扫码授权的承诺就是 inbound.feishu: {} 即启用。
   const fsExplicit = inboundRaw.feishu !== null && typeof inboundRaw.feishu === 'object'
-  const fsWanted = fsExplicit || (adminEnabled && accountOf('feishu:account') !== null)
+  const fsWanted = fsExplicit || (adminEnabled && accountOf(store, 'feishu:account') !== null)
   const fsRaw = fsExplicit ? inboundRaw.feishu : {}
   const feishuResolved = fsWanted
     ? resolveFeishuInboundConfig(resolveEnvRefs(fsRaw), { credentials: store.get('feishu:account') })
@@ -377,7 +347,7 @@ export function apply(ctx, config = {}) {
   // v0.3.1：凭证缺省回落扫码 CLI 落盘的 qq:account（config 显式配置优先）。
   // v0.3.3：admin 开启时，store 存在 qq:account 本身即启用信号（同 feishu）。
   const qqExplicit = inboundRaw.qq !== null && typeof inboundRaw.qq === 'object'
-  const qqWanted = qqExplicit || (adminEnabled && accountOf('qq:account') !== null)
+  const qqWanted = qqExplicit || (adminEnabled && accountOf(store, 'qq:account') !== null)
   const qqRaw = qqExplicit ? inboundRaw.qq : {}
   const qqResolved = qqWanted
     ? resolveQqInboundConfig(resolveEnvRefs(qqRaw), { credentials: store.get('qq:account') })
@@ -389,7 +359,7 @@ export function apply(ctx, config = {}) {
   // 或空对象走扫码落盘凭证）时启用；Stream 裸协议长连接，审批走编号回复。
   // v0.3.3：admin 开启时，store 存在 dingtalk:account 本身即启用信号（同 feishu）。
   const dtExplicit = inboundRaw.dingtalk !== null && typeof inboundRaw.dingtalk === 'object'
-  const dtWanted = dtExplicit || (adminEnabled && accountOf('dingtalk:account') !== null)
+  const dtWanted = dtExplicit || (adminEnabled && accountOf(store, 'dingtalk:account') !== null)
   const dtRaw = dtExplicit ? inboundRaw.dingtalk : {}
   const dingtalkResolved = dtWanted
     ? resolveDingtalkInboundConfig(resolveEnvRefs(dtRaw), { credentials: store.get('dingtalk:account') })
@@ -404,7 +374,7 @@ export function apply(ctx, config = {}) {
   // 在装配层做字段级合并（YAML 显式键优先覆盖 store）。
   const wxExplicit = (inboundRaw.wxpusher !== null && typeof inboundRaw.wxpusher === 'object')
     ? inboundRaw.wxpusher : {}
-  const wxAccount = adminEnabled ? accountOf('wxpusher:account') : null
+  const wxAccount = adminEnabled ? accountOf(store, 'wxpusher:account') : null
   const wxMerged = { ...wxAccount, ...wxExplicit }
   // v0.7 密径持久化：webhookPath 未显式配置时复用 store 首铸密径——缺省每次启动
   // 随机换路径，用户已填进 WxPusher 控制台的回调 URL 立即失效（真机事故：每次
@@ -434,7 +404,7 @@ export function apply(ctx, config = {}) {
   // v0.3.3：admin 开启时，store 的 wechat:account 本身即启用信号（同 feishu；
   // 凭证链不变——resolve 内部已回落 credentials）。
   const wechatExplicit = inboundRaw.wechat !== null && typeof inboundRaw.wechat === 'object'
-  const wechatWanted = wechatExplicit || (adminEnabled && accountOf('wechat:account') !== null)
+  const wechatWanted = wechatExplicit || (adminEnabled && accountOf(store, 'wechat:account') !== null)
   const wechatRaw = wechatExplicit ? inboundRaw.wechat : {}
 
   // v0.7 身份层（计划书 §3.1/§3.2）：绑定表一等公民。YAML allowUsers 启动播撒为
