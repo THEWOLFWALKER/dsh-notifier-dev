@@ -119,9 +119,25 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
       }
       // SEC-1：卡片铸 ref 时记录了发送目标 chatId；点击所在 chat 不一致 → 直接拒绝，
       // 不消费引用、不进入既有裁决分支。
+      // C1（P1-4，v0.8.7）：旧判据是三项合取，`clickedChat === undefined`（消息被删、
+      // 事件形状异常、非 message 承载的回调）会把整式短路成 false → 放行，等于「缺点击
+      // 会话即绕过来源校验」。现在拆成三级 fail-closed（宪法 #7「fail-open 要有度」）：
+      //  · origin.chatId 缺失（升级前在途卡片，本仓库所有 mint 点都带 chatId）→ warn 后
+      //    兼容放行，窗口由 ref TTL 15min 天然封顶（callback-refs.mjs DEFAULT_TTL_MS）
+      //  · origin 在场但点击会话读不到 → 拒绝（不 take()，原卡在 TTL 内仍可正常点）
+      //  · 两者都在场且不相等 → 拒绝（旧实现此路静默，现补 warn，宪法 #3）
+      // 判据用显式 undefined/null 比较而非真值：chatId === 0 是合法会话，`!clickedChat`
+      // 会把它误判成缺数据而拒掉真实点击。
       const clickedChat = query.message?.chat?.id
       const originChat = peeked.origin?.chatId
-      if (clickedChat !== undefined && originChat !== null && originChat !== undefined && String(clickedChat) !== String(originChat)) {
+      if (originChat === null || originChat === undefined) {
+        warn('按钮短引用缺少来源会话元数据（origin.chatId），跳过来源校验（升级前在途卡片兼容，ref TTL 内有效）')
+      } else if (clickedChat === null || clickedChat === undefined) {
+        warn(`按钮回调缺少点击会话（message.chat.id），来源校验拒绝（origin=${originChat}；不消费引用，原会话仍可点击）`)
+        await api('answerCallbackQuery', { callback_query_id: query.id, text: '请到原会话操作' }).catch(() => {})
+        return
+      } else if (String(clickedChat) !== String(originChat)) {
+        warn(`按钮点击会话与原会话不一致（clicked=${clickedChat} origin=${originChat}），来源校验拒绝（不消费引用）`)
         await api('answerCallbackQuery', { callback_query_id: query.id, text: '请到原会话操作' }).catch(() => {})
         return
       }

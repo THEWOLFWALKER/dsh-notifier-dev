@@ -194,14 +194,13 @@ export function createActionDispatcher({ vault = null, store = null, logger = nu
             return { ok: false, reason: 'source-chat-mismatch', message: '请到原会话操作' }
           }
         } else {
-          // CRACK-001：缺来源元数据(undefined/null)一律 fail-closed，仅升级宽限窗内放行
-          if (row.srcChats === undefined || row.srcChats === null) {
-            if (graceSourceAllowed(row)) {
-              warn(`动作 ${actionKey} 缺来源会话元数据(srcChats)，按升级宽限窗口放行(仅限升级后10min内)`)
-            } else {
-              warn(`动作 ${actionKey} 缺来源会话元数据(srcChats)，拒绝(fail-closed: 无来源授权)`)
-              return { ok: false, reason: 'source-chat-mismatch', message: '请到原会话操作' }
-            }
+          // CRACK-001：缺来源元数据(undefined/null)或异常形状（数组等）一律 fail-closed，
+          // 仅升级宽限窗内对 undefined/null 放行（createdAt 有效且 <=10min）；窗外/异常形状拒绝。
+          if (graceSourceAllowed(row)) {
+            warn(`动作 ${actionKey} 缺来源会话元数据(srcChats)，按升级宽限窗口放行(仅限升级后10min内)`)
+          } else {
+            warn(`动作 ${actionKey} 缺来源会话元数据(srcChats)，拒绝(fail-closed: 无来源授权)`)
+            return { ok: false, reason: 'source-chat-mismatch', message: '请到原会话操作' }
           }
         }
         const handler = handlers.get(row.kind)

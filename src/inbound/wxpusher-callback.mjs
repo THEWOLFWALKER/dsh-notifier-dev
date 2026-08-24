@@ -22,7 +22,7 @@ const DEFAULT_PORT = 8103
 // 身份/路由判定——约束形态降低伪造/路径穿插/资源膨胀面。允许字母数字 + 常用分隔符，
 // 拒绝空白、控制字符、路径分隔（`/`）、引号等注入载体；超长（>128，与身份层一致）拒收。
 const UID_MAX_LEN = 128
-const UID_PATTERN = /^[A-Za-z0-9_.:\-]+$/
+const UID_PATTERN = /^[A-Za-z0-9_.\-]+$/
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1'])
 
 function isValidWxUid(uid) {

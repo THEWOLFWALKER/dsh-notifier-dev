@@ -91,6 +91,10 @@ export function registerApprovalHandler(deps) {
   // v0.6.4：交互渠道名集合（编号回复 intended 兜底用——真实装配里能回话到 bus 的
   // 通道必然在此集合内，广播也必然覆盖它们）
   const interactiveChannels = new Set(interactive.map((entry) => entry.channel))
+  // C2（P1-5）：本 router 实例中仍有存活 waiter 的审批 key 集合。
+  // 崩溃/写盘失败会留下 status=pending 但 waiter 已死的僵尸行；latestPendingFor
+  // 只放行 liveWaiters 中仍存在的 key，防止僵尸行吞掉后续编号回复并误导回执。
+  const liveWaiters = new Set()
   // 升级提醒里的按钮渠道提示（无交互渠道时退化为纯编号回复话术）
   const cardChannelNames = interactive
     .map((entry) => DISPLAY_NAMES[entry.channel] ?? entry.channel)
@@ -132,7 +136,10 @@ export function registerApprovalHandler(deps) {
       let intended = null
       for (const key of store.keys('ap:')) {
         const row = store.get(key)
-        if (row?.status !== 'pending') continue
+        // C2（P1-5）：无存活 waiter 的 pending 行不参与编号回复匹配。
+        // 进程崩溃、重启或 ledger.resolve 写盘失败会留下 pending 僵尸行；跳过它们
+        // 让后续真实待决审批仍有机会被裁决，也避免「已被处理」误导回执。
+        if (row?.status !== 'pending' || !liveWaiters.has(key)) continue
         const pushed = Array.isArray(row.pushedTo) ? row.pushedTo : []
         if (pushed.some((target) => target.channel === channel)) {
           if (onChannel === null || row.createdAt > onChannel.row.createdAt) onChannel = { key, row, evidence: 'onChannel' }
@@ -345,6 +352,13 @@ export function registerApprovalHandler(deps) {
         allowChats,
       }
       const decisionPromise = mode === 'answer' ? bus.wait(key, timeoutMs, waitOptions) : null
+      if (decisionPromise !== null) {
+        liveWaiters.add(key)
+        decisionPromise.then(
+          () => { liveWaiters.delete(key) },
+          () => { liveWaiters.delete(key) },
+        )
+      }
       const pushedTo = await pushApproval(key, token, request, channelTypes, targetsByChannel)
       const row = ledger.get(key)
       if (row !== undefined && row.status === 'pending') {

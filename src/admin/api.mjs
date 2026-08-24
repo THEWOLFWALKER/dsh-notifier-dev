@@ -87,6 +87,15 @@ function deepCopyPlain(value) {
 /**
  * v0.7 成员复合键 "<channel>:<userId>" 解析（管理台路由用）。
  * userId 内含冒号也容忍（只按第一个冒号切）；渠道必须属六入站通道，userId 非空且 ≤128。
+ *
+ * C3 审查（v0.8.7）：这里**故意不拒**含冒号的 userId。C3 的纵深防御设在「写入面」
+ * （identity.addBinding/addPending + wxpusher UID_PATTERN 已 fail-closed，新的冒号
+ * 身份再也进不来），而本函数只服务四条**读改删**路由（PUT 改角色 / DELETE 删成员 /
+ * confirm / dismiss）。若在此一并拒收，C3 之前落盘的存量冒号绑定行（旧 wxpusher
+ * UID_PATTERN 放行冒号 → addBinding 直落 `wxpusher:UID:EVIL`）仍会照常准入放行，却
+ * 再也无法经管理台降级或删除——等于把一条越权身份永久钉死在白名单里（违反宪法 #7
+ * 「fail-open 要有度」的反面：过度收紧反而锁死唯一清理入口）。confirm 路径不构成
+ * 提权面：confirmPending 末端仍走 addBinding，冒号 userId 在那里被拒。
  * @returns {{ channel: string, userId: string, raw: string } | null} 非法形状返回 null
  */
 const MEMBER_KEY_HINT = '成员键形状：<channel>:<userId>（channel ∈ telegram/feishu/qq/wxpusher/wechat/dingtalk）'

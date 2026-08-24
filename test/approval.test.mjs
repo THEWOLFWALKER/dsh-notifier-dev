@@ -529,3 +529,73 @@ test('router：callId 缺失回退 toolName；请求字段异常不崩（key 仍
   await pending
   rig.dispose()
 })
+
+// C2：审批桥僵尸行修复——无存活 waiter 的 pending 行不得参与编号回复匹配。
+test('router：C2 僵尸 pending 行不参与编号回复匹配，消息落回对话路由', async () => {
+  const rig = makeRig({ approvalConfig: { timeoutMs: 5000, escalation: { enabled: false } } })
+  const seen = []
+  rig.bus.onMessage((envelope) => { seen.push(envelope.text); return false })
+  // 直接写入一条无 waiter 的僵尸 pending 行（模拟崩溃/写盘失败残留）
+  rig.store.set('ap:zombie:1', {
+    status: 'pending',
+    mode: 'answer',
+    toolName: 'zombie-tool',
+    agentId: null,
+    pushedTo: [{ channel: 'telegram', chatId: '100', userId: '100', messageId: 1 }],
+    intendedChannels: null,
+    createdAt: Date.now(),
+  })
+  rig.bus.accept({ channel: 'telegram', userId: '100', chatId: '100', messageId: 'msg:z:1', text: '1' })
+  assert.deepEqual(seen, ['1'], '僵尸行不得消费编号回复')
+  rig.dispose()
+})
+
+test('router：C2 编号回复优先命中存活 waiter，忽略更晚的僵尸行', async () => {
+  const rig = makeRig({ approvalConfig: { timeoutMs: 5000, escalation: { enabled: false } } })
+  // 注入一个创建时间更晚的僵尸行（模拟崩溃残留覆盖了时间戳）
+  rig.store.set('ap:zombie:2', {
+    status: 'pending',
+    mode: 'answer',
+    toolName: 'zombie-tool',
+    agentId: null,
+    pushedTo: [{ channel: 'telegram', chatId: '100', userId: '100', messageId: 99 }],
+    intendedChannels: null,
+    createdAt: Date.now() + 999_000,
+  })
+  const pending = rig.handle({ toolName: 'rm', callId: 'c1', reason: 'x' })
+  await sleep(20)
+  // 僵尸行更晚，但无存活 waiter，应被跳过；编号回复命中 ap:c1:1 并批准
+  rig.bus.accept({ channel: 'telegram', userId: '100', chatId: '100', messageId: 'msg:t:1', text: '1' })
+  assert.equal(await pending, 'allowed-once')
+  assert.equal(rig.store.get('ap:c1:1').decision, 'allowed-once')
+  rig.dispose()
+})
+
+test('router：C2 崩溃恢复后，持久化僵尸 pending 行不吞编号回复', async () => {
+  const store = createStore(tempPath())
+  // 模拟旧进程崩溃残留：store 里有 pending 行，但新 bus 无 waiter
+  store.set('ap:crash:1', {
+    status: 'pending',
+    mode: 'answer',
+    toolName: 'crash-tool',
+    agentId: null,
+    pushedTo: [{ channel: 'telegram', chatId: '100', userId: '100', messageId: 1 }],
+    intendedChannels: null,
+    createdAt: Date.now(),
+  })
+  const vault = createTokenVault({ secret: 's' })
+  const bus = createInboundBus({ allowUsers: ['100'], store, vault })
+  const handlers = {}
+  const ctx = { on: (event, handler) => { handlers[event] = handler; return () => {} } }
+  const notifier = { notifyAll: async () => ({ ok: true }) }
+  const telegram = { notifyChatIds: () => [], sendApprovalCard: async () => null, editResolved: async () => {}, sendText: async () => true }
+  registerApprovalHandler({
+    ctx, notifier, bus, vault, store, telegram,
+    counterStart: 0,
+    approvalConfig: { mode: 'answer', timeoutMs: 5000, escalation: { enabled: false } },
+  })
+  const seen = []
+  bus.onMessage((envelope) => { seen.push(envelope.text); return false })
+  bus.accept({ channel: 'telegram', userId: '100', chatId: '100', messageId: 'msg:crash:1', text: '1' })
+  assert.deepEqual(seen, ['1'], '崩溃残留 pending 行不得误导回执')
+})

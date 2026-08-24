@@ -12,7 +12,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -278,6 +278,43 @@ test('index 装配：questions.enabled 时注册 ask_user', async () => {
   })
   assert.equal(defs.some((def) => def.name === 'ask_user'), true)
   await cleanup()
+})
+
+// REVIEW-ABC BUG-6（装配完整性，宪法#8）：CRACK-003/004 的归属闸完全依赖 index.mjs 把
+// `identity` 传进 registerApprovalHandler 与 createQuestionBridge。两处传参被删掉后
+// **全套 1011 例仍全绿**——两个 P0 归属闸静默退化成「谁都不能代决」（identity 缺失即
+// fail-closed），owner 代决能力整条消失且零告警。函数级用例都自己显式传 identity，
+// 天然测不到装配缝；此处按真实装配路径（apply）钉死这条线。
+test('index 装配完整性：identity 必须传进审批路由与提问桥（CRACK-003/004 归属闸的装配缝）', async () => {
+  const { ctx, cleanup } = bootCtx()
+  const stateDir = tempDir()
+  const port = await freePort()
+  // 走真实 apply：inbound 就绪（wxpusher 有凭证）→ 审批路由与提问桥都会被装配
+  apply(ctx, {
+    channels: [{ type: 'webhook', url: 'http://127.0.0.1:1/hook' }],
+    inbound: { stateDir, wxpusher: { appToken: 'token-1', port } },
+  })
+  // try/finally：apply 起了 wxpusher HTTP 服务，断言失败也必须卸载——否则句柄悬空
+  // 会把整个测试文件吊到 node:test 默认超时（实测 0.35s → 120s）。
+  try {
+    // 断言取「源码装配点」而非行为——行为侧要跑通 owner 代决需要真卡片往返（真机门），
+    // 而这条缝的失效模式恰恰是「静默不报错」，源码级钉死是这里唯一确定性的守卫。
+    const source = readFileSync(new URL('../src/index.mjs', import.meta.url), 'utf8')
+    const approvalCall = source.slice(source.indexOf('registerApprovalHandler({'))
+    assert.match(
+      approvalCall.slice(0, approvalCall.indexOf('})')),
+      /^\s*identity,/m,
+      'registerApprovalHandler 必须收到 identity（否则 CRACK-003 编号回复归属闸永久 fail-closed，owner 无法代决且零告警）',
+    )
+    const bridgeCall = source.slice(source.indexOf('createQuestionBridge({'))
+    assert.match(
+      bridgeCall.slice(0, bridgeCall.indexOf('})')),
+      /^\s*identity,/m,
+      'createQuestionBridge 必须收到 identity（否则 CRACK-004 hint 兜底归属闸永久 fail-closed）',
+    )
+  } finally {
+    await cleanup()
+  }
 })
 
 test('index 装配冒烟：注入的真 router 生效——route:agents 绑定让 notify 工具广播只发绑定通道', async () => {

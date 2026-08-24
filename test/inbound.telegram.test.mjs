@@ -320,6 +320,110 @@ test('v0.8.3 SEC-1 短引用转发拒绝：跨 chat 点击回执拒绝，引用�
   assert.deepEqual(decisions[0], { approvalKey: 'ap:rm:2', decision: 'allowed-once', token, via: 'telegram', userId: 42, chatId: 100 })
 })
 
+// ------------------------------------------------ C1（P1-4）来源比对缺数据 fail-closed
+
+/**
+ * 投喂一串 callback_query，返回调用记录与 warn 行。发卡到 chatId=100 铸 ref 后
+ * 由 makeUpdates(ref) 生成回调队列（可构造缺 chat/缺 chat.id 等异常形状）。
+ */
+async function runRefCallbacks(makeUpdates, { logger = null } = {}) {
+  const decisions = []
+  const bus = { accept: () => {}, decide: (p) => { decisions.push(p); return { ok: true } } }
+  const vault = createTokenVault({ secret: 'k' })
+  const token = vault.mint('ap:c1:1')
+  const queue = []
+  const { fetchImpl, calls } = makeFetch({
+    sendMessage: { ok: true, result: { message_id: 9 } },
+    answerCallbackQuery: { ok: true, result: {} },
+    editMessageText: { ok: true, result: {} },
+    getUpdates: () => ({ ok: true, result: queue.splice(0, 5) }),
+  })
+  const tg = createTelegramInbound({ config: CONFIG, bus, vault, fetchImpl, errorBackoffMs: 10, logger })
+  await tg.sendApprovalCard({ chatId: 100, title: 't', content: 'c', approvalKey: 'ap:c1:1', token })
+  const ref = calls.find((call) => call.method === 'sendMessage').body.reply_markup.inline_keyboard[0][0].callback_data
+  queue.push(...makeUpdates(ref))
+  tg.start()
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  await tg.stop()
+  const answers = calls.filter((call) => call.method === 'answerCallbackQuery')
+  return { decisions, answers, token }
+}
+
+// origin 在场而 message.chat 整块缺失（消息被删/事件形状异常）：旧实现整条合取短路成
+// false → 放行裁决。现在必须拒绝，且不消费 ref —— 原会话随后仍能正常裁决（宪法 #6）。
+test('C1 TG 来源比对：origin 在场但回调缺 message.chat → fail-closed 拒绝且不消费引用', async () => {
+  const logger = { lines: [], warn: (prefix, message) => logger.lines.push(`${prefix} ${message}`) }
+  const { decisions, answers, token } = await runRefCallbacks((ref) => [
+    { update_id: 1, callback_query: { id: 'c1a', from: { id: 42 }, data: ref } }, // 无 message
+    { update_id: 2, callback_query: { id: 'c1b', from: { id: 42 }, message: { chat: { id: 100 }, message_id: 9 }, data: ref } },
+  ], { logger })
+  assert.match(answers[0].body.text, /请到原会话操作/, '缺点击会话必须收到拒绝回执')
+  assert.equal(decisions.length, 1, '缺点击会话不得进入裁决分支')
+  assert.deepEqual(decisions[0], { approvalKey: 'ap:c1:1', decision: 'allowed-once', token, via: 'telegram', userId: 42, chatId: 100 })
+  assert.ok(logger.lines.some((line) => /缺少点击会话/.test(line)), `拒绝必须 warn 出声（实际：${logger.lines.join(' | ')}）`)
+})
+
+// 同一缺数据面的另一形状：message 在但 chat.id 读不到（异常负载）。
+test('C1 TG 来源比对：message.chat.id 缺失 → fail-closed 拒绝', async () => {
+  const { decisions, answers } = await runRefCallbacks((ref) => [
+    { update_id: 1, callback_query: { id: 'c1c', from: { id: 42 }, message: { chat: {}, message_id: 9 }, data: ref } },
+  ])
+  assert.match(answers[0].body.text, /请到原会话操作/)
+  assert.equal(decisions.length, 0, 'chat.id 缺失不得裁决')
+})
+
+// 正控（防真值写法回归）：chatId === 0 是合法会话 id，`!clickedChat` 会把它误判为缺数据。
+test('C1 TG 来源比对：chatId === 0 的合法点击必须放行（不得被真值判据误拒）', async () => {
+  const decisions = []
+  const bus = { accept: () => {}, decide: (p) => { decisions.push(p); return { ok: true } } }
+  const vault = createTokenVault({ secret: 'k' })
+  const token = vault.mint('ap:c1:0')
+  const queue = []
+  const { fetchImpl, calls } = makeFetch({
+    sendMessage: { ok: true, result: { message_id: 9 } },
+    answerCallbackQuery: { ok: true, result: {} },
+    editMessageText: { ok: true, result: {} },
+    getUpdates: () => ({ ok: true, result: queue.splice(0, 3) }),
+  })
+  const tg = createTelegramInbound({ config: CONFIG, bus, vault, fetchImpl, errorBackoffMs: 10 })
+  await tg.sendApprovalCard({ chatId: 0, title: 't', content: 'c', approvalKey: 'ap:c1:0', token })
+  const ref = calls.find((call) => call.method === 'sendMessage').body.reply_markup.inline_keyboard[0][0].callback_data
+  queue.push({ update_id: 1, callback_query: { id: 'c1z', from: { id: 42 }, message: { chat: { id: 0 }, message_id: 9 }, data: ref } })
+  tg.start()
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  await tg.stop()
+  assert.equal(decisions.length, 1, 'chatId 0 的原会话点击必须放行')
+  assert.equal(decisions[0].chatId, 0)
+})
+
+// 旧卡兼容半边（PLAN §C1(b) 显式保留）：origin 无 chatId → warn + 放行，窗口由 ref TTL 封顶。
+test('C1 TG 来源比对：origin 缺 chatId（旧卡）→ 兼容放行 + 显式 warn', async () => {
+  const logger = { lines: [], warn: (prefix, message) => logger.lines.push(`${prefix} ${message}`) }
+  const decisions = []
+  const bus = { accept: () => {}, decide: (p) => { decisions.push(p); return { ok: true } } }
+  const vault = createTokenVault({ secret: 'k' })
+  const token = vault.mint('ap:c1:9')
+  const queue = []
+  const { fetchImpl, calls } = makeFetch({
+    sendMessage: { ok: true, result: { message_id: 9 } },
+    answerCallbackQuery: { ok: true, result: {} },
+    editMessageText: { ok: true, result: {} },
+    getUpdates: () => ({ ok: true, result: queue.splice(0, 3) }),
+  })
+  const tg = createTelegramInbound({ config: CONFIG, bus, vault, fetchImpl, errorBackoffMs: 10, logger })
+  // 发卡时无 chatId（origin.chatId === undefined，等价升级前在途卡片的元数据缺失面）
+  await tg.sendApprovalCard({ title: 't', content: 'c', approvalKey: 'ap:c1:9', token })
+  const ref = calls.find((call) => call.method === 'sendMessage').body.reply_markup.inline_keyboard[0][0].callback_data
+  // 任意会话点击 → 兼容放行（不因来源不明拒绝历史卡），但必须 warn 出声
+  queue.push({ update_id: 1, callback_query: { id: 'c1l', from: { id: 42 }, message: { chat: { id: 777 }, message_id: 9 }, data: ref } })
+  tg.start()
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  await tg.stop()
+  assert.equal(decisions.length, 1, 'origin 缺 chatId 的旧卡维持兼容放行（PLAN §C1(b)）')
+  assert.equal(decisions[0].chatId, 777)
+  assert.ok(logger.lines.some((line) => /缺少来源会话元数据/.test(line)), `兼容放行必须 warn（实际：${logger.lines.join(' | ')}）`)
+})
+
 // v0.6.2 注册表单元：单次核销 / TTL / 容量 FIFO（时钟注入，零真实等待）
 test('v0.6.2 callback-refs：mint/take 单次核销、TTL 过期、容量 FIFO 淘汰', async () => {
   const { createCallbackRefs } = await import('../src/inbound/callback-refs.mjs')

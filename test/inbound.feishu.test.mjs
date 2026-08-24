@@ -688,6 +688,116 @@ test('aq: 卡片回调：SEC-1 来源会话匹配通过 / 转发拒绝；缺 src
   await inbound.stop()
 })
 
+// ------------------------------------------------ C1（P1-4）飞书来源比对缺数据 fail-closed
+
+// srcChat 在场而点击会话读不到（负载缺 open_chat_id/顶层兜底也缺）：旧实现 warn 后放行，
+// 等于「缺关键信息即绕过来源校验」。现在必须拒绝，且不裁决、不 patch、不核销 wait。
+test('C1 飞书来源比对：srcChat 在场但缺点击会话 → fail-closed 拒绝，不 patch 不核销 wait', async () => {
+  const logger = makeLogger()
+  const vault = createTokenVault({ secret: 'k' })
+  const bus = createInboundBus({ allowUsers: ['ou_1'], vault, logger })
+  const fake = makeFakeSdk()
+  const inbound = createFeishuInbound({ config: { appId: 'a', appSecret: 's' }, bus, logger, sdkLoader: fake.loader })
+  inbound.start()
+  await tick()
+  const key = 'ap:c1:1'
+  const token = vault.mint(key)
+  const outcome = bus.wait(key, 2000, { allowChats: new Map([['feishu', new Set(['oc_orig'])]]) })
+  const value = { act: buildApprovalAction('allowed-once', key, token), srcChat: 'oc_orig' }
+
+  // context 整块缺失（顶层 open_chat_id/chat_id 也无）→ clickedChatOf 得空串
+  const missing = fake.state.dispatcher.handlers['card.action.trigger']({
+    operator: { open_id: 'ou_1' },
+    action: { value },
+  })
+  assert.equal(missing.toast.type, 'info')
+  assert.match(missing.toast.content, /请到原会话操作/, '缺点击会话必须拒绝')
+  await tick()
+  assert.equal(fake.state.patched.length, 0, '拒绝不得 patch 终态')
+  assert.equal(bus.pendingCount(), 1, 'wait 未被核销，仍待裁决')
+  assert.ok(logger.lines.some((line) => /缺少点击会话/.test(line)), `拒绝必须 warn（实际：${logger.lines.join(' | ')}）`)
+
+  // open_chat_id 为空串（形状在但值空）→ 同样拒绝
+  const empty = fake.state.dispatcher.handlers['card.action.trigger']({
+    operator: { open_id: 'ou_1' },
+    action: { value },
+    context: { open_message_id: 'om_e', open_chat_id: '' },
+  })
+  assert.match(empty.toast.content, /请到原会话操作/, '空串点击会话必须拒绝')
+  assert.equal(bus.pendingCount(), 1)
+
+  // 原会话点击仍可裁决（宪法 #6：拒绝不锁死）
+  const ok = fake.state.dispatcher.handlers['card.action.trigger']({
+    operator: { open_id: 'ou_1' },
+    action: { value },
+    context: { open_message_id: 'om_ok', open_chat_id: 'oc_orig' },
+  })
+  assert.equal(ok.toast.type, 'success')
+  assert.equal((await outcome).decision, 'allowed-once')
+  await inbound.stop()
+})
+
+// sourceChatAllowed 由 ac:/aq:/ap: 三个分支共用 —— 平行面也必须 fail-closed（装配回归）。
+test('C1 飞书来源比对：ac:/aq: 平行面缺点击会话同样不执行、不作答', async () => {
+  const logger = makeLogger()
+  const vault = createTokenVault({ secret: 'k' })
+  const bus = createInboundBus({ allowUsers: ['ou_1'], vault, logger })
+  const fake = makeFakeSdk()
+  const dispatched = []
+  const verdicts = []
+  const inbound = createFeishuInbound({
+    config: { appId: 'a', appSecret: 's' },
+    bus,
+    logger,
+    sdkLoader: fake.loader,
+    actions: { dispatch: (p) => { dispatched.push(p); return { ok: true, message: '✅' } } },
+    questions: { decide: (p) => { verdicts.push(p); return { ok: true, message: '✅ 已作答' } } },
+  })
+  inbound.start()
+  await tick()
+
+  const acEvent = { operator: { open_id: 'ou_1' }, action: { value: { act: 'ac:turn/cancel:tk', srcChat: 'oc_orig' } } }
+  const acToast = fake.state.dispatcher.handlers['card.action.trigger'](acEvent)
+  assert.match(acToast.toast.content, /请到原会话操作/)
+  assert.equal(dispatched.length, 0, 'ac: 缺点击会话不得执行动作')
+
+  const aqEvent = { operator: { open_id: 'ou_1' }, action: { value: { act: buildQuestionAction('aq:c1', '0', 'tk'), srcChat: 'oc_orig' } } }
+  const aqToast = fake.state.dispatcher.handlers['card.action.trigger'](aqEvent)
+  assert.match(aqToast.toast.content, /请到原会话操作/)
+  assert.equal(verdicts.length, 0, 'aq: 缺点击会话不得作答')
+
+  await tick()
+  assert.equal(fake.state.patched.length, 0, '两条拒绝都不得 patch 终态')
+  await inbound.stop()
+})
+
+// 旧卡兼容半边（PLAN §C1(b) 显式保留）：srcChat 缺失 → 仍兼容放行，不被本次收紧牵连。
+test('C1 飞书来源比对：srcChat 缺失（旧卡）→ 维持兼容放行 + warn', async () => {
+  const logger = makeLogger()
+  const vault = createTokenVault({ secret: 'k' })
+  const bus = createInboundBus({ allowUsers: ['ou_1'], vault, logger })
+  const fake = makeFakeSdk()
+  const verdicts = []
+  const inbound = createFeishuInbound({
+    config: { appId: 'a', appSecret: 's' },
+    bus,
+    logger,
+    sdkLoader: fake.loader,
+    questions: { decide: (p) => { verdicts.push(p); return { ok: true, message: '✅ 已作答' } } },
+  })
+  inbound.start()
+  await tick()
+  // 无 srcChat 且无点击会话（最坏形状）：升级前在途卡片仍放行（窗口由卡片自然淘汰封顶）
+  const legacy = fake.state.dispatcher.handlers['card.action.trigger']({
+    operator: { open_id: 'ou_1' },
+    action: { value: { act: buildQuestionAction('aq:legacy', '0', 'tk') } },
+  })
+  assert.equal(legacy.toast.type, 'success', '旧卡无 srcChat → 兼容放行')
+  assert.equal(verdicts.length, 1)
+  assert.ok(logger.lines.some((line) => /缺少来源会话元数据/.test(line)), `兼容放行必须 warn（实际：${logger.lines.join(' | ')}）`)
+  await inbound.stop()
+})
+
 // ---------------------------------------------------------------- v0.7.3 GitHub issue 回归
 
 // issue #1/#4/#6：SDK 1.46+ 的 WSClient.start() 内部调 this.logger.info/debug/error，

@@ -364,6 +364,31 @@ test('CRACK-001 A-6：无 createdAt（无法核时间凭据）→ 拒绝不宽�
   assert.ok(loggerLines.some((line) => /拒绝/.test(line)), '拒绝必 warn')
 })
 
+test('CRACK-001 A-7：异常形状 srcChats（数组/字符串/数字）一律 fail-closed，连宽限窗内也不放行', async () => {
+  // REVIEW-ABC BUG-4：src/actions.mjs:197-198 的注释宣称「异常形状（数组等）一律
+  // fail-closed，仅宽限窗内对 undefined/null 放行」，但把该判据（graceSourceAllowed 里
+  // 的 `row.srcChats !== undefined && !== null → return false`）整条删掉后测试全绿——
+  // 说明这条收紧只有注释没有守卫测试（恒绿摆设）。异常形状不能借宽限窗绕过来源校验：
+  // 数组 srcChats 过不了严校验分支的 plain-object 判定，若又能吃宽限，等于任意会话可点。
+  for (const shape of [['42'], 'telegram', 42, true]) {
+    const { loggerLines, vault, store, dispatcher } = graceRig()
+    const calls = []
+    dispatcher.register('turn/cancel', (p) => { calls.push(p); return { ok: true } })
+    // 窗内（6s，远在 10min 宽限内）——唯一变量就是 srcChats 的形状
+    const card = seedLegacyCard({
+      vault, store, key: `act:turn/cancel:shape-${JSON.stringify(shape)}`, ageMs: 6_000, srcChats: shape,
+    })
+    const result = dispatcher.dispatch({
+      actionKey: card.key, token: card.token, via: 'telegram:action', userId: 42, chatId: '42',
+    })
+    assert.equal(result.ok, false, `异常形状 ${JSON.stringify(shape)} 不得放行（即使在宽限窗内）`)
+    assert.equal(result.reason, 'source-chat-mismatch')
+    assert.equal(calls.length, 0, `异常形状 ${JSON.stringify(shape)} 不得执行 handler`)
+    assert.equal(store.get(card.key).status, 'pending', '拒绝不核销')
+    assert.ok(loggerLines.some((line) => /拒绝/.test(line)), `拒绝必 warn（实际：${loggerLines.join(' | ')}）`)
+  }
+})
+
 test('CRACK-001 装配侧契约：mint 无 meta → markSource 补登 → 新卡落 srcChats 走严校验', async () => {
   const { store, dispatcher } = setup()
   const calls = []

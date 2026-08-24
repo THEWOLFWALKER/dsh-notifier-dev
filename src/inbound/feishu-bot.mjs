@@ -305,6 +305,10 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
    * v0.8.3 SEC-1：来源会话校验。卡片 value 里记录了发送目标会话（srcChat）；
    * 点击会话不一致 → 拒绝（toast 提示），不进入裁决、不 patch 终态。
    * 老卡片无 srcChat（升级前在途）→ 显式 warn 后跳过校验（兼容，不打历史卡片）。
+   * C1（P1-4，v0.8.7）：srcChat 在场而点击会话读不到（事件形状异常/负载缺
+   * open_chat_id）原为放行，等于缺关键信息即绕过校验 —— 改为 fail-closed 拒绝
+   * （宪法 #7）。三个调用点（ac:/aq:/ap:）都把 false 转成 toast，不裁决、不 patch、
+   * 不核销 wait，用户回到原会话即可重试（宪法 #6 不锁死）。
    * @returns {boolean} true = 通过（可继续裁决）；false = 已拒绝
    */
   function sourceChatAllowed(value, data) {
@@ -315,10 +319,14 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
     }
     const clicked = clickedChatOf(data)
     if (clicked === '') {
-      warn('卡片回调缺少点击会话（open_chat_id），跳过来源校验（事件形状异常，不误拒）')
-      return true
+      warn(`卡片回调缺少点击会话（open_chat_id），来源校验拒绝（srcChat=${srcChat}；不裁决、不 patch，回原会话可重试）`)
+      return false
     }
-    return String(clicked) === String(srcChat)
+    if (String(clicked) !== String(srcChat)) {
+      warn(`卡片点击会话与来源会话不一致（clicked=${clicked} srcChat=${srcChat}），来源校验拒绝`)
+      return false
+    }
+    return true
   }
 
   function handleCardAction(data) {

@@ -301,6 +301,27 @@ test('INJ-1 send_up_cmd：非法 uid 形态（空白/控制字符/路径穿插/�
   await rig.inbound.stop()
 })
 
+test('INJ-1 uid 形态：含冒号 uid 被 wxpusher 形态校验拒绝（防复合键截断/覆盖他人绑定）', async () => {
+  const rig = makeRig()
+  const accepted = []
+  rig.bus.onMessage((envelope) => accepted.push(envelope))
+  rig.inbound.start()
+  await tick()
+
+  // send_up_cmd 含冒号 uid → 拒绝
+  await post(rig, { action: 'send_up_cmd', data: { uid: 'UID:EVIL', time: '1', content: 'hi' } })
+  // app_subscribe 含冒号 uid → 同样拒绝（不进入待确认/学习队列）
+  await post(rig, { action: 'app_subscribe', data: { uid: 'UID:EVIL', extra: 'x' } })
+  assert.equal(accepted.length, 0, '含冒号 uid 不得进入 bus')
+  assert.equal(rig.store.get('wxpusher:bind:UID:EVIL'), undefined, '含冒号 uid 不进学习表')
+  assert.ok(rig.lines.some((line) => /非法 uid/.test(line)), `应显式 warn 非法 uid（实际：${rig.lines.join(' | ')}）`)
+
+  // 无冒号 uid 仍正常入站（兼容）
+  await post(rig, { action: 'send_up_cmd', data: { uid: 'UID_1', time: '2', content: 'hi' } })
+  assert.equal(accepted.length, 1)
+  await rig.inbound.stop()
+})
+
 test('INJ-1 app_subscribe：只进学习队列（待确认），不直接获得裁决权（send_up_cmd 需过身份层）', async () => {
   const rig = makeRig()
   const identity = createIdentity({ store: rig.store })
