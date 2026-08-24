@@ -172,30 +172,116 @@ test('心跳：首拍在 READY 前无序号（d=null 合法）；READY 后下一
   await rig.inbound.stop()
 })
 
-test('心跳 ACK 超时：上一拍未确认，下一拍判死主动断开重连', async () => {
-  const rig = makeRig()
-  const inbound = createQqInbound({
-    config: { appId: 'a', appSecret: 's', notifyUsers: ['u_open'] },
-    bus: rig.bus,
-    logger: { warn: () => {} },
-    fetchImpl: rig.fetchImpl,
-    webSocketImpl: FakeWebSocket,
-    reconnectBaseMs: 2,
-    reconnectCapMs: 8,
-  })
-  liveInbounds.push(inbound)
-  inbound.start()
-  await tick()
-  const ws = FakeWebSocket.instances.at(-1)
-  ws.serverOpen()
-  ws.serverSend({ op: 10, d: { heartbeat_interval: 50 } }) // 从不发 ACK
-  await tick()
-  ws.serverSend({ op: 0, t: 'READY', s: 2, d: { session_id: 'sess_hb' } })
-  await tick()
-  const before = FakeWebSocket.instances.length
-  await tick(200) // 50ms 间隔：第 2 拍发现第 1 拍未 ACK → 断开 → 退避 2ms 重连
-  assert.ok(FakeWebSocket.instances.length > before, 'watchdog 超时应重连')
-  await inbound.stop()
+/** 排水所有已入队微任务（mock 定时器下不能等真实超时）。 */
+async function flushMacrotask() { await new Promise((resolve) => setImmediate(resolve)) }
+
+test('修复（mnt 批 2）：心跳 ACK 连续丢失计数——单拍只 warn 不断线，连丢 2 拍才判死重连', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  try {
+    const rig = makeRig()
+    rig.inbound.start()
+    await flushMacrotask()
+    const ws = FakeWebSocket.instances.at(-1)
+    ws.serverOpen()
+    ws.serverSend({ op: 10, d: { heartbeat_interval: 50 } }) // 服务端从此不再 ACK
+    await flushMacrotask()
+    assert.equal(ws.sent.filter((f) => f.op === 1).length, 1, 'HELLO 后首拍已发且未确认')
+    t.mock.timers.tick(50) // 第 2 拍：第 1 拍未确认 → 丢失计数 1
+    assert.equal(ws.sent.filter((f) => f.op === 1).length, 1, '单拍丢失不重发（等待确认）')
+    assert.ok(rig.lines.some((l) => l.includes('已连续丢失 1/2')), '第一拍丢失必须出声：' + rig.lines.join(' | '))
+    const before = FakeWebSocket.instances.length
+    t.mock.timers.tick(50) // 第 3 拍：连丢 2 拍 → 判死断开重连
+    await flushMacrotask()
+    assert.ok(rig.lines.some((l) => l.includes('已连续丢失 2/2') && l.includes('判死')), '判死必须点名丢失计数')
+    t.mock.timers.tick(10) // 退避 4ms 重连（reconnectBaseMs=2，首跳 2^1）
+    await flushMacrotask()
+    assert.ok(FakeWebSocket.instances.length > before, '连续 2 拍未 ACK 应重连（原实现第 2 拍就断）')
+  } finally {
+    t.mock.timers.reset()
+  }
+})
+
+test('恢复：单拍丢失后 ACK 及时到达 → 不清零不判死，续发心跳且绝不重连', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  try {
+    const rig = makeRig()
+    rig.inbound.start()
+    await flushMacrotask()
+    const ws = FakeWebSocket.instances.at(-1)
+    ws.serverOpen()
+    ws.serverSend({ op: 10, d: { heartbeat_interval: 50 } })
+    await flushMacrotask()
+    t.mock.timers.tick(50) // 第 2 拍：丢失计数 1
+    assert.ok(rig.lines.some((l) => l.includes('已连续丢失 1/2')))
+    ws.serverSend({ op: 11 }) // ACK 迟到但到达 → 计数清零
+    await flushMacrotask()
+    t.mock.timers.tick(50) // 第 3 拍：未在等待 → 正常续发心跳
+    await flushMacrotask()
+    assert.equal(ws.sent.filter((f) => f.op === 1).length, 2, '恢复后继续正常心跳节奏')
+    assert.equal(FakeWebSocket.instances.length, 1, '单拍丢失 + ACK 恢复：绝不重连（抖动不算死）')
+  } finally {
+    t.mock.timers.reset()
+  }
+})
+
+test('阈值可配：maxMissedAcks=1 保留「单拍即断」旧语义；0/非法值回落默认 2', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  try {
+    const rig = makeRig()
+    const inbound = createQqInbound({
+      config: { appId: 'a', appSecret: 's', notifyUsers: ['u_open'] },
+      bus: rig.bus,
+      logger: { warn: (p, m) => rig.lines.push(`${p} ${m}`) },
+      fetchImpl: rig.fetchImpl,
+      webSocketImpl: FakeWebSocket,
+      reconnectBaseMs: 2,
+      reconnectCapMs: 8,
+      maxMissedAcks: 1, // 显式要求单拍即断
+    })
+    liveInbounds.push(inbound)
+    inbound.start()
+    await flushMacrotask()
+    const ws = FakeWebSocket.instances.at(-1)
+    ws.serverOpen()
+    ws.serverSend({ op: 10, d: { heartbeat_interval: 50 } })
+    await flushMacrotask()
+    const before = FakeWebSocket.instances.length
+    t.mock.timers.tick(50) // 第 2 拍：丢失计数 1 == 阈值 → 判死
+    await flushMacrotask()
+    t.mock.timers.tick(10)
+    await flushMacrotask()
+    assert.ok(FakeWebSocket.instances.length > before, '阈值 1 时单拍未 ACK 即重连（旧语义可选保留）')
+
+    // 非法值回落默认 2：0 不得被 Number(0)||2 变相改成 1，也不得让阈值越界导致永不断线
+    const clamp = createQqInbound({
+      config: { appId: 'a', appSecret: 's', notifyUsers: ['u'] },
+      bus: rig.bus,
+      logger: { warn: (p, m) => rig.lines.push(`${p} ${m}`) },
+      fetchImpl: rig.fetchImpl,
+      webSocketImpl: FakeWebSocket,
+      reconnectBaseMs: 2,
+      reconnectCapMs: 8,
+      maxMissedAcks: 0,
+    })
+    liveInbounds.push(clamp)
+    clamp.start()
+    await flushMacrotask()
+    const wsClamp = FakeWebSocket.instances.at(-1)
+    wsClamp.serverOpen()
+    wsClamp.serverSend({ op: 10, d: { heartbeat_interval: 50 } })
+    await flushMacrotask()
+    const beforeClamp = FakeWebSocket.instances.length
+    t.mock.timers.tick(50) // miss#1：0 回落 2 → 不断线
+    await flushMacrotask()
+    assert.equal(FakeWebSocket.instances.length, beforeClamp, 'maxMissedAcks=0 回落默认 2：单拍丢失不判死')
+    t.mock.timers.tick(50) // miss#2 → 判死重连（非法值不得导致永不断线）
+    await flushMacrotask()
+    t.mock.timers.tick(10)
+    await flushMacrotask()
+    assert.ok(FakeWebSocket.instances.length > beforeClamp, '0 回落 2：连丢 2 拍仍判死（阈值钳制只防越界，不压低兜底）')
+  } finally {
+    t.mock.timers.reset()
+  }
 })
 
 test('断线重连：close 后带 session RESUME（session_id + seq）', async () => {
@@ -463,6 +549,28 @@ test('stop：关闭连接、清定时器，close 不再触发重连；start 幂�
   await tick(20)
   assert.equal(FakeWebSocket.instances.length, count, 'stop 后 close 不得触发重连')
   await rig.inbound.stop() // 幂等
+})
+
+test('stop 清理未决重连定时器：断线已调度重连但未执行时 stop → 不再新建连接（定时器不泄漏）', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  try {
+    const rig = makeRig()
+    rig.inbound.start()
+    await flushMacrotask()
+    const ws = FakeWebSocket.instances.at(-1)
+    ws.serverOpen()
+    ws.serverSend({ op: 10, d: { heartbeat_interval: 60000 } })
+    await flushMacrotask()
+    ws.serverClose() // 服务端断开 → close 监听器调度了退避重连（reconnectTimer 已挂）
+    await flushMacrotask()
+    const scheduled = FakeWebSocket.instances.length
+    await rig.inbound.stop() // stop 应 clearTimeout(reconnectTimer)——定时器未决时撤销
+    t.mock.timers.tick(100) // 若定时器泄漏，此刻早已重连
+    await flushMacrotask()
+    assert.equal(FakeWebSocket.instances.length, scheduled, 'stop 必须清掉未决重连定时器（stopRequested/clearTimeout 双保险）')
+  } finally {
+    t.mock.timers.reset()
+  }
 })
 
 test('启动失败（换 token 失败）：warn 后允许重试', async () => {

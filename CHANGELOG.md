@@ -5,6 +5,16 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 维护批 2：QQ 心跳 ACK 连续丢失计数重连（MNT-2，2026-08-24）
+
+`src/inbound/qq-gw.mjs` 心跳判死逻辑：原「任一拍未 ACK，下一拍即主动断开重连」对单次网络抖动/网关瞬时滞留过激——QQ 心跳间隔按 30s 级计，一拍没回应就断开重连等于让一次抖动杀掉会话。改为**连续丢失计数**：连续 `maxMissedAcks` 拍未确认才判死重连。
+
+- 默认阈值 **2**（可经构造器选项 `maxMissedAcks` 覆盖，1..10 语义，合法值 `>=1` 取整后钳上限 10，**0/NaN/负数回落默认 2**——顺带修掉 `Number(0)||2` 把显式 0 变相改成 1 的坑）。单拍丢失只 warn 出「已连续丢失 1/2（下一拍仍无 ACK 才断线重连）」；ACK 到达即清零计数（抖动恢复不算数）；连丢满阈值才 cleanupSocket + 退避重连。
+- `stop()` 定时器回收已就位，新增用例钉死「断线已调度重连但未执行时 stop → `clearTimeout(reconnectTimer)` 撤销，绝不新建连接」（`stopRequested` 布尔 + clearTimeout 双保险）。
+- 测试用 node:test `t.mock.timers` 确定性推进心跳节奏（不再靠真实 50ms 间隔数拍），新增 4 例、替换 1 例：连丢 2 拍判死重连 / 单拍丢失 ACK 恢复不清零不重连 / 阈值 1 保留旧语义 + 0 回落默认 2 / stop 清理未决重连定时器。
+- 未真机验证 QQ（按计划不整合假`"真实 QQ 已验证"`）；协议行为（op10/op11、RESUME）保持原样。
+- 验证：全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1027** 契约（1026 通过 + 1 win32 skip）；`verify-release.mjs` / `gen-channel-matrix --check` / 全量 `node --check` 通过。
+
 ### 维护批 1：管理台初始化与 token 流程（MNT-1，2026-08-24）
 
 修理管理台前端鉴权三处缺陷（对应 `test/admin-ui-behavior.test.mjs` 9 例 + `test/admin-wiring.test.mjs` 就绪日志 3 例）。**不改变任何安全边界**：token 仍只存 SHA-256 哈希、明文不落盘不重发、管理台仍只绑 127.0.0.1。

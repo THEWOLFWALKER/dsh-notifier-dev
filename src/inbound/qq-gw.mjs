@@ -94,6 +94,14 @@ export function createQqInbound(options = {}) {
   const WebSocketImpl = options.webSocketImpl ?? globalThis.WebSocket
   const reconnectBaseMs = Math.max(1, Number(options.reconnectBaseMs) || 1000)
   const reconnectCapMs = Math.max(reconnectBaseMs, Number(options.reconnectCapMs) || 30000)
+  // 心跳 ACK 判死阈值：连续丢失 N 拍才重连（默认 2，钳制 1..10）。
+  // 单次 ACK 丢失可能是网络抖动/网关瞬时滞留，QQ 心跳间隔按 30s 级计，
+  // 一拍就断太过敏感；连续 N 拍未确认才是真死。
+  // 注意 0 不可回落到 2：Number(0)||2 会吃掉显式 0，这里要真正钳制 0/NaN/负 → 2。
+  const ackThreshold = Number(options.maxMissedAcks)
+  const maxMissedAcks = Number.isFinite(ackThreshold) && ackThreshold >= 1
+    ? Math.min(10, Math.floor(ackThreshold))
+    : 2
 
   const warn = (message) => {
     try { logger?.warn?.('[dsh-notifier/inbound:qq]', message) } catch { /* 日志失败绝不致命 */ }
@@ -126,6 +134,7 @@ export function createQqInbound(options = {}) {
   let lastSeq = null
   let sessionId = null
   let awaitingAck = false
+  let missedAcks = 0 // 连续未确认心跳计数（连续 maxMissedAcks 拍判死，见 startHeartbeat）
   let reconnectAttempts = 0
   let reconnectTimer = null
   // 发送侧运行态：目标类型学习表（事件来时记下 chatId 是单聊还是群）+ 每目标 msg_seq
@@ -193,14 +202,23 @@ export function createQqInbound(options = {}) {
   }
 
   function startHeartbeat(intervalMs) {
-    // 标准模式：每次 beat 检查上一次是否已 ACK；未 ACK 即判死重连（无独立 watchdog，
-    // 间隔本身就是粒度，避免「watchdog 被后续 beat 不断重置」的死穴）。
-    // awaitingAck 是连接级状态：新连接起搏前必须复位，否则上一连接的未确认心跳
-    // 会把新连接的第一拍直接判死（曾导致重连后 RESUME/IDENTIFY 发不出去）。
+    // 标准模式（维护批 2）：每次 beat 检查上一次是否已 ACK；连续 maxMissedAcks 拍未确认
+    // 才判死重连（无独立 watchdog，间隔本身就是粒度，避免「watchdog 被后续 beat 不断重置」
+    // 的死穴）。单拍丢失只 warn 等下一拍——避免一次网络抖动就杀掉会话。
+    // awaitingAck / missedAcks 是连接级状态：新连接起搏前必须复位，否则上一连接的未确认
+    // 心跳会把新连接的第一拍直接判死（曾导致重连后 RESUME/IDENTIFY 发不出去）。
     awaitingAck = false
+    missedAcks = 0
     const beat = () => {
       if (awaitingAck) {
-        warn('心跳 ACK 超时（上一个心跳未确认），主动断开重连')
+        missedAcks += 1
+        if (missedAcks < maxMissedAcks) {
+          warn(`心跳 ACK 已连续丢失 ${missedAcks}/${maxMissedAcks} 拍（下一拍仍无 ACK 才断线重连）`)
+          return
+        }
+        warn(`心跳 ACK 已连续丢失 ${missedAcks}/${maxMissedAcks} 拍，判死主动断开重连`)
+        awaitingAck = false
+        missedAcks = 0
         cleanupSocket()
         scheduleReconnect({ resume: true })
         return
@@ -299,6 +317,7 @@ export function createQqInbound(options = {}) {
     }
     if (frame.op === OP_HEARTBEAT_ACK) {
       awaitingAck = false
+      missedAcks = 0 // ACK 到达即清零连续丢失计数（抖动恢复不算数）
       return
     }
     if (frame.op === OP_DISPATCH) {
