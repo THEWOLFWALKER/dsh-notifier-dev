@@ -197,12 +197,19 @@ export function createQuestionBridge(deps) {
     // 一条冗余的「回复编号」广播——选项卡是主交互，编号是无卡片/投递失败时的降级。
     const allTypes = Array.isArray(notifier?.channels) ? notifier.channels : []
     const textTypes = allTypes.filter((type) => !deliveredTypes.has(type))
+    let deliveredTextTypes = []
     if (textTypes.length > 0) {
-      await notifier.notifyAll({
+      const outcome = await notifier.notifyAll({
         title,
         content: `${content}\n\n${numberedHint(options, isMulti)}`,
         level: 'timeSensitive',
-      }, { channelTypes: textTypes }).catch(() => {})
+      }, { channelTypes: textTypes }).catch(() => null)
+      // notifyAll 的 ok=true 也可能代表空目标/静音；只有返回 delivered 中的
+      // 渠道才算真正留下编号兜底证据，失败或未知返回一律 fail-closed。
+      if (outcome !== null && Array.isArray(outcome.delivered)) {
+        const delivered = new Set(outcome.delivered.map((type) => String(type)))
+        deliveredTextTypes = textTypes.filter((type) => delivered.has(String(type)))
+      }
     }
     // issue #11：把「目标用户已绑定、卡片未送达」的交互入站通道补进编号话术覆盖范围。
     // 编号话术经入站 sendText 送达（纯入站通道如 wechat iLink 没有出站文本可走）；
@@ -212,7 +219,7 @@ export function createQuestionBridge(deps) {
     const hintText = `${title}\n${content}\n\n${numberedHint(options, isMulti)}`
     const hintedChannels = []
     for (const entry of hintedInbound) {
-      const coveredByOutbound = isCoveredByOutbound(entry.channel, textTypes)
+      const coveredByOutbound = isCoveredByOutbound(entry.channel, deliveredTextTypes)
       let hintDelivered = coveredByOutbound
       const hintSends = []
       for (const target of entry.targets) {
@@ -233,11 +240,11 @@ export function createQuestionBridge(deps) {
       // 发送失败不应让一个从未收到题目的人凭裸编号命中兜底路径。
       if (hintDelivered) hintedChannels.push(entry.channel)
     }
-    // SEC-2：把编号话术送达过的渠道（出站 textTypes + 入站 hintedChannels）一并返回，
-    // 供 askQuestions 落账为 aq 行的 hintChannels。按「本应送达的渠道」记录（不因
-    // notifyAll/sendText 失败而丢失）——即使编号文案发送失败，行上仍记该渠道，
-    // 编号兜底反而更稳（降级链不断，见 22-plan-sec2 E4/E5）。
-    return { pushedTo, hintChannels: [...new Set([...textTypes, ...hintedChannels])], escalationTargets }
+    // SEC-2：把编号话术覆盖过的渠道（出站 deliveredTextTypes + 实际 sendText 成功的
+    // 入站 hintedChannels）返回，供 askQuestions 落账为 aq 行的 hintChannels。
+    // 纯入站通道只有在至少一个目标确认 sendText 成功后才记账；失败不留下可被
+    // 裸编号命中的虚假证据。当前字段仍是渠道级，chat 级证据留待 Control Core。
+    return { pushedTo, hintChannels: [...new Set([...deliveredTextTypes, ...hintedChannels])], escalationTargets }
   }
 
   /** 把送达过的卡片全部改成终态（超时/已答；editTarget 按 pushedTo 行的 kind 选卡片形态）。 */

@@ -30,14 +30,18 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  * @param {object} [options.identity] - 身份注册表（CRACK-004 hint 兜底归属闸；缺省不传）
  * @param {object} [options.logger] - 宿主 logger 桩（捕获 warn 断言）
  */
-function makeRig({ inbounds = [{ channel: 'telegram', card: true }], channelTypes = ['telegram'], identity = null, logger = null, escalation = { enabled: false } } = {}) {
+function makeRig({ inbounds = [{ channel: 'telegram', card: true }], channelTypes = ['telegram'], identity = null, logger = null, escalation = { enabled: false }, notifyOutcome = null } = {}) {
   const store = createStore(tempPath())
   const vault = createTokenVault({ secret: 'test-secret' })
   const bus = createInboundBus({ allowUsers: ['42', '100'], store, vault })
   const broadcasts = [] // { msg, opts } —— 编号兜底/提醒广播
   const notifier = {
     channels: channelTypes,
-    notifyAll: async (msg, opts) => { broadcasts.push({ msg, opts }); return { ok: true, delivered: [], skipped: [], failed: [] } },
+    notifyAll: async (msg, opts) => {
+      broadcasts.push({ msg, opts })
+      if (notifyOutcome !== null) return typeof notifyOutcome === 'function' ? notifyOutcome(msg, opts) : notifyOutcome
+      return { ok: true, delivered: Array.isArray(opts?.channelTypes) ? [...opts.channelTypes] : [], skipped: [], failed: [] }
+    },
   }
   const instances = []
   for (const spec of inbounds) {
@@ -170,7 +174,7 @@ test('P4 卡片投递失败（异常）也走编号兜底：normalizeInbound 吞
   const broadcasts = []
   const notifier = {
     channels: ['feishu'],
-    notifyAll: async (msg, opts) => { broadcasts.push({ msg, opts }); return { ok: true } },
+    notifyAll: async (msg, opts) => { broadcasts.push({ msg, opts }); return { ok: true, delivered: ['feishu'], skipped: [], failed: [] } },
   }
   const raw = {
     channel: 'feishu',
@@ -322,7 +326,7 @@ test('SEC-2 多 pending 定向隔离：telegram 回复只命中 telegram 定向�
   const vault = createTokenVault({ secret: 's' })
   const bus = createInboundBus({ allowUsers: ['42', '100'], store, vault })
   const broadcasts = []
-  const notifier = { channels: ['feishu'], notifyAll: async (msg, opts) => { broadcasts.push({ msg, opts }); return { ok: true } } }
+  const notifier = { channels: ['feishu'], notifyAll: async (msg, opts) => { broadcasts.push({ msg, opts }); return { ok: true, delivered: ['feishu'], skipped: [], failed: [] } } }
   const feishu = {
     channel: 'feishu',
     notifyTargets: () => [{ chatId: '100', userId: '100' }],
@@ -457,6 +461,25 @@ test('SEC-2 发送失败不登记 hint 证据：纯入站渠道未收到话术�
   rig.bus.accept({ channel: 'wechat', userId: '42', chatId: 'wxuser42', messageId: 'm-fail', text: '1' })
   const result = await pending
   assert.equal(result.answered, false, '未收到题目时裸编号不能作答')
+  rig.bridge.dispose()
+})
+
+test('SEC-2 出站广播无实际 delivered 不登记 hint 证据', async () => {
+  const identity = createIdentity({ store: createStore(tempPath()) })
+  identity.addBinding({ channel: 'telegram', userId: '42' })
+  const rig = makeRig({
+    inbounds: [],
+    channelTypes: ['telegram'],
+    identity,
+    notifyOutcome: { ok: true, delivered: [], skipped: ['(no-targets)'], failed: [] },
+  })
+  const pending = rig.bridge.askQuestions({ questions: [SINGLE] })
+  await sleep(30)
+  const row = rig.store.get(rig.store.keys('aq:')[0])
+  assert.deepEqual(row.hintChannels, [], '空目标/静音广播不留下编号证据')
+  rig.bus.accept({ channel: 'telegram', userId: '42', chatId: 'tg-42', messageId: 'm-no-delivery', text: '1' })
+  const result = await pending
+  assert.equal(result.answered, false, '未实际送达时裸编号不能作答')
   rig.bridge.dispose()
 })
 
