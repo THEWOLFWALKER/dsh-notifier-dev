@@ -403,13 +403,15 @@ export function createAdminApi(options = {}) {
   // getAudit()/getBindings()（与 CLI/HTTP 层走完全相同的读取路径）。
   const api = {
     /**
-     * Dashboard 总览：通道健康矩阵（出站 + 入站全量行）+ 会话计数 + agent 路由键数 + 最近审计。
+     * Dashboard 总览：通道健康矩阵（出站 + 入站全量行）+ 会话计数 + agent 路由键数 +
+     *   成员计数（引导态）+ 最近审计。
      * @returns {{ channels: Array<{type: string, direction: 'outbound'|'inbound',
      *   configured: boolean, enabled: boolean}>,
      *   sessions: { active: number, total: number }, agents: { keys: number },
+     *   members: { total: number, owners: number, guided: boolean },
      *   audit: Array<{time: string, action: string, detail: object}> }}
      *   sessions.total = route:sessions 表条目数（含已 dispose 未回收）；active = registry
-     *   判活跃数；audit = 最近 20 条新在前。
+     *   判活跃数；members.guided = 无成员即引导态；audit = 最近 20 条新在前。
      */
     overview() {
       const sessionIds = Object.keys(readTable(KEY_SESSIONS))
@@ -419,10 +421,23 @@ export function createAdminApi(options = {}) {
       }
       let agentKeys = 0
       try { agentKeys = typeof router?.listAgentKeys === 'function' ? router.listAgentKeys().length : 0 } catch { agentKeys = 0 }
+      // 成员计数（identity 未装配时回落 0 / guided=true，与成员页引导态口径一致）
+      let memberTotal = 0
+      let memberOwners = 0
+      let guided = true
+      try {
+        if (identity !== null && typeof identity.list === 'function') {
+          const all = identity.list()
+          memberTotal = all.length
+          memberOwners = all.filter((r) => r?.role === 'owner').length
+          guided = memberTotal === 0
+        }
+      } catch { /* 读失败按引导态处理，不影响总览 */ }
       return {
         channels: channelRows(),
         sessions: { active, total: sessionIds.length },
         agents: { keys: agentKeys },
+        members: { total: memberTotal, owners: memberOwners, guided },
         audit: api.getAudit().slice(0, 20),
       }
     },

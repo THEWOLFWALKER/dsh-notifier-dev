@@ -5,6 +5,19 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 维护批 6-A：Issue #10 Dashboard 首屏引导 UX 返工（MNT-6，2026-08-25）
+
+Issue #10 的「首次使用三步引导卡」草案经过主管审查，按以下审查项返工：**完成条件收紧、localStorage 全 try/catch、删除未经证明的承诺、补齐 overview.members 契约 + 引导行为测试 + 移动端静态断言**。不改安全边界、不新增配置写接口、不碰 QQ interaction transport。
+
+- **步骤 1 完成条件 = configured && enabled**（审查项 1）：原实现把「仅配置未启用」也判为完成，但通道未连起来时通知根本发不出去，等于假绿灯。改为 `anyOutEnabled`（出站通道里 configured 且 enabled 的至少一个）才算步骤 1 完成、才算引导卡自动隐藏的条件之一。
+- **localStorage 全部 try/catch**（审查项 2）：`onboard_dismissed` 的 `getItem` 与 `setItem` 均用 `try { window.localStorage.xxx } catch (e) {}` 包裹，与既有 `getToken`/`setToken`/通知页偏好同口径。隐私/受限环境（Safari 无痕模式 / Firefox 隐私模式 / iframe 沙箱）下 localStorage 抛 SecurityError/QuotaExceededError 不再击穿 UI——读失败按「未隐藏」降级，写失败不影响本次页面内隐藏。
+- **删除未经证明的承诺**（审查项 3）：去掉「2 分钟」「1 分钟」「终身有效」「扫码必然自动配对」「审批一定发卡片」等无法在维护批内验证的断言；文案改为描述真实可用路径（「挑一个…填凭证点测试发送，手机收到就通了」「扫码授权通道通常会自动登记」「按提示回复编号或点按钮」）。guide.md 同步修订。
+- **`overview().members` 补契约 + 聚焦测试**（审查项 4）：`overview()` 返回 `members: { total, owners, guided }`，与 `getMembers()`/成员页引导态同口径。identity 未装配 / `identity.list()` 抛异常时按 `{ total:0, owners:0, guided:true }` 降级，绝不击穿总览。新增 4 例聚焦测试：正常装配 / identity 未注入 / identity.list 抛异常 / 空成员表 guided。旧 overview 无 members 字段时 UI 侧按 0 / 占位符 `–` 降级，不崩。
+- **引导卡行为契约测试**（审查项 5）：`test/admin-ui-behavior.test.mjs` 新增 8 例——无通道无成员显示 / 仅配置未启用不算完成 / 配置且启用才完成并隐藏 / localStorage 读异常不崩 / localStorage 写静态契约（每处访问都在 try/catch 内）/ 步骤按钮 data-tab 指向真实存在的标签页 / 移动端窄屏静态断言（viewport meta + ≤768px 媒体查询 + flex-wrap + 44px 触控目标）/ 旧 overview 无 members 字段不崩。
+- **安全的通道配置写入闭环已存在**（审查项 6）：盘点结论：admin API/UI 已有完整的通道凭证写入闭环——`putChannel` 键白名单 + 值形态上限 + 字段级合并（保留未知键不抹）+ `maskSecrets` 敏感值深脱敏不回显 + `testChannel` 连通性自检 + 审计 append-only。引导卡只是 UX 入口，不新增任何配置写能力，因此无需临时造危险接口，也无需本批做 schema 向导。
+- **文档同步**（审查项 7）：启动日志已明确 `http://127.0.0.1:<port>` 与 token 来源三态（explicit/reused/generated，明文绝不重打）；README 功能表与配置表已覆盖 admin.enabled/port；guide.md 已含完整的「打开控制台 → token 来源 → admin 未启用怎么办」三步说明；本批只同步引导卡相关文案，不另开新文档。
+- 验证：全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1108** 契约（1107 通过 + 1 win32 skip，基线 1060 + 4 成员 overview + 8 引导 UX + Issue #15 QQ 回归 36 例 —— 注意 QQ 回归测试为另一在途工作，未计入本批变更）；`verify-release.mjs` / `gen-channel-matrix --check` / 全量 `node --check` 通过。
+
 ### 维护批 5：入站 text/image/file 统一消息结构（MNT-5，2026-08-24）
 
 六通道适配器当前只产文字信封（`{ channel, userId, chatId, messageId, text }`），非文本消息要么静默丢弃（telegram），要么拼成 `[不支持的消息类型：x]` 占位文本（feishu）。本批补上内容模型的正规层：一座归一结构与一条 QQ 单聊图片解析**接口**，**全网不接线**（无协议证据不启用解析——QQ 官方机器人 C2C 媒体事件真实字段形状无真机样本）。

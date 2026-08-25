@@ -91,6 +91,18 @@ label.fld input { flex: 1; }
 .badge.ok { color: var(--ok); border-color: var(--ok); }
 .badge.none { color: var(--muted); }
 .qr .mono { background: var(--panel2); padding: 3px 8px; border-radius: 6px; word-break: break-all; }
+/* 首次使用引导卡（Issue #10：Dashboard 首屏 UX） */
+.onboard-steps { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; }
+.onboard-step { display: flex; gap: 12px; flex: 1 1 260px; padding: 10px 0; }
+.onboard-num { flex: 0 0 32px; height: 32px; border-radius: 50%; background: var(--accent);
+  color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 15px; }
+.onboard-body { flex: 1; min-width: 0; }
+.onboard-title { font-weight: 600; margin-bottom: 4px; }
+.onboard-desc { color: var(--muted); font-size: 13px; margin-bottom: 8px; line-height: 1.55; }
+.onboard-step.done .onboard-num { background: var(--ok); }
+.onboard-step.done .onboard-title { color: var(--muted); text-decoration: line-through; }
+.muted-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); font-size: 12px; padding: 3px 10px; }
+
 /* v0.5 特性 D：移动端适配（≤768px 单列 / 导航横滚 / 宽表横滚 / 触控目标 ≥44px）。
    纯 CSS 增量，零逻辑变更零构建；桌面端（>768px）逐字节不变。 */
 @media (max-width: 768px) {
@@ -127,10 +139,50 @@ label.fld input { flex: 1; }
   <div id="globalMsg" class="msg"></div>
 
   <section id="tab-dashboard" class="tabsec active">
+    <!-- 首次使用引导：无成员 + 无出站通道配置时显示，完成后自动隐藏 -->
+    <div id="onboarding" class="card" hidden>
+      <div class="card-head" style="cursor:default">
+        <span class="dot ok"></span><b>三步开始使用 dsh-notifier</b>
+        <span class="badge none" id="onboardDismiss">已完成可关闭</span>
+      </div>
+      <div class="card-body">
+        <div class="onboard-steps">
+          <div class="onboard-step" id="step1">
+            <div class="onboard-num">1</div>
+            <div class="onboard-body">
+              <div class="onboard-title">配置通知通道</div>
+              <div class="onboard-desc">挑一个你手机上有的 App 做通知通道（Bark / Telegram / 飞书 / 钉钉 / 企微 都行），填凭证点「测试发送」，手机收到就通了。</div>
+              <button class="tabbtn" data-tab="channels">去「通道」页配置 →</button>
+            </div>
+          </div>
+          <div class="onboard-step" id="step2">
+            <div class="onboard-num">2</div>
+            <div class="onboard-body">
+              <div class="onboard-title">配对你的 IM 身份</div>
+              <div class="onboard-desc">告诉插件「这个 IM 账号就是我」。扫码授权通道通常会自动登记；其他通道用配对码 <code>/pair</code> 即可。做完一次后续不用再配。</div>
+              <button class="tabbtn" data-tab="members">去「成员」页配对 →</button>
+            </div>
+          </div>
+          <div class="onboard-step" id="step3">
+            <div class="onboard-num">3</div>
+            <div class="onboard-body">
+              <div class="onboard-title">开始使用</div>
+              <div class="onboard-desc">给 agent 发消息，它会把通知推到你刚配的通道上。需要审批的操作会发送通知给你，按提示回复编号或点按钮即可决定。</div>
+              <div class="onboard-desc muted small">详细步骤见「使用指南」文档，或顶部菜单各标签页。</div>
+            </div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button id="btnHideOnboard" class="small muted-btn">我已熟悉，隐藏引导</button>
+        </div>
+      </div>
+    </div>
+
     <div class="stats">
       <div class="stat"><b id="statActive">–</b><span>活跃会话</span></div>
       <div class="stat"><b id="statTotal">–</b><span>会话总数</span></div>
       <div class="stat"><b id="statKeys">–</b><span>agent 路由键</span></div>
+      <div class="stat"><b id="statMembers">–</b><span>成员</span></div>
     </div>
     <h3>出站通道健康（configured / enabled 着色分组）</h3>
     <div id="outGroups"></div>
@@ -442,11 +494,39 @@ function renderDashboard() {
   var o = plain(state.overview)
   var sess = plain(o.sessions)
   var keys = plain(o.agents).keys
+  var m = plain(o.members) || {}
   $('#statActive').textContent = sess.active !== undefined ? String(sess.active) : '–'
   $('#statTotal').textContent = sess.total !== undefined ? String(sess.total) : '–'
   $('#statKeys').textContent = keys !== undefined ? String(keys) : '–'
+  $('#statMembers').textContent = m.total !== undefined ? String(m.total) : '–'
+
   var out = overviewChannels().filter(function (c) { return c.direction === 'outbound' })
   var inn = overviewChannels().filter(function (c) { return c.direction === 'inbound' })
+  var outConfigured = out.filter(function (c) { return c.configured }).length
+  var outEnabled = out.filter(function (c) { return c.configured && c.enabled }).length
+  var anyOutConfigured = outConfigured > 0
+  var anyOutEnabled = outEnabled > 0
+  var hasMembers = m.total > 0
+
+  // Issue #10：首次使用引导卡——无成员或无任何已启用出站通道时显示
+  // 注：步骤 1 完成条件 = configured && enabled（仅配置未启用 = 还不能发通知）。
+  // 步骤状态总是先算（无论卡显隐，保持内部状态一致），再决定是否显示。
+  var ob = $('#onboarding')
+  var step1Done = anyOutEnabled
+  var step2Done = hasMembers
+  var step3Done = hasMembers && anyOutEnabled && sess.total > 0
+  $('#step1').classList.toggle('done', step1Done)
+  $('#step2').classList.toggle('done', step2Done)
+  $('#step3').classList.toggle('done', step3Done)
+  var userDismissed = false
+  try { userDismissed = window.localStorage.getItem('onboard_dismissed') === '1' } catch (e) {}
+  var allDone = step1Done && step2Done
+  if (allDone) {
+    ob.hidden = true
+  } else {
+    if (!userDismissed) ob.hidden = false
+  }
+
   $('#outGroups').innerHTML = chipGroups([
     ['已启用（configured 且 enabled）', 'ok', out.filter(function (c) { return c.configured && c.enabled })],
     ['已配置未启用', 'warn', out.filter(function (c) { return c.configured && !c.enabled })],
@@ -1142,6 +1222,12 @@ function init() {
     b.addEventListener('click', function () { switchTab(b.getAttribute('data-tab')) })
   })
   $('#btnRefresh').addEventListener('click', function () { loadAll() })
+  // Issue #10：Dashboard 首屏引导——手动隐藏记 localStorage，下次不弹
+  var hideBtn = $('#btnHideOnboard')
+  if (hideBtn) hideBtn.addEventListener('click', function () {
+    try { window.localStorage.setItem('onboard_dismissed', '1') } catch (e) {}
+    $('#onboarding').hidden = true
+  })
   $('#tokenState').addEventListener('click', function () {
     var t = askToken()
     if (t) { authGen += 1; adoptToken(t); renderTokenState(); loadAll() } // 手动换 token 也推进世代：旧请求的迟到 401 不再触发自动弹窗

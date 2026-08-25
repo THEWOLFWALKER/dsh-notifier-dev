@@ -24,18 +24,48 @@ function extractScript(html) {
 
 function makeElement(sel) {
   const listeners = {}
-  return {
+  const el = {
     sel,
     textContent: '',
     className: '',
     innerHTML: '',
     value: '',
     checked: false,
+    hidden: false,
     style: {},
+    dataset: {},
+    classList: {
+      contains(cls) { return el.className.split(' ').includes(cls) },
+      add(cls) { if (!el.classList.contains(cls)) el.className = (el.className + ' ' + cls).trim() },
+      remove(cls) { el.className = el.className.split(' ').filter((c) => c !== cls).join(' ') },
+      toggle(cls, force) {
+        const has = el.classList.contains(cls)
+        if (force === true && !has) { el.classList.add(cls); return true }
+        if (force === false && has) { el.classList.remove(cls); return false }
+        if (force !== undefined) return force
+        if (has) { el.classList.remove(cls); return false }
+        el.classList.add(cls); return true
+      },
+    },
+    getAttribute(name) {
+      if (name.startsWith('data-')) return el.dataset[name.slice(5)] !== undefined ? el.dataset[name.slice(5)] : null
+      if (name === 'class') return el.className || null
+      if (name === 'hidden') return el.hidden ? '' : null
+      return el[name] !== undefined ? String(el[name]) : null
+    },
+    setAttribute(name, val) {
+      if (name.startsWith('data-')) { el.dataset[name.slice(5)] = String(val); return }
+      if (name === 'class') { el.className = String(val); return }
+      el[name] = val
+    },
     addEventListener(evt, fn) { listeners[evt] = fn },
     removeEventListener(evt) { delete listeners[evt] },
-    dispatch(evt) { const fn = listeners[evt]; if (fn) fn({ target: this, preventDefault() {} }) },
+    dispatch(evt) { const fn = listeners[evt]; if (fn) fn({ target: el, preventDefault() {} }) },
   }
+  // 把 data-* 属性从 sel 解析不出来；测试里手动 el.dataset.xxx = 'yyy' 或 getAttribute 用 dataset
+  // 注：ui.mjs 里 button[data-tab="channels"] 等按钮通过 getAttribute('data-tab') 取值，
+  // 渲染前需在 dataset 上预置。
+  return el
 }
 
 async function settle() { for (let i = 0; i < 60; i += 1) await Promise.resolve() }
@@ -95,7 +125,10 @@ function boot() {
   const wrapped = `(() => {
 ${extractScript(ADMIN_UI_HTML).replace(/\ninit\(\)\s*$/, '\n')}
 ;return { api, acquireToken, reloginGate, adoptToken, setToken, getToken, renderTokenState,
+  renderDashboard, overviewChannels, switchTab,
   handleStream401, startNotifyStream, loadAll, init,
+  _getState: function () { return state },
+  _setOverview: function (o) { state.overview = o },
   _authGen: function () { return authGen }, _autoReloginUsed: function () { return autoReloginUsed } }
 })()`
   const context = vm.createContext(sandbox)
@@ -270,4 +303,158 @@ test('点击 token 状态：手动换 token 推进世代并持久化，旧请求
   assert.equal(promptCount, 1, '手动触发一次询问')
   assert.equal(rig.store.getItem('dsh-admin-token'), 'MANUAL', '手动换 token 立即持久化（原实现只改 state 不快照）')
   assert.equal(rig._authGen(), n0 + 1, '手动换 token 推进世代（旧请求迟到 401 判过期）')
+})
+
+// ————————————————— ④ Issue #10：Dashboard 首屏引导（onboarding）行为契约 —————————————————
+// 验证项（对齐主管审查清单 #5）：
+//   1. 无通道 + 无成员 → 引导卡显示
+//   2. 仅配置未启用（configured 但 !enabled）→ 步骤 1 不算完成、引导卡仍显示
+//   3. 配置且启用 → 步骤 1 完成
+//   4. 通道 + 成员都齐 → 引导卡隐藏
+//   5. localStorage getItem/setItem 抛异常不崩
+//   6. 按钮跳转到真实存在的 tab
+//   7. 移动端窄屏 CSS 静态断言（viewport meta + ≤768px 媒体查询）
+
+/** 构造一条模拟的 overview 通道行 */
+function outRow(type, configured, enabled) {
+  return { type, direction: 'outbound', configured, enabled }
+}
+function inRow(type, configured) {
+  return { type, direction: 'inbound', configured, enabled: configured }
+}
+
+function makeOverview({ outChannels = [], members = 0, sessions = 0 } = {}) {
+  return {
+    channels: outChannels,
+    sessions: { active: 0, total: sessions },
+    agents: { keys: 0 },
+    members: { total: members, owners: members > 0 ? 1 : 0, guided: members === 0 },
+    audit: [],
+  }
+}
+
+test('onboarding：无出站通道 + 无成员 → 引导卡显示，三步均未完成', () => {
+  const rig = boot()
+  rig._setOverview(makeOverview({ outChannels: [outRow('bark', false, false)], members: 0 }))
+  rig.renderDashboard()
+  const ob = rig.els.get('#onboarding')
+  assert.equal(ob.hidden, false, '无成员 + 无通道 → 引导卡应显示')
+  assert.equal(rig.els.get('#step1').classList.contains('done'), false, '步骤 1 未完成')
+  assert.equal(rig.els.get('#step2').classList.contains('done'), false, '步骤 2 未完成')
+  assert.equal(rig.els.get('#step3').classList.contains('done'), false, '步骤 3 未完成')
+})
+
+test('onboarding：步骤 1 完成条件 = configured && enabled（仅配置未启用不算完成）', () => {
+  const rig = boot()
+  // 有成员，出站通道 configured=true 但 enabled=false（填了凭证但通道还没跑起来）
+  rig._setOverview(makeOverview({
+    outChannels: [outRow('bark', true, false)],
+    members: 1,
+  }))
+  rig.renderDashboard()
+  const ob = rig.els.get('#onboarding')
+  assert.equal(ob.hidden, false, '仅配置未启用 + 有成员 → 引导卡仍应显示（通道还发不了通知）')
+  assert.equal(rig.els.get('#step1').classList.contains('done'), false,
+    '步骤 1 完成条件必须是 configured && enabled，不能只看 configured')
+  assert.equal(rig.els.get('#step2').classList.contains('done'), true, '有成员 → 步骤 2 完成')
+})
+
+test('onboarding：配置且启用 → 步骤 1 完成；通道 + 成员都齐 → 引导卡隐藏', () => {
+  const rig = boot()
+  rig._setOverview(makeOverview({
+    outChannels: [outRow('bark', true, true), outRow('telegram', false, false)],
+    members: 2,
+    sessions: 1,
+  }))
+  rig.renderDashboard()
+  const ob = rig.els.get('#onboarding')
+  assert.equal(ob.hidden, true, '有已启用通道 + 有成员 → 引导卡应自动隐藏')
+  assert.equal(rig.els.get('#step1').classList.contains('done'), true, '步骤 1 完成')
+  assert.equal(rig.els.get('#step2').classList.contains('done'), true, '步骤 2 完成')
+  assert.equal(rig.els.get('#step3').classList.contains('done'), true, '步骤 3 完成')
+})
+
+test('onboarding：localStorage getItem 抛异常不崩，按未隐藏处理', () => {
+  const rig = boot()
+  // 把 store.getItem 改成抛错（模拟隐私模式/受限环境）
+  rig.store.getItem = () => { throw new Error('SecurityError: The operation is insecure') }
+  rig._setOverview(makeOverview({ outChannels: [], members: 0 }))
+  let threw = false
+  try { rig.renderDashboard() } catch (e) { threw = true }
+  assert.equal(threw, false, 'localStorage 读异常时 renderDashboard 不应击穿')
+  assert.equal(rig.els.get('#onboarding').hidden, false,
+    'localStorage 不可用时按未隐藏降级，引导卡仍可见')
+})
+
+test('onboarding：localStorage 所有访问点均包 try/catch（源码静态契约）', () => {
+  // 受限/隐私环境 localStorage 可能抛 SecurityError / QuotaExceededError。
+  // 所有读写必须 try/catch 包裹，不能击穿 UI。
+  const script = extractScript(ADMIN_UI_HTML)
+  // 找出所有与 onboard_dismissed 相关的访问（renderDashboard 读 + 隐藏按钮写）
+  const dismissIndices = []
+  let idx = -1
+  while ((idx = script.indexOf('onboard_dismissed', idx + 1)) !== -1) {
+    dismissIndices.push(idx)
+  }
+  assert.ok(dismissIndices.length >= 2,
+    'onboard_dismissed 应至少有两处访问（renderDashboard 读 + 隐藏按钮写）')
+  // 每处访问周围 200 字符内必须有 try {，确保在 try/catch 保护下
+  for (const pos of dismissIndices) {
+    const context = script.slice(Math.max(0, pos - 200), pos + 100)
+    assert.ok(context.includes('try {') || context.includes('try{'),
+      'onboard_dismissed 的每处访问都应在 try/catch 内，上下文: ' + context.trim().slice(0, 120))
+  }
+})
+
+test('onboarding：步骤 1/2 按钮 data-tab 指向真实存在的标签页', () => {
+  // 静态校验：引导卡里的「去通道页」「去成员页」按钮的 data-tab 值必须在
+  // 顶部 nav 的 tabbtn 按钮里也存在（即真的有对应标签页）
+  const html = ADMIN_UI_HTML
+  // 匹配所有含 tabbtn 类且带 data-tab 的 button（class 顺序不固定，用包含判定）
+  const tabButtonRe = /<button[^>]*class="[^"]*tabbtn[^"]*"[^>]*data-tab="([^"]+)"/g
+  // 从 onboarding 卡片里抠 data-tab
+  const onboardSection = html.slice(
+    html.indexOf('id="onboarding"'),
+    html.indexOf('id="onboarding"') + 2000
+  )
+  const onboardTabs = [...onboardSection.matchAll(tabButtonRe)].map((m) => m[1])
+  assert.ok(onboardTabs.includes('channels'), '步骤 1 按钮应指向 channels tab')
+  assert.ok(onboardTabs.includes('members'), '步骤 2 按钮应指向 members tab')
+  // 顶部 nav 里的 tabbtn（<nav>...</nav> 段）
+  const navSection = html.slice(html.indexOf('<nav>'), html.indexOf('</nav>'))
+  const navTabs = [...navSection.matchAll(tabButtonRe)].map((m) => m[1])
+  assert.ok(navTabs.includes('dashboard'), 'nav 有 dashboard')
+  assert.ok(navTabs.includes('channels'), 'nav 有 channels')
+  assert.ok(navTabs.includes('members'), 'nav 有 members')
+  // 引导卡引用的 tab 都必须在 nav 里存在
+  for (const t of onboardTabs) {
+    assert.ok(navTabs.includes(t), `引导卡引用的 tab "${t}" 应在顶部 nav 里存在`)
+  }
+})
+
+test('onboarding：移动端窄屏静态断言（viewport meta + ≤768px 媒体查询）', () => {
+  const html = ADMIN_UI_HTML
+  // 1. viewport meta 存在（移动端不缩放）
+  assert.ok(html.includes('<meta name="viewport"'), '应有 viewport meta')
+  assert.ok(html.includes('width=device-width'), 'viewport 应含 width=device-width')
+  // 2. ≤768px 媒体查询存在（移动端适配）
+  assert.ok(html.includes('@media (max-width: 768px)'), '应有 ≤768px 媒体查询')
+  // 3. 引导卡本身用了 flex wrap（窄屏下自动换行）
+  assert.ok(html.includes('.onboard-steps'), '应有引导步骤容器')
+  assert.ok(html.includes('flex-wrap: wrap'), '引导步骤容器应支持自动换行')
+  // 4. 移动端触控目标 ≥44px（iOS 点击区域规范）
+  assert.ok(html.includes('min-height: 44px'), '移动端按钮/输入应有 44px 触控目标')
+})
+
+test('onboarding：旧 overview（无 members 字段）时 UI 不崩，按 0 成员降级', () => {
+  // 向前兼容：旧版/异常情况下 overview 可能没有 members 字段
+  const rig = boot()
+  const oldOverview = makeOverview({ outChannels: [] })
+  delete oldOverview.members  // 模拟旧形状
+  rig._setOverview(oldOverview)
+  let threw = false
+  try { rig.renderDashboard() } catch (e) { threw = true }
+  assert.equal(threw, false, 'overview 无 members 字段时不应崩')
+  assert.equal(rig.els.get('#statMembers').textContent, '–',
+    '无 members 数据时成员统计显示 –（占位符）')
 })

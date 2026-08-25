@@ -56,6 +56,9 @@ function makeApi({
   registry = makeRegistry(),
   channelTest = undefined,
   scanHandlers = undefined,
+  identity = undefined,
+  pairing = undefined,
+  guidedProbe = undefined,
   storeOverrides = {},
 } = {}) {
   const store = makeStore(state, storeOverrides)
@@ -69,6 +72,9 @@ function makeApi({
     outboundConfigs,
     channelTest,
     scanHandlers,
+    identity,
+    pairing,
+    guidedProbe,
     stateDir,
   })
   return { api, store, router, stateDir }
@@ -160,6 +166,53 @@ test('overview：audit 取最近 20 条新在前', () => {
   assert.equal(audit.length, 20)
   assert.equal(audit[0].action, 'act-22') // 最新在前
   assert.equal(audit[19].action, 'act-3') // 截断到最近 20 条
+})
+
+// ———————— overview.members（Issue #10 UX 回归：总览成员计数与降级） ————————
+
+test('overview.members：identity 正常装配时返回 total/owners/guided，与 identity.list() 一致', () => {
+  const { api } = makeApi({
+    identity: {
+      list() {
+        return [
+          { channel: 'telegram', userId: 'u1', role: 'owner' },
+          { channel: 'feishu', userId: 'u2', role: 'member' },
+          { channel: 'qq', userId: 'u3', role: 'member' },
+        ]
+      },
+    },
+    guidedProbe: () => false,
+  })
+  const m = api.overview().members
+  assert.deepEqual(m, { total: 3, owners: 1, guided: false })
+})
+
+test('overview.members：identity 未装配（null / 未注入）时 total=0 owners=0 guided=true，不抛错', () => {
+  // 缺省 makeApi 不传 identity → createAdminApi 里 identity 默认 undefined
+  const { api } = makeApi()
+  const m = api.overview().members
+  assert.deepEqual(m, { total: 0, owners: 0, guided: true })
+})
+
+test('overview.members：identity.list 抛异常时降级为 0/guided，绝不击穿 overview', () => {
+  const { api } = makeApi({
+    identity: {
+      list() { throw new Error('store corrupted') },
+    },
+  })
+  let m
+  assert.doesNotThrow(() => { m = api.overview().members })
+  assert.equal(m.total, 0, '异常时 total 应降级为 0')
+  assert.equal(m.guided, true, '异常时 guided 应按引导态降级')
+})
+
+test('overview.members：空成员表 → guided=true，与成员页引导态口径一致', () => {
+  const { api } = makeApi({
+    identity: { list() { return [] } },
+    guidedProbe: () => true,
+  })
+  const m = api.overview().members
+  assert.deepEqual(m, { total: 0, owners: 0, guided: true })
 })
 
 // ———————— getBindings ————————
