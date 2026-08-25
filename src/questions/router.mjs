@@ -29,7 +29,7 @@ import { createEscalationChain } from '../approval/escalation.mjs'
 import { createInteractionLedger } from '../interaction/ledger.mjs'
 import { createRateLimiter, compileParameters } from '../tool-register.mjs'
 // 维护批 6 前置：跨渠道能力矩阵作为单一事实来源
-import { inboundToOutboundType, isCoveredByOutbound } from '../inbound/capability-matrix.mjs'
+import { isCoveredByOutbound } from '../inbound/capability-matrix.mjs'
 
 const KEY_PREFIX = 'aq:'
 
@@ -142,6 +142,8 @@ export function createQuestionBridge(deps) {
     const options = question.options.map((option) => option.label)
     const isMulti = question.multiSelect === true
     const pushedTo = []
+    const escalationTargets = []
+    const escalationTargetKeys = new Set()
     const deliveredTypes = new Set() // 卡片已送达的通道类型：这些渠道不再重复教编号
     // issue #11：卡片未送达、但该问题目标用户已绑定此交互入站通道（kept 非空）的条目。
     // 这些通道的编号回复必须能命中（qq-bot 出站 ↔ qq 入站异名、wechat iLink 纯入站无出站都靠它）。
@@ -167,6 +169,11 @@ export function createQuestionBridge(deps) {
         })
         if (card !== null) {
           pushedTo.push({ channel: inbound.channel, chatId: target.chatId, userId: target.userId, messageId: card.messageId, kind: 'aq' })
+          const targetKey = `${inbound.channel}\u0000${target.chatId}\u0000${target.userId}`
+          if (!escalationTargetKeys.has(targetKey)) {
+            escalationTargetKeys.add(targetKey)
+            escalationTargets.push({ inbound, target })
+          }
           if (allowChats !== null) {
             let chatSet = allowChats.get(inbound.channel)
             if (chatSet === undefined) {
@@ -206,8 +213,13 @@ export function createQuestionBridge(deps) {
     const hintedChannels = []
     for (const entry of hintedInbound) {
       hintedChannels.push(entry.channel)
-      if (!isCoveredByOutbound(entry.channel, textTypes)) {
-        for (const target of entry.targets) {
+      for (const target of entry.targets) {
+        const targetKey = `${entry.channel}\u0000${target.chatId}\u0000${target.userId}`
+        if (!escalationTargetKeys.has(targetKey)) {
+          escalationTargetKeys.add(targetKey)
+          escalationTargets.push({ inbound: entry.inbound, target })
+        }
+        if (!isCoveredByOutbound(entry.channel, textTypes)) {
           void entry.inbound.sendText(target.chatId, hintText)
         }
       }
@@ -216,7 +228,7 @@ export function createQuestionBridge(deps) {
     // 供 askQuestions 落账为 aq 行的 hintChannels。按「本应送达的渠道」记录（不因
     // notifyAll/sendText 失败而丢失）——即使编号文案发送失败，行上仍记该渠道，
     // 编号兜底反而更稳（降级链不断，见 22-plan-sec2 E4/E5）。
-    return { pushedTo, hintChannels: [...new Set([...textTypes, ...hintedChannels])] }
+    return { pushedTo, hintChannels: [...new Set([...textTypes, ...hintedChannels])], escalationTargets }
   }
 
   /** 把送达过的卡片全部改成终态（超时/已答；editTarget 按 pushedTo 行的 kind 选卡片形态）。 */
@@ -403,25 +415,18 @@ export function createQuestionBridge(deps) {
           onAbandon: () => { try { ledger.terminate(qKey) } catch { } },
           allowChats,
         })
-        const { pushedTo, hintChannels } = await pushQuestion(qKey, token, question, allowChats)
+        const { pushedTo, hintChannels, escalationTargets } = await pushQuestion(qKey, token, question, allowChats)
         const row = ledger.get(qKey)
         if (row !== undefined) store.set(qKey, { ...row, pushedTo, hintChannels })
-        // 升级提醒必须沿用本题实际覆盖的出站渠道。此前这里省略 options，
-        // notifyAll 会广播到全局渠道池，把某个 agent/session 的提问泄露到无关渠道。
-        // pushedTo 使用入站名称（qq），hintChannels 使用出站名称（qq-bot）；
-        // 通过能力矩阵归一别名后再过滤，空集合保持 fail-closed（不广播）。
-        const configuredTypes = Array.isArray(notifier?.channels) ? notifier.channels : []
-        const escalationTypes = [...new Set([
-          ...(Array.isArray(hintChannels) ? hintChannels : []),
-          ...(Array.isArray(pushedTo) ? pushedTo.map((target) => inboundToOutboundType(target?.channel)) : []),
-        ].filter((type) => typeof type === 'string' && type !== '' && configuredTypes.includes(type)))]
         const startedAt = Date.now()
         escalation.start(qKey, (_key, stage) => {
-          notifier.notifyAll({
-            title: `提问仍在等待作答：${String(question.question ?? '').slice(0, 40)}`,
-            content: `${stage.note ?? '仍在等待作答'}（已等待 ${Math.round((Date.now() - startedAt) / 1000)}s）。请点击选项卡片按钮作答；无卡片渠道可回复选项编号。`,
-            level: stage.level ?? 'timeSensitive',
-          }, { channelTypes: escalationTypes }).catch(() => {})
+          const text = `提问仍在等待作答：${String(question.question ?? '').slice(0, 40)}\n${stage.note ?? '仍在等待作答'}（已等待 ${Math.round((Date.now() - startedAt) / 1000)}s）。请点击选项卡片按钮作答；无卡片渠道可回复选项编号。`
+          // 升级提醒必须逐目标发送。按 channelTypes 调 notifyAll 仍会覆盖同渠道的
+          // 其他 chat/user；没有精确目标时 fail-closed，不向全局渠道广播。
+          const sends = Array.isArray(escalationTargets) ? escalationTargets.map(async ({ inbound, target }) => {
+            try { await inbound.sendText(target.chatId, text) } catch { /* 单目标失败不影响其他目标 */ }
+          }) : []
+          Promise.all(sends).catch(() => {})
         })
         outcome = await waitPromise
         escalation.stop(qKey)

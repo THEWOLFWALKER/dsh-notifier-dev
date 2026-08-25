@@ -11,6 +11,8 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 - 入站渠道（例如 `qq`）通过能力矩阵映射到出站别名（`qq-bot`）后再过滤；未知或未配置的目标从提醒集合剔除，保持 fail-closed。
 - 新增回归测试，验证提醒显式携带覆盖渠道并保留 `qq`/`qq-bot` 别名契约。
 - 终态卡片编辑继续由 `normalizeInbound.editTarget()` 逐目标吞错，单目标失败不会中断其他目标；本批不重复实现第二层保护。
+- 返工：升级提醒不再使用按渠道的 `notifyAll`，改为按本题实际 `pushedTo`/兜底目标逐 chat 发送；两个并发提问实例即使使用同一 IM 渠道也不会互相收到升级提醒。
+- 残余风险：初始编号兜底仍沿用既有 `notifier.channels` 广播契约，当前提问桥未注入 session 路由器，无法在本维护批安全推导更窄的出站范围；该问题登记到维护 workstream，后续统一 Control Core/session scope 时处理。
 
 ### 维护批 6-A：Issue #10 Dashboard 首屏引导 UX 返工（MNT-6，2026-08-25）
 

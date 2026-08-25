@@ -78,27 +78,35 @@ function makeRig({ inbounds = [{ channel: 'telegram', card: true }], channelType
 const SINGLE = { question: '选一个部署环境', options: [{ label: '测试环境' }, { label: '预发环境' }, { label: '生产环境' }] }
 const MULTI = { question: '勾选要通知的人', options: [{ label: '张三' }, { label: '李四' }, { label: '王五' }], multiSelect: true }
 
-test('升级提醒沿用本题覆盖渠道：不广播到无关全局渠道（含 qq-bot 别名）', async () => {
+test('升级提醒逐目标发送：同一渠道的无关 chat 不会收到提醒', async () => {
   const rig = makeRig({
-    inbounds: [{ channel: 'qq', card: true }],
-    channelTypes: ['qq-bot', 'telegram'],
+    inbounds: [{ channel: 'qq', card: true, targets: [{ chatId: 'qq-target', userId: 'u1' }] }],
+    channelTypes: ['qq-bot'],
+    escalation: { enabled: true, stages: [{ afterMs: 15, note: '提醒' }] },
+  })
+  const other = makeRig({
+    inbounds: [{ channel: 'qq', card: true, targets: [{ chatId: 'qq-other', userId: 'u2' }] }],
+    channelTypes: ['qq-bot'],
     escalation: { enabled: true, stages: [{ afterMs: 15, note: '提醒' }] },
   })
   const pending = rig.bridge.askQuestions({ questions: [SINGLE] })
-  await sleep(45)
-  const escalationBroadcast = rig.broadcasts.find((entry) => entry.msg.title.includes('仍在等待作答'))
-  assert.equal(rig.broadcasts.length, 2, '先发编号兜底，再触发一次升级提醒')
-  assert.equal(
-    Array.isArray(escalationBroadcast?.opts?.channelTypes),
-    true,
-    '升级提醒必须显式携带本题覆盖渠道',
-  )
-  assert.deepEqual(escalationBroadcast.opts.channelTypes, ['qq-bot', 'telegram'])
+  const otherPending = other.bridge.askQuestions({ questions: [SINGLE] })
+  await sleep(120)
+  assert.equal(rig.broadcasts.length, 1, '只保留初始编号兜底广播，不广播升级提醒')
+  assert.equal(other.broadcasts.length, 1, '第二实例也只保留初始编号兜底广播')
+  assert.match(rig.instances[0].texts[0].text, /仍在等待作答/)
+  assert.equal(other.instances[0].texts[0].text.includes('仍在等待作答'), true)
+  assert.equal(rig.instances[0].texts[0].chatId, 'qq-target')
+  assert.equal(other.instances[0].texts[0].chatId, 'qq-other')
+  assert.equal(rig.instances[0].texts.some((entry) => entry.chatId === 'qq-other'), false)
+  assert.equal(other.instances[0].texts.some((entry) => entry.chatId === 'qq-target'), false)
   const qKey = rig.store.keys('aq:')[0]
   const row = rig.store.get(qKey)
   assert.equal(row.status, 'pending')
   rig.bridge.dispose()
+  other.bridge.dispose()
   await pending
+  await otherPending
 })
 
 // ---------------------------------------------------------------- P4 选项卡为主
