@@ -60,4 +60,4 @@
 - Focused validation: `node --test --test-name-pattern='CC-1' test/questions.test.mjs` = 13/13 pass; `node --check src/questions/router.mjs` pass.
 - Full validation: pending parent integration; legacy pre-CC tests that assert channel-only hint authorization require expectation updates because outbound channel delivery cannot prove a concrete chat.
 - Review/risk: no real-device evidence that any provider's outbound `delivered` result identifies a chat; therefore covered outbound aliases remain unable to authorize numbered fallback until target-level evidence exists. No push performed.
-- Handoff commits: `fa42229` (source/tests) and `d72843a` (docs/workstream); no push performed.
+- Handoff commits: `afba252` (source/tests) and `8b3a707` (docs/workstream); no push performed.
