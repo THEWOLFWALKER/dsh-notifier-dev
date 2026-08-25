@@ -30,7 +30,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  * @param {object} [options.identity] - 身份注册表（CRACK-004 hint 兜底归属闸；缺省不传）
  * @param {object} [options.logger] - 宿主 logger 桩（捕获 warn 断言）
  */
-function makeRig({ inbounds = [{ channel: 'telegram', card: true }], channelTypes = ['telegram'], identity = null, logger = null } = {}) {
+function makeRig({ inbounds = [{ channel: 'telegram', card: true }], channelTypes = ['telegram'], identity = null, logger = null, escalation = { enabled: false } } = {}) {
   const store = createStore(tempPath())
   const vault = createTokenVault({ secret: 'test-secret' })
   const bus = createInboundBus({ allowUsers: ['42', '100'], store, vault })
@@ -69,7 +69,7 @@ function makeRig({ inbounds = [{ channel: 'telegram', card: true }], channelType
     ...(identity !== null ? { identity } : {}),
     ...(logger !== null ? { logger } : {}),
     interactive: () => instances.map((item) => item.raw),
-    config: { timeoutMs: 800, escalation: { enabled: false } },
+    config: { timeoutMs: 800, escalation },
   })
   bridge.attach() // 挂编号回复处理器（生产装配序：审批之后）
   return { store, vault, bus, broadcasts, instances, bridge }
@@ -77,6 +77,29 @@ function makeRig({ inbounds = [{ channel: 'telegram', card: true }], channelType
 
 const SINGLE = { question: '选一个部署环境', options: [{ label: '测试环境' }, { label: '预发环境' }, { label: '生产环境' }] }
 const MULTI = { question: '勾选要通知的人', options: [{ label: '张三' }, { label: '李四' }, { label: '王五' }], multiSelect: true }
+
+test('升级提醒沿用本题覆盖渠道：不广播到无关全局渠道（含 qq-bot 别名）', async () => {
+  const rig = makeRig({
+    inbounds: [{ channel: 'qq', card: true }],
+    channelTypes: ['qq-bot', 'telegram'],
+    escalation: { enabled: true, stages: [{ afterMs: 15, note: '提醒' }] },
+  })
+  const pending = rig.bridge.askQuestions({ questions: [SINGLE] })
+  await sleep(45)
+  const escalationBroadcast = rig.broadcasts.find((entry) => entry.msg.title.includes('仍在等待作答'))
+  assert.equal(rig.broadcasts.length, 2, '先发编号兜底，再触发一次升级提醒')
+  assert.equal(
+    Array.isArray(escalationBroadcast?.opts?.channelTypes),
+    true,
+    '升级提醒必须显式携带本题覆盖渠道',
+  )
+  assert.deepEqual(escalationBroadcast.opts.channelTypes, ['qq-bot', 'telegram'])
+  const qKey = rig.store.keys('aq:')[0]
+  const row = rig.store.get(qKey)
+  assert.equal(row.status, 'pending')
+  rig.bridge.dispose()
+  await pending
+})
 
 // ---------------------------------------------------------------- P4 选项卡为主
 

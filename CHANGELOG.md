@@ -5,6 +5,13 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 维护批 6-C：提问升级提醒渠道分流（MNT-6-C，2026-08-25）
+
+- 修复 `questions/router.mjs` 的升级提醒遗漏渠道过滤：提醒现在复用本题首次推送实际覆盖的出站渠道，不再无条件广播到全局渠道池。
+- 入站渠道（例如 `qq`）通过能力矩阵映射到出站别名（`qq-bot`）后再过滤；未知或未配置的目标从提醒集合剔除，保持 fail-closed。
+- 新增回归测试，验证提醒显式携带覆盖渠道并保留 `qq`/`qq-bot` 别名契约。
+- 终态卡片编辑继续由 `normalizeInbound.editTarget()` 逐目标吞错，单目标失败不会中断其他目标；本批不重复实现第二层保护。
+
 ### 维护批 6-A：Issue #10 Dashboard 首屏引导 UX 返工（MNT-6，2026-08-25）
 
 Issue #10 的「首次使用三步引导卡」草案经过主管审查，按以下审查项返工：**完成条件收紧、localStorage 全 try/catch、删除未经证明的承诺、补齐 overview.members 契约 + 引导行为测试 + 移动端静态断言**。不改安全边界、不新增配置写接口、不碰 QQ interaction transport。

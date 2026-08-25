@@ -29,7 +29,7 @@ import { createEscalationChain } from '../approval/escalation.mjs'
 import { createInteractionLedger } from '../interaction/ledger.mjs'
 import { createRateLimiter, compileParameters } from '../tool-register.mjs'
 // 维护批 6 前置：跨渠道能力矩阵作为单一事实来源
-import { isCoveredByOutbound } from '../inbound/capability-matrix.mjs'
+import { inboundToOutboundType, isCoveredByOutbound } from '../inbound/capability-matrix.mjs'
 
 const KEY_PREFIX = 'aq:'
 
@@ -406,13 +406,22 @@ export function createQuestionBridge(deps) {
         const { pushedTo, hintChannels } = await pushQuestion(qKey, token, question, allowChats)
         const row = ledger.get(qKey)
         if (row !== undefined) store.set(qKey, { ...row, pushedTo, hintChannels })
+        // 升级提醒必须沿用本题实际覆盖的出站渠道。此前这里省略 options，
+        // notifyAll 会广播到全局渠道池，把某个 agent/session 的提问泄露到无关渠道。
+        // pushedTo 使用入站名称（qq），hintChannels 使用出站名称（qq-bot）；
+        // 通过能力矩阵归一别名后再过滤，空集合保持 fail-closed（不广播）。
+        const configuredTypes = Array.isArray(notifier?.channels) ? notifier.channels : []
+        const escalationTypes = [...new Set([
+          ...(Array.isArray(hintChannels) ? hintChannels : []),
+          ...(Array.isArray(pushedTo) ? pushedTo.map((target) => inboundToOutboundType(target?.channel)) : []),
+        ].filter((type) => typeof type === 'string' && type !== '' && configuredTypes.includes(type)))]
         const startedAt = Date.now()
         escalation.start(qKey, (_key, stage) => {
           notifier.notifyAll({
             title: `提问仍在等待作答：${String(question.question ?? '').slice(0, 40)}`,
             content: `${stage.note ?? '仍在等待作答'}（已等待 ${Math.round((Date.now() - startedAt) / 1000)}s）。请点击选项卡片按钮作答；无卡片渠道可回复选项编号。`,
             level: stage.level ?? 'timeSensitive',
-          }).catch(() => {})
+          }, { channelTypes: escalationTypes }).catch(() => {})
         })
         outcome = await waitPromise
         escalation.stop(qKey)
