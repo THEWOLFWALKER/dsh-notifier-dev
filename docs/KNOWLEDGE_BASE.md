@@ -4,11 +4,11 @@ This is the navigation page for humans and agents. It deliberately points to one
 
 ## Current Baseline
 
-- Canonical engineering baseline: Git commit `3fc3f24`; the active security-hardening branch is `codex/plugin-security-hardening`, package version `0.8.5`.
+- Canonical engineering baseline: Git commit `3a67e68` (batch 6-A — Issue #10 Dashboard onboarding UX rework — on `codex/maintenance-architecture`); package version `0.8.6` (published, batch 1-6A work un-released; the next version bump to v0.8.7 happens at the release cycle).
 - Canonical collaboration repository: private `dsh-notifier-dev` (GitHub owner `THEWOLFWALKER`). The public repository `https://github.com/THEWOLFWALKER/dsh-notifier` is the release/source mirror, not the day-to-day relay workspace.
 - The public repository's `main` history is unrelated to the current hardening line; do not merge or force-push it implicitly. Public synchronization is a deliberate release operation.
 - Runtime: Node.js ESM, Node `>=22`, no build step, no production dependencies.
-- Test contract: `906` total tests. The `2026-08-23` Linux run passed all `906` (902 after the P1-2 error-visibility fixes, +4 lock-recovery tests from the P1-3 state-stress fix); the earlier Windows run passed `898` with the four failures being the platform-dependent desktop adapter tests when BurntToast is unavailable. Release documentation retains `906` as the full contract count.
+- Test contract: `1104` total tests on the maintenance-architecture line at HEAD `3a67e68` (batch 6-A, 1103 pass + 1 win32 skip). With the uncommitted Issue #15 QQ RESUME/ACK regression tests (4 new), the working tree total is `1108` (1107 pass + 1 skip). The published v0.8.6 release retains `909` as the documented test count; the next release (v0.8.7) unifies version + count with the maintenance line.
 - The attached npm archive is a release artifact. The engineering archive is the source authority.
 
 ## Read Order

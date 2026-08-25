@@ -1,10 +1,10 @@
 # Project State
 
-Snapshot date: 2026-08-24 (maintenance-architecture line, batch 3 done).
+Snapshot date: 2026-08-25 (maintenance-architecture line, batch 6-A done).
 
 - Canonical development repository: private `https://github.com/THEWOLFWALKER/dsh-notifier-dev`.
 - Public release/source mirror: `https://github.com/THEWOLFWALKER/dsh-notifier`.
-- Branch topology (2026-08-24): private `main` = `52c467a` (post P1-3). All relay lines (security-hardening, protocol-guards, error-visibility, P1-3) are contained in `main` and retired. Active line: `codex/maintenance-architecture` (unmerged, un-released) — 7-batch maintenance plan, batches 1..3 committed, contract **1046** (1045 pass + 1 win32 skip). Batch 3 split `apply()`'s pure decision stages into `src/assembly/{outbound,admin-token,inbound-signals}.mjs`; plan/workstream in `.agents/workstreams/maintenance-architecture.md`.
+- Branch topology (2026-08-25): private `main` = `52c467a` (post P1-3). All relay lines (security-hardening, protocol-guards, error-visibility, P1-3) are contained in `main` and retired. Active line: `codex/maintenance-architecture` (unmerged, un-released) — 7-batch maintenance plan, batches 1..5 + 6-A committed, contract **1104** (1103 pass + 1 win32 skip) at HEAD `3a67e68`. With uncommitted Issue #15 QQ RESUME/ACK regression tests (4 new), working-tree total = **1108** (1107 pass + 1 skip). Batch 5 added `src/inbound/message.mjs` unified inbound text/image/file structure + `parseQQImageMessage` interface (NOT wired into qq-gw — no protocol evidence yet). Batch 6-A (Issue #10) reworked the Dashboard onboarding UX: step 1 = configured&&enabled, overview().members shape, localStorage try/catch, copy truth cleanup, 12 new tests. Plan/workstream in `.agents/workstreams/maintenance-architecture.md`.
 - Earlier snapshot (2026-08-23, ox-alpha relay, second round):
 - Branch topology (post-merge 2026-08-23): private `main` = `52c467a`, the no-ff merge of `codex/p1-3-state-stress` (P1-3 crash-stale-lock recovery, contract 902 → 906). All prior relay lines (security-hardening, protocol-guards, error-visibility) and the P1-3 branch are contained in `main` and retired.
 - Active line: `main` (all relay work merged); new relay topics branch from `main` as `codex/<topic>`.
@@ -22,7 +22,7 @@ Snapshot date: 2026-08-24 (maintenance-architecture line, batch 3 done).
 
 - `npm test` (Linux relay host, 2026-08-23): `909 pass`, `0 fail` — includes the 6 P1-1 protocol-shape tests, 5 P1-2 error-visibility tests, 4 P1-3 lock-recovery tests, and 3 issue-#11 question-reply tests.
 - `node scripts/verify-release.mjs`: passed with documented tests = `909`.
-- In-flight branch `codex/maintenance-architecture` (2026-08-24): `node --test test/*.test.mjs test/*.spec.mjs` reports **1046** tests (1045 pass + 1 win32 skip) after batch-3 stages 1..3 (over the 1027 batch-2 baseline). The documented release count stays at `909` until a version is cut on this line, so `verify-release.mjs` is checked against the released v0.8.6 contract, not the branch count. The earlier `crack-fix-batchA-v0.8.7` line (batch A+B+C, contract 1012) was superseded by this line; its commits are part of the maintenance-architecture branch history.
+- In-flight branch `codex/maintenance-architecture` (2026-08-25): `node --test test/*.test.mjs test/*.spec.mjs` reports **1104** tests (1103 pass + 1 win32 skip) at HEAD `3a67e68` after batch 6-A. With 4 uncommitted Issue #15 QQ RESUME/ACK regression tests, working-tree total = **1108** (1107 pass + 1 skip). The documented release count stays at `909` until a version is cut on this line, so `verify-release.mjs` is checked against the released v0.8.6 contract, not the branch count. The earlier `crack-fix-batchA-v0.8.7` line (batch A+B+C, contract 1012) was superseded by this line; its commits are part of the maintenance-architecture branch history.
 
 ## Current Maintenance Direction
 

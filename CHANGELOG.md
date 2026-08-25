@@ -16,7 +16,19 @@ Issue #10 的「首次使用三步引导卡」草案经过主管审查，按以�
 - **引导卡行为契约测试**（审查项 5）：`test/admin-ui-behavior.test.mjs` 新增 8 例——无通道无成员显示 / 仅配置未启用不算完成 / 配置且启用才完成并隐藏 / localStorage 读异常不崩 / localStorage 写静态契约（每处访问都在 try/catch 内）/ 步骤按钮 data-tab 指向真实存在的标签页 / 移动端窄屏静态断言（viewport meta + ≤768px 媒体查询 + flex-wrap + 44px 触控目标）/ 旧 overview 无 members 字段不崩。
 - **安全的通道配置写入闭环已存在**（审查项 6）：盘点结论：admin API/UI 已有完整的通道凭证写入闭环——`putChannel` 键白名单 + 值形态上限 + 字段级合并（保留未知键不抹）+ `maskSecrets` 敏感值深脱敏不回显 + `testChannel` 连通性自检 + 审计 append-only。引导卡只是 UX 入口，不新增任何配置写能力，因此无需临时造危险接口，也无需本批做 schema 向导。
 - **文档同步**（审查项 7）：启动日志已明确 `http://127.0.0.1:<port>` 与 token 来源三态（explicit/reused/generated，明文绝不重打）；README 功能表与配置表已覆盖 admin.enabled/port；guide.md 已含完整的「打开控制台 → token 来源 → admin 未启用怎么办」三步说明；本批只同步引导卡相关文案，不另开新文档。
-- 验证：全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1108** 契约（1107 通过 + 1 win32 skip，基线 1060 + 4 成员 overview + 8 引导 UX + Issue #15 QQ 回归 36 例 —— 注意 QQ 回归测试为另一在途工作，未计入本批变更）；`verify-release.mjs` / `gen-channel-matrix --check` / 全量 `node --check` 通过。
+- 验证：全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1104** 契约（1103 通过 + 1 win32 skip，基线 1060 + 4 成员 overview + 8 引导 UX + 其他装配/批间增量）；`verify-release.mjs` / `gen-channel-matrix --check` / 全量 `node --check` 通过。
+
+### 维护批 6-B：Issue #15 QQ RESUME/ACK 回归测试（MNT-6-B，2026-08-25）
+
+QQ 网关心跳 ACK 丢失与 RESUME 恢复路径是批 2 引入的关键韧性机制（连续丢 2 拍才判死重连），但此前只有 2 个聚焦测试（单拍丢失 + maxMissedAcks 阈值可配），缺 RESUME 行为契约、迟到 ACK 边界、stop 清理完整性的回归钉。本批只加测试、不改生产代码。
+
+- **ACK 连丢 → RESUME 携带原 session_id 与 seq**：连续 ACK 丢失触发判死重连后，新连接必须发 op6 RESUME 而非 op2 IDENTIFY，并携带上一会话的 `session_id` 和最后事件序号——确保事件不丢。
+- **迟到 ACK 不取消重连、不污染新会话**：阈值触发后才到达的 op11 ACK 不能回滚已决策的重连；新连接起搏前心跳计数从零复位（`awaitingAck=false` / `missedAcks=0`），不得继承旧会话的未确认状态。
+- **stop() 清理完整性**：断线后重连定时器已调度时 stop，`reconnectTimer` 必须被清除（stop 后推进时间不产生新连接）；stop 幂等；restart 能完成完整握手（IDENTIFY 或 RESUME）并输出就绪日志。
+- **stop 期间 dispose 顺序**：心跳等待 ACK 途中 stop 不得抛异常；stop 后推进时间无心跳/重连副作用（`heartbeatTimer` + `reconnectTimer` 都清理干净）。
+- 新增 4 例，全部 mock fetch/WebSocket，零生产代码改动。
+- 真机/协议缺口：QQ 网关是否每拍必回 op11 ACK、RESUME 失败是否正确返回 op9 INVALID_SESSION、静默断连（无 close 帧）下 2 拍阈值是否可靠触发——均需真机或协议级验证，已记入 `docs/memory/risks.md`。
+- 验证：全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1108** 契约（1107 通过 + 1 win32 skip，基线 1104 + 4 新增）；`verify-release.mjs` / `gen-channel-matrix --check` / 全量 `node --check` 通过。
 
 ### 维护批 5：入站 text/image/file 统一消息结构（MNT-5，2026-08-24）
 

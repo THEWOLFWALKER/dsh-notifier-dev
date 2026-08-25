@@ -284,6 +284,169 @@ test('阈值可配：maxMissedAcks=1 保留「单拍即断」旧语义；0/非�
   }
 })
 
+// --- Issue #15 回归：RESUME 场景下 ACK 连丢、迟到 ACK、stop 清理 ---
+
+test('Issue #15 回归：ACK 连丢后重连走 RESUME（携带原 session_id 与 seq）', async (t) => {
+  // 场景：连续 ACK 丢失触发判死重连 → 重连后应发 RESUME 而非 IDENTIFY
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  try {
+    const rig = makeRig()
+    rig.inbound.start()
+    await flushMacrotask()
+    const ws1 = FakeWebSocket.instances.at(-1)
+    ws1.serverOpen()
+    ws1.serverSend({ op: 10, d: { heartbeat_interval: 50 } })
+    await flushMacrotask()
+    ws1.serverSend({ op: 0, t: 'READY', s: 3, d: { session_id: 'sess_issue15' } })
+    await flushMacrotask()
+    ws1.serverSend({ op: 0, t: 'C2C_MESSAGE_CREATE', s: 7, d: { id: 'ex', content: 'x', author: { user_openid: 'u_open' } } })
+    await flushMacrotask()
+    const before = FakeWebSocket.instances.length
+    // 连丢 2 拍：第 2 拍 miss 后判死 → 第 3 拍触发
+    t.mock.timers.tick(50) // miss=1
+    t.mock.timers.tick(50) // miss=2 → 判死 + 调度重连
+    await flushMacrotask()
+    // 触发重连定时器（reconnectBaseMs=2，首跳 2^1=4ms）
+    t.mock.timers.tick(10)
+    await flushMacrotask()
+    assert.ok(FakeWebSocket.instances.length > before, 'ACK 连丢应触发重连')
+    const ws2 = FakeWebSocket.instances.at(-1)
+    ws2.serverOpen()
+    ws2.serverSend({ op: 10, d: { heartbeat_interval: 60000 } })
+    await flushMacrotask()
+    const resume = ws2.sent.find((f) => f.op === 6)
+    assert.ok(resume, 'ACK 连丢重连后应走 RESUME（事件不丢）')
+    assert.equal(resume.d.session_id, 'sess_issue15')
+    assert.equal(resume.d.seq, 7, 'RESUME 应携带最后事件 seq')
+  } finally {
+    t.mock.timers.reset()
+  }
+})
+
+test('Issue #15 回归：迟到 ACK（阈值触发后 ACK 才到）不应阻止重连、也不应污染新会话', async (t) => {
+  // 场景：连续丢 ACK 已达到阈值 → 触发重连 → 旧连接的迟到 op11 ACK：
+  // 1) 迟到 ACK 不能取消已决策的重连
+  // 2) 新连接启动后，心跳计数从零开始（不继承旧会话状态）
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  try {
+    const rig = makeRig()
+    rig.inbound.start()
+    await flushMacrotask()
+    const ws1 = FakeWebSocket.instances.at(-1)
+    ws1.serverOpen()
+    ws1.serverSend({ op: 10, d: { heartbeat_interval: 50 } })
+    await flushMacrotask()
+    ws1.serverSend({ op: 0, t: 'READY', s: 1, d: { session_id: 'sess_late' } })
+    await flushMacrotask()
+    const beforeReconnect = FakeWebSocket.instances.length
+    t.mock.timers.tick(50) // miss=1
+    t.mock.timers.tick(50) // miss=2 → 判死
+    await flushMacrotask()
+    // 给旧连接发一个迟到的 ACK
+    ws1.serverSend({ op: 11 })
+    await flushMacrotask()
+    // 触发重连定时器
+    t.mock.timers.tick(10)
+    await flushMacrotask()
+    assert.ok(FakeWebSocket.instances.length > beforeReconnect,
+      '迟到 ACK 不应取消已决策的重连')
+    // 新连接启动后心跳计数从零开始
+    const wsNew = FakeWebSocket.instances.at(-1)
+    wsNew.serverOpen()
+    wsNew.serverSend({ op: 10, d: { heartbeat_interval: 50 } })
+    await flushMacrotask()
+    wsNew.serverSend({ op: 0, t: 'RESUMED', s: 7, d: {} })
+    await flushMacrotask()
+    // 新会话：发 1 拍心跳（无 ACK）→ missedAcks 应为 1，不会判死
+    const afterFirstNewBeat = FakeWebSocket.instances.length
+    t.mock.timers.tick(50) // 第 1 拍（无 ACK = 1 missed）
+    await flushMacrotask()
+    assert.equal(FakeWebSocket.instances.length, afterFirstNewBeat,
+      '新会话首拍心跳无 ACK 只算 missed=1，不应因旧会话残留直接判死')
+  } finally {
+    t.mock.timers.reset()
+  }
+})
+
+test('Issue #15 回归：stop() 清理完整性——重连定时器必须清除、stop 幂等、可重启动', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  try {
+    const rig = makeRig()
+    rig.inbound.start()
+    await flushMacrotask()
+    const ws1 = FakeWebSocket.instances.at(-1)
+    ws1.serverOpen()
+    ws1.serverSend({ op: 10, d: { heartbeat_interval: 60000 } })
+    await flushMacrotask()
+    ws1.serverSend({ op: 0, t: 'READY', d: { session_id: 'sess_stop' } })
+    await flushMacrotask()
+    // 触发一次重连调度（模拟断线后重连定时器已挂上）
+    ws1.serverClose()
+    await flushMacrotask()
+    // 此时 reconnectTimer 已调度（reconnectBaseMs=2）
+    const countAtStop = FakeWebSocket.instances.length
+    await rig.inbound.stop()
+    // stop 后重连定时器应被清除：等远超 base 时间，不应有新连接
+    t.mock.timers.tick(1000)
+    await flushMacrotask()
+    assert.equal(FakeWebSocket.instances.length, countAtStop,
+      'stop 后不应有新连接（reconnectTimer 必须被清理）')
+    // stop 幂等：再次调用不应抛
+    let threw = false
+    try { await rig.inbound.stop() } catch { threw = true }
+    assert.equal(threw, false, 'stop 应幂等，第二次调用不抛')
+    // 重启动能正常工作（stop 彻底清理后 start 不残留状态）
+    rig.inbound.start()
+    await flushMacrotask()
+    const ws2 = FakeWebSocket.instances.at(-1)
+    ws2.serverOpen()
+    ws2.serverSend({ op: 10, d: { heartbeat_interval: 60000 } })
+    await flushMacrotask()
+    ws2.serverSend({ op: 0, t: 'READY', d: { session_id: 'sess_restart' } })
+    await flushMacrotask()
+    // restart 后应能完成握手（IDENTIFY 或 RESUME 都可以，取决于是否保留 session）
+    const sentOps = ws2.sent.map((f) => f.op)
+    assert.ok(sentOps.includes(2) || sentOps.includes(6),
+      'stop 后 restart 应能正常发送握手帧（IDENTIFY 或 RESUME），实际: ' + JSON.stringify(sentOps))
+    assert.ok(rig.lines.some((l) => l.includes('网关已就绪') && l.includes('sess_restart')),
+      'restart 后应能收到 READY 并输出就绪日志')
+    await rig.inbound.stop()
+  } finally {
+    t.mock.timers.reset()
+  }
+})
+
+test('Issue #15 回归：stop 期间 dispose 顺序——心跳等待 ACK 时 stop 不抛、停后无副作用', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] })
+  try {
+    const rig = makeRig()
+    rig.inbound.start()
+    await flushMacrotask()
+    const ws = FakeWebSocket.instances.at(-1)
+    ws.serverOpen()
+    ws.serverSend({ op: 10, d: { heartbeat_interval: 50 } })
+    await flushMacrotask()
+    ws.serverSend({ op: 0, t: 'READY', d: { session_id: 'sess_disp' } })
+    await flushMacrotask()
+    // 发半拍（awaitingAck=true 但还没到下一拍）
+    t.mock.timers.tick(25)
+    await flushMacrotask()
+    // 在心跳等待 ACK 期间 stop —— 应干净完成，不抛
+    let threw = false
+    try { await rig.inbound.stop() } catch { threw = true }
+    assert.equal(threw, false, '心跳等待 ACK 时 stop 不应抛异常')
+    // 停止后再推进时间：不应有任何心跳副作用
+    const countAfter = FakeWebSocket.instances.length
+    t.mock.timers.tick(500)
+    await flushMacrotask()
+    assert.equal(FakeWebSocket.instances.length, countAfter,
+      'stop 后推进时间不应产生新连接（心跳+重连定时器都应清理）')
+    await rig.inbound.stop() // 二次 stop 幂等
+  } finally {
+    t.mock.timers.reset()
+  }
+})
+
 test('断线重连：close 后带 session RESUME（session_id + seq）', async () => {
   const rig = makeRig()
   const ws = await driveReady(rig)

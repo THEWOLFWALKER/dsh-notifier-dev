@@ -6,7 +6,7 @@
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
 > 2026-08-23 接力合入公共镜像 v0.8.5 发布内容（issue #11 ask_user 编号回复修复 + PR #9 飞书扫码 SDK 适配），见「当前接力交代」。
 > 上一稳定发布位 v0.8.6 = `bf03a1c`（npm `dsh-notifier@0.8.6`，公共镜像 `db42908` 已清理 node_modules/package-lock）。
-> 快照刷新：2026-08-24，维护批 1..3 完成。**当前开发线 `codex/maintenance-architecture`**（私有 `dsh-notifier-dev`，未合 main、未发版，版本/计数串仍停在已发布 v0.8.6 / 909；发版轮再统一提）。已提交：批 1 管理台 token 流程（`777455b`，契约 1024）、批 2 QQ 心跳 ACK 连丢计数重连（`777455b` 后序，契约 1027）、批 3 index.mjs 装配拆分三阶段（`f307950` + `9fd6341` + `deda003`，契约 **1046**）。批 3 把出站 overlay、admin token 决策、六通道入站启用信号抽进 `src/assembly/{outbound,admin-token,inbound-signals}.mjs`；身份/迁移/引导/逐通道装载块**有意不抽**（耦合面宽、漂移风险高，留待更深的批次）。工作流登记 `.agents/workstreams/maintenance-architecture.md`；下一步批 4（Interaction Core 统一交互状态）。规则照旧：私有库为开发唯一基线、绝不直接改 main、维护批期只做代码维护与自动化测试。
+> 快照刷新：2026-08-25，维护批 1..5 + 6-A 完成 + Issue #15 回归收口（未提交）。**当前开发线 `codex/maintenance-architecture`**（私有 `dsh-notifier-dev`，未合 main、未发版，版本/计数串仍停在已发布 v0.8.6 / 909；发版轮再统一提）。已提交（HEAD `3a67e68`，**契约 1104** / 1103 pass + 1 win32 skip）：批 1 管理台 token 流程（`777455b`，契约 1024）、批 2 QQ 心跳 ACK 连丢计数重连（`777455b` 后序，契约 1027）、批 3 index.mjs 装配拆分三阶段（`f307950` + `9fd6341` + `deda003`，契约 1046）、批 4 Interaction Core 统一交互状态账本三阶段（`cc130e8` + `1a4a2a3` + `6f323a0`，契约 1052）、批 5 入站 text/image/file 统一消息结构 + QQ 单聊图片解析接口（`e72bf75`，契约 1060）、**批 6-A（Issue #10）Dashboard 首屏引导 UX 返工**（`3a67e68`，12 个新单测——Step 1 完成条件=configured&&enabled、overview().members 形状、全部 localStorage try/catch、文案去未证承诺、guide.md 三步上手对齐）。未提交（工作树 **契约 1108** / 1107 pass + 1 skip）：**批 6-B Issue #15 QQ RESUME/ACK 回归测试**（4 个新单测——ACK 连丢→RESUME 携带 session_id+seq、迟到 ACK 不取消重连且不污染新会话、stop() 清理完整性、stop 期间 dispose 顺序），全部 mock fetch/WebSocket，零生产代码改动。批 6 主任务（PR #12 重移植）5 维 review 完成（详见 `.agents/workstreams/pr12-review-batch6.md`），安全红线 7/7 OK、P0×2、P1×5、P2×6、测试缺口 10；战略选「按模块重写」非 cherry-pick；实装**未启动**，review 留底待批 7 验证轮统一启动。工作流登记 `.agents/workstreams/maintenance-architecture.md` + `.agents/workstreams/pr12-review-batch6.md`。规则照旧：私有库为开发唯一基线、绝不直接改 main、维护批期只做代码维护与自动化测试。
 
 ## 当前接力交代（2026-08-23，第二轮：镜像接力合入）
 
@@ -41,7 +41,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 零运行时依赖（只用 fetch + node:crypto + 原生 WebSocket）。
 
 - 语言/运行时：Node.js ESM（.mjs），无 TypeScript，无构建步骤
-- 代码量：src+test+scripts ≈ 35,500 行；46 个测试文件，909 测试
+- 代码量：src+test+scripts ≈ 36,000 行；46 个测试文件，1104 测试（批 6-A HEAD `3a67e68`；+ Issue #15 4 个回归测试 = 1108，未提交；已发布 v0.8.6 = 909）
 - 文档：README.md / README.zh-CN.md / ADAPTER.md（渠道接入规范）/ PLUGINS.md（插件互操作）/ docs/v0.5-design.md / docs/v0.6-design.md / CHANGELOG.md（最详细的历史）
 
 ---
@@ -52,7 +52,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 |---|---|
 | 版本 | package.json = 0.8.6；CHANGELOG、admin UI、双语 README 和发布守卫已同步；npm 已发布 `dsh-notifier@0.8.6`；公共镜像 `main` 已清理 `node_modules/` 与 `package-lock.json` |
 | git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前分支 `main`（P1-1/P1-2/P1-3 接力分支均已合并退役，新工作从 `main` 拉） |
-| 测试 | `npm test` 契约 = **909 tests**（2026-08-23 Linux 主机全过；Windows 主机 898 pass / 4 个桌面能力限制失败——基于 902 契约时代，非桌面通过） |
+| 测试 | `npm test` 契约 = **909 tests**（v0.8.6 已发布契约；开发线 `codex/maintenance-architecture` HEAD 已达 1104，+ Issue #15 4 个回归测试 = 1108 未提交，见「快照刷新」） |
 | 发布 | v0.8.6 已发布；下一位 agent 接手时无需再走发布 gate，除非版本再次 bump |
 | 真机验证 | v0.6.1 修过 TG 真机事故（见 §5）；v0.7 真机测试通过（2026-08-17，v0.7.0-realtest 包）；内部真机测试文档 TG-TEST.md（Telegram 提问链路）与 WECHAT-TEST.md（微信扫码即配对）随 code/ 保留 |
 
@@ -71,7 +71,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 用户文档 | `docs/guide.md` · `docs/upgrade-guide.md` · `docs/upgrade-guide.en.md` | README 双语均链接 guide；升级/回滚是装包用户高频需求 |
 | 互操作契约 | `PLUGINS.md` | 其他插件作者消费 notifier 服务时的契约（README 链接） |
 | CLI | `scripts/`（channel-login · test-channel · route · gen-channel-matrix 等） | guide.md 教用户直接 `node scripts/...` |
-| 测试 | `test/` | 行为契约随包分发是项目惯例（909 用例，装包即可 `npm test`） |
+| 测试 | `test/` | 行为契约随包分发是项目惯例（已发布 v0.8.6 = 909 用例；开发线 HEAD 1104，+ Issue #15 未提交 4 = 1108，装包即可 `npm test`） |
 
 **仅工程仓库（不进 npm 包）**：
 
@@ -255,7 +255,7 @@ src/
 ## 8. 快速上手
 
 ```bash
-npm test                    # 909 测试（已发布 v0.8.6 契约），约 2 分钟
+npm test                    # 909 测试（已发布 v0.8.6 契约；开发线 codex/maintenance-architecture HEAD 1104 / + Issue #15 回归 1108，发版轮再统一提到 v0.8.7）
 npm run lint 2>/dev/null || node --check src/index.mjs   # 无 lint 配置的话用 node --check
 node scripts/route.mjs --help        # 路由 CLI
 node scripts/channel-login.mjs --help
