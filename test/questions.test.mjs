@@ -618,6 +618,102 @@ test('CRACK-004 fail-closed：identity 缺失时 hint 兜底一律拒（消费 +
   rig.bridge.dispose()
 })
 
+// ---------------------------------------------------------------- P1 残差钉（2026-08-25）：渠道级编号证据的 chat 歧义
+// risks.md P1 残差：hintChannels 与 latestPendingFor 都是渠道/用户级，信封里明明带 chatId
+// 却不参与匹配。以下三例钉住**当前**行为（不是理想行为）——防止未来无意漂移，并为
+// Control Core 落地 per-target hint 证据 / (channel,userId,chatId) 闸门时提供必须翻转的
+// 断言基线（翻转时同步更新本节注释与 risks.md）。
+
+test('P1 残差钉：exact 命中不校验 chatId——卡片送达 chat A，本人从 chat B 回裸编号仍作答', async () => {
+  // 按钮路径有 SEC-1/AUTH-1 来源会话校验（card 到 chat A、chat B 的点击被拒）；
+  // 编号回复路径（handleNumberedReply → latestPendingFor）只按 (channel, userId)
+  // 匹配 exact 证据，envelope.chatId 不参与——同用户在同渠道另一 chat 的裸编号仍命中。
+  // 钉住当前行为：Control Core 收紧 chat 闸门时本断言必须翻转为拒绝。
+  const rig = makeRig({
+    inbounds: [{ channel: 'qq', card: true, targets: [{ chatId: 'qqcard1000', userId: '100' }] }],
+    channelTypes: ['qq'],
+  }) // 有意不传 identity：exact 是当事人级证词，不查 owner（与 CRACK-004 放行矩阵一致）
+  const pending = rig.bridge.askQuestions({ questions: [SINGLE] })
+  await sleep(30)
+  assert.equal(rig.instances[0].cards.length, 1, '卡片已送达 chat A')
+  const row = rig.store.get(rig.store.keys('aq:')[0])
+  assert.equal(row.pushedTo[0].chatId, 'qqcard1000', '卡片送达记录指向 chat A')
+  assert.deepEqual(row.hintChannels, [], '卡片送达 → qq 不广播编号话术')
+  // 本人（userId 100）从同渠道另一 chat 回裸 1：exact 证据命中，chat 不参与匹配
+  rig.bus.accept({ channel: 'qq', userId: '100', chatId: 'qqother999', messageId: 'm1', text: '1' })
+  const result = await pending
+  assert.equal(result.answered, true, '钉住当前行为：exact 命中不校验 chatId（P1 残差，Control Core 需收紧）')
+  assert.deepEqual(result.results[0].answers, ['测试环境'])
+  assert.match(result.results[0].via, /qq:reply/)
+  rig.bridge.dispose()
+})
+
+test('P1 残差钉：hint 证据渠道级——话术只送 chat A，owner 从 chat B 回裸编号仍命中', async () => {
+  // hintChannels 是渠道级数组，行内不记「哪个 chat 收到过话术」。话术经 wechat
+  // sendText 只送到 chat A，owner 42 从同渠道 chat B 回裸编号时 hint 证据仍成立
+  // （CRACK-004 owner 闸只看渠道+用户，不看 chat）。钉住当前行为：Control Core
+  // 落地 hintTargets（per-target 证据）时必须翻转为拒绝。
+  const identity = createIdentity({ store: createStore(tempPath()) })
+  identity.addBinding({ channel: 'wechat', userId: '42' }) // 首条绑定 = owner（CRACK-004 hint 兜底需 owner）
+  const rig = makeRig({
+    inbounds: [{ channel: 'wechat', card: false, targets: [{ chatId: 'wxhint0042', userId: '42' }] }],
+    channelTypes: ['telegram'], // telegram 无入站实例 → 出站广播只留 telegram hint 证据
+    identity,
+  })
+  const pending = rig.bridge.askQuestions({ questions: [SINGLE] })
+  await sleep(30)
+  const row = rig.store.get(rig.store.keys('aq:')[0])
+  assert.deepEqual([...row.hintChannels].sort(), ['telegram', 'wechat'], 'wechat 经 sendText 送达 → 渠道级 hint 证据成立')
+  assert.equal(rig.instances[0].texts.length, 1)
+  assert.equal(rig.instances[0].texts[0].chatId, 'wxhint0042', '话术实际只送到了 chat A')
+  // owner 从同渠道另一 chat 回裸 1 —— hint 证据渠道级命中（不含 chat 维度）
+  rig.bus.accept({ channel: 'wechat', userId: '42', chatId: 'wxother0042', messageId: 'm1', text: '1' })
+  const result = await pending
+  assert.equal(result.answered, true, '钉住当前行为：hint 证据不区分 chat（P1 残差，Control Core 需收紧）')
+  assert.deepEqual(result.results[0].answers, ['测试环境'])
+  assert.match(result.results[0].via, /wechat:reply/)
+  rig.bridge.dispose()
+})
+
+test('P1 残差钉：部分送达——chat A sendText 成功即登记渠道，chat B 未收到话术的 owner 仍可裸编号命中', async () => {
+  // hintedChannels 登记条件是 outcomes.some(Boolean)：同渠道多目标只要一个 sendText
+  // 成功，整个渠道获得 hint 证据——未收到话术的目标（chat B 的 owner 100）与收到的
+  // 目标共享同一渠道级证据。钉住当前行为：Control Core 落地 per-target 证据时必须
+  // 翻转为「未收到话术的目标不命中」。per-target 送达桩需绕开 rig 的通道级开关，故本例手搭。
+  const store = createStore(tempPath())
+  const vault = createTokenVault({ secret: 's' })
+  const bus = createInboundBus({ allowUsers: ['42', '100'], store, vault })
+  const identity = createIdentity({ store: createStore(tempPath()) })
+  identity.addBinding({ channel: 'qq', userId: '100' }) // 首条绑定 = owner（chat B 收件人，话术未送达）
+  identity.addBinding({ channel: 'qq', userId: '42' }) // member（chat A 收件人，话术已送达）
+  const texts = []
+  const raw = {
+    channel: 'qq',
+    notifyTargets: () => [
+      { chatId: 'qqsink0042', userId: '42' }, // chat A：话术送达
+      { chatId: 'qqmiss0100', userId: '100' }, // chat B：话术投递失败
+    ],
+    async sendQuestionCard() { return null }, // 无卡片能力 → 全走编号兜底
+    async editResolved() {},
+    async sendText(chatId, text) { texts.push({ chatId, text }); return chatId === 'qqsink0042' },
+  }
+  const notifier = { channels: [], notifyAll: async () => ({ ok: true, delivered: [], skipped: [], failed: [] }) }
+  const bridge = createQuestionBridge({ bus, vault, store, notifier, identity, interactive: () => [raw], config: { timeoutMs: 800, escalation: { enabled: false } } })
+  bridge.attach()
+  const pending = bridge.askQuestions({ questions: [SINGLE] })
+  await sleep(30)
+  const row = store.get(store.keys('aq:')[0])
+  assert.deepEqual(row.hintChannels, ['qq'], '部分送达即登记：chat A 成功 → 渠道 qq 整体获得 hint 证据')
+  assert.deepEqual(texts.map((entry) => entry.chatId).sort(), ['qqmiss0100', 'qqsink0042'], '两目标的 sendText 都尝试过（A 成功 B 失败）')
+  // chat B 的 owner 100（sendText 失败、从未见过话术）回裸 1 —— hint 证据仍命中
+  bus.accept({ channel: 'qq', userId: '100', chatId: 'qqmiss0100', messageId: 'm1', text: '1' })
+  const result = await pending
+  assert.equal(result.answered, true, '钉住当前行为：部分送达的渠道级证据覆盖未收到话术的目标（P1 残差）')
+  assert.deepEqual(result.results[0].answers, ['测试环境'])
+  assert.match(result.results[0].via, /qq:reply/)
+  bridge.dispose()
+})
+
 // ---------------------------------------------------------------- 按钮路径与红线
 
 test('按钮作答：token 裁决 → 卡片终态编辑（已作答文案）+ 账本落定', async () => {

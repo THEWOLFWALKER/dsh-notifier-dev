@@ -5,6 +5,17 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 残差测试批：提问编号兜底 chat 级证据歧义残差钉（2026-08-25）
+
+维护批 6-C 登记的 P1 残差（见 `docs/memory/risks.md`）：提问编号兜底的证据维度只有 `(channel, userId)`——`pushedTo` 的 exact 命中与 `hintChannels` 的渠道级登记都不携带 `chatId`，而入站信封明明带 `chatId`；按钮路径有 SEC-1/AUTH-1 来源会话校验，编号路径没有。本批只加测试钉住**当前**行为（零生产代码改动），为 Control Core 收紧 chat 闸门时提供必须翻转的断言基线；另修正两处文档漂移。
+
+- **exact 路径无 chat 校验**：卡片送达 chat A 后，同一用户从同渠道另一 chat 回裸编号仍被采纳——`latestPendingFor` 只按 `(channel, userId)` 匹配，不比对信封 `chatId`。
+- **hint 证据渠道级**：编号话术经入站 `sendText` 只送到 chat A，渠道获得 hint 证据后，owner 从同渠道另一 chat 回裸编号仍命中——行内不记「哪个 chat 收到过话术」。
+- **部分送达整渠道登记**：`outcomes.some(Boolean)` 使同渠道多目标只要一个 `sendText` 成功，整个渠道获得 hint 证据——未收到话术的目标与收到的目标共享同一渠道级凭据。
+- 三例均钉住当前行为并注明翻转契约：Control Core 落地 per-target hint 证据 / `(channel, userId, chatId)` 闸门时，这些断言必须翻转为拒绝，并同步关闭 `docs/memory/risks.md` 的 P1 残差条目。
+- 文档真相修正：`docs/memory/project-state.md` 的 main 位置核正为 `37f2ec7`（破甲线已并入私有 main）；`.agents/workstreams/pr12-review-batch6.md` 从未提交入库（留在已离场的 Windows 主机本地）的事实补记到 risks.md 与 workstream。
+- 验证：全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1114** 契约（Linux 沙箱 1114 通过 0 跳过；基线 1111 + 3 新增；win32 下为 1113 通过 + 1 symlink 权限跳过）；`verify-release.mjs` / `gen-channel-matrix --check` / 全量 `node --check` 通过。
+
 ### 维护批 6-C：提问升级提醒渠道分流（MNT-6-C，2026-08-25）
 
 - 修复 `questions/router.mjs` 的升级提醒遗漏渠道过滤：提醒现在复用本题首次推送实际覆盖的出站渠道，不再无条件广播到全局渠道池。
