@@ -212,17 +212,26 @@ export function createQuestionBridge(deps) {
     const hintText = `${title}\n${content}\n\n${numberedHint(options, isMulti)}`
     const hintedChannels = []
     for (const entry of hintedInbound) {
-      hintedChannels.push(entry.channel)
+      const coveredByOutbound = isCoveredByOutbound(entry.channel, textTypes)
+      let hintDelivered = coveredByOutbound
+      const hintSends = []
       for (const target of entry.targets) {
         const targetKey = `${entry.channel}\u0000${target.chatId}\u0000${target.userId}`
         if (!escalationTargetKeys.has(targetKey)) {
           escalationTargetKeys.add(targetKey)
           escalationTargets.push({ inbound: entry.inbound, target })
         }
-        if (!isCoveredByOutbound(entry.channel, textTypes)) {
-          void entry.inbound.sendText(target.chatId, hintText)
+        if (!coveredByOutbound) {
+          hintSends.push(entry.inbound.sendText(target.chatId, hintText).then((ok) => ok === true).catch(() => false))
         }
       }
+      if (!coveredByOutbound) {
+        const outcomes = await Promise.all(hintSends)
+        hintDelivered = outcomes.some(Boolean)
+      }
+      // 只有出站广播覆盖，或至少一个逐目标 sendText 成功时，才记录 hint 证据。
+      // 发送失败不应让一个从未收到题目的人凭裸编号命中兜底路径。
+      if (hintDelivered) hintedChannels.push(entry.channel)
     }
     // SEC-2：把编号话术送达过的渠道（出站 textTypes + 入站 hintedChannels）一并返回，
     // 供 askQuestions 落账为 aq 行的 hintChannels。按「本应送达的渠道」记录（不因

@@ -57,7 +57,7 @@ function makeRig({ inbounds = [{ channel: 'telegram', card: true }], channelType
           return { messageId: cards.length }
         },
         async editResolved(target, text) { edits.push({ target, text }) },
-        async sendText(chatId, text) { texts.push({ chatId, text }); return true },
+        async sendText(chatId, text) { texts.push({ chatId, text }); return spec.sendTextResult !== false },
       },
     })
   }
@@ -439,6 +439,24 @@ test('issue #11 微信 iLink 纯入站：hintChannels 含 wechat 且编号话术
   assert.equal(result.answered, true)
   assert.deepEqual(result.results[0].answers, ['测试环境'])
   assert.match(result.results[0].via, /wechat:reply/)
+  rig.bridge.dispose()
+})
+
+test('SEC-2 发送失败不登记 hint 证据：纯入站渠道未收到话术时裸编号不命中', async () => {
+  const identity = createIdentity({ store: createStore(tempPath()) })
+  identity.addBinding({ channel: 'wechat', userId: '42' })
+  const rig = makeRig({
+    inbounds: [{ channel: 'wechat', card: false, sendTextResult: false, targets: [{ chatId: 'wxuser42', userId: '42' }] }],
+    channelTypes: ['telegram'],
+    identity,
+  })
+  const pending = rig.bridge.askQuestions({ questions: [SINGLE] })
+  await sleep(30)
+  const row = rig.store.get(rig.store.keys('aq:')[0])
+  assert.deepEqual(row.hintChannels, ['telegram'], 'sendText 失败时不登记 wechat hint')
+  rig.bus.accept({ channel: 'wechat', userId: '42', chatId: 'wxuser42', messageId: 'm-fail', text: '1' })
+  const result = await pending
+  assert.equal(result.answered, false, '未收到题目时裸编号不能作答')
   rig.bridge.dispose()
 })
 
