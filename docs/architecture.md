@@ -8,6 +8,8 @@ All implementation work follows a written plan and an adversarial review loop: p
 
 The sub-agent console and any admin-facing GUI are part of DSH, not a separate product. They must reuse the visual tokens, density, navigation, feedback states, responsive behavior, and interaction grammar already established in `src/admin/ui.mjs`. New screens may add domain-specific information architecture, but they must not create a competing visual language or decorative dashboard style.
 
+The approved future product direction is documented in `docs/architecture-roadmap.md`: a personal-mode-first cross-IM control plane with a unified control core and native channel renderers. That roadmap is planning state only; current runtime behavior remains defined by `src/` and tests.
+
 ## Runtime Shape
 
 `src/index.mjs` is the Cordis plugin assembly root. It resolves configuration, creates the shared state store, overlays admin-managed credentials when enabled, builds the notifier, and then wires optional services. Pure "decision" stages of assembly — the outbound credential overlay, the admin token strategy, and the six-channel inbound enable signals — live as documented in `src/assembly/*.mjs` (`outbound.mjs`, `admin-token.mjs`, `inbound-signals.mjs`); `index.mjs` calls them and wires the results in place. The actions/approval/questions interaction lifecycles share one state ledger (`src/interaction/ledger.mjs`, `createInteractionLedger`) with decision-field names preserved per chain (`outcome` vs `decision`); per-chain `latestPendingFor` heuristics stay local. Inbound content normalizes to a unified text/image/file shape via `src/inbound/message.mjs` (`normalizeInboundMessage`, text-compatible); the QQ single-chat image parse interface (`parseQQImageMessage`) is fixture-tested but intentionally not wired until real-device protocol evidence exists. Disposal is collected and executed in reverse assembly order.
@@ -73,3 +75,4 @@ The server is a zero-dependency `node:http` wrapper around `admin/api.mjs`. It i
 - Keep the adapter contract `resolve(cfg) -> resolved` and `send(resolved, msg) -> Promise`.
 - Inbound channels implement the shared contract and may expose optional action/question card methods; callers must always retain text/number fallbacks.
 - Other plugins consume the injected `notifier` service and `dsh-notifier/sent` event; they must declare static injection and must not push from a sent-event handler.
+- Future bidirectional channels must keep transport, control semantics, and native rendering separate. External SDKs are optional and lazy-loaded only after license, maintenance, security, and dependency review; unlicensed or `UNLICENSED` code is not copied.

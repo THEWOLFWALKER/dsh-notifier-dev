@@ -4,11 +4,11 @@ This is the navigation page for humans and agents. It deliberately points to one
 
 ## Current Baseline
 
-- Canonical engineering baseline: Git commit `3a67e68` (batch 6-A — Issue #10 Dashboard onboarding UX rework — on `codex/maintenance-architecture`); package version `0.8.6` (published, batch 1-6A work un-released; the next version bump to v0.8.7 happens at the release cycle).
+- Canonical engineering baseline: Git commit `9ae636b` (maintenance batches 1-6-C complete — Issue #10, Issue #15, and question target/failed-hint regressions — on `codex/maintenance-architecture`); package version `0.8.6` (published, maintenance work unreleased; the next version bump happens at the release cycle).
 - Canonical collaboration repository: private `dsh-notifier-dev` (GitHub owner `THEWOLFWALKER`). The public repository `https://github.com/THEWOLFWALKER/dsh-notifier` is the release/source mirror, not the day-to-day relay workspace.
 - The public repository's `main` history is unrelated to the current hardening line; do not merge or force-push it implicitly. Public synchronization is a deliberate release operation.
 - Runtime: Node.js ESM, Node `>=22`, no build step, no production dependencies.
-- Test contract: `1104` total tests on the maintenance-architecture line at HEAD `3a67e68` (batch 6-A, 1103 pass + 1 win32 skip). With the uncommitted Issue #15 QQ RESUME/ACK regression tests (4 new), the working tree total is `1108` (1107 pass + 1 skip). The published v0.8.6 release retains `909` as the documented test count; the next release (v0.8.7) unifies version + count with the maintenance line.
+- Test contract: `1111` total tests on the maintenance-architecture line (1110 pass + 1 win32 skip; final maintenance regression included). The published v0.8.6 release retains `909` as its documented test count until a release cycle updates version and count together.
 - The attached npm archive is a release artifact. The engineering archive is the source authority.
 
 ## Read Order
@@ -17,12 +17,13 @@ This is the navigation page for humans and agents. It deliberately points to one
 2. `docs/memory/README.md` for durable project facts and decision hygiene.
 3. `README.zh-CN.md` or `README.md` for user-visible capabilities and configuration.
 4. `docs/architecture.md` for the stable module/data-flow map.
-5. `docs/OPERATIONS.md` for start-up, state, admin, and release smoke checks.
-6. `docs/TECHNICAL_DEBT.md` for the active no-new-features maintenance queue.
-7. `HANDOFF.md` for detailed historical rationale, review findings, and known traps.
-8. `docs/RELAY_BOOTSTRAP_PROMPT.md` for the copy-paste first message sent to a new relay agent.
-9. `CHANGELOG.md` for chronological changes; it is not a substitute for current rules.
-10. `docs/security/PLUGIN_ATTACK_REVIEW.md` and `docs/security/PLUGIN_SECURITY_FIX_PLAN.md` for the hostile-plugin threat model and staged remediation ownership.
+5. `docs/architecture-roadmap.md` for the approved cross-IM control-plane direction (planning, not shipped behavior).
+6. `docs/OPERATIONS.md` for start-up, state, admin, and release smoke checks.
+7. `docs/TECHNICAL_DEBT.md` for the active no-new-features maintenance queue.
+8. `HANDOFF.md` for detailed historical rationale, review findings, and known traps.
+9. `docs/RELAY_BOOTSTRAP_PROMPT.md` for the copy-paste first message sent to a new relay agent.
+10. `CHANGELOG.md` for chronological changes; it is not a substitute for current rules.
+11. `docs/security/PLUGIN_ATTACK_REVIEW.md` and `docs/security/PLUGIN_SECURITY_FIX_PLAN.md` for the hostile-plugin threat model and staged remediation ownership.
 
 ## Audience Map
 
@@ -38,7 +39,7 @@ This is the navigation page for humans and agents. It deliberately points to one
 | `docs/RELAY_BOOTSTRAP_PROMPT.md` | New relay agents | Direct first message for repository takeover and handoff |
 | `.agents/workstreams/` | Parallel agents | Temporary scope reservations and handoff notes |
 
-The product, UX, planning, review-loop, and DSH GUI consistency contract is maintained in `docs/architecture.md` and summarized as agent-enforced rules in `AGENTS.md`.
+The product, UX, planning, review-loop, and DSH GUI consistency contract is maintained in `docs/architecture.md`. The approved future control-plane direction is in `docs/architecture-roadmap.md`; it must not be treated as shipped capability.
 
 ## Capability Summary
 

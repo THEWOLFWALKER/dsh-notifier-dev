@@ -35,3 +35,19 @@ Every change requires a written plan and follows `plan -> implement -> adversari
 ## DSH Visual Consistency
 
 The sub-agent console and admin GUI are part of the DSH product surface. Their visual tokens, density, navigation, responsive behavior, and interaction patterns must remain aligned with `src/admin/ui.mjs`; a parallel visual language is not acceptable.
+
+## Cross-IM Control Plane Direction
+
+The planned product direction is a DSH cross-IM mobile control plane, not a notification-only fan-out. The control core must own session commands, permissions, approvals, questions, conversation, and delivery receipts; channel adapters own transport and native rendering. The staged direction and channel roles are authoritative in `docs/architecture-roadmap.md`.
+
+## Personal Mode Defaults
+
+Personal mode is the default onboarding path: one paired owner identity, `observe + approve` enabled, and `converse` opt-in. Team roles, workspace/session ACL, TTL, and audit controls are progressive disclosure. Group-chat control is disabled by default and is not a supported sensitive-action surface.
+
+## WeChat iLink Scope
+
+WeChat iLink starts as a single-account, QR-first personal channel. Internal account boundaries remain so credentials and context tokens cannot cross-contaminate, but multi-account configuration is deferred. The preferred reference is the MIT-licensed Tencent `openclaw-weixin` implementation; iLink remains an undocumented, changeable backend protocol and must not be described as a stable public API.
+
+## Optional SDK Acceptance
+
+An external SDK may be used only when its source/package license is clear, maintenance is active, security behavior is reviewable, and it can be lazy-loaded without making runtime dependencies mandatory. Unlicensed projects and `UNLICENSED` connectors are design references only, never copied or redistributed.

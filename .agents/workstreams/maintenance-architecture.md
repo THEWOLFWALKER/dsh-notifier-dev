@@ -3,8 +3,8 @@
 - Agent identity: `claude-code | ark-code-latest | Windows 11 (win32, Node v22)`
 - Agent: `maintenance-arch`
 - Branch: `codex/maintenance-architecture`
-- Status: `active`
-- Start/end: `2026-08-24 -> active`
+- Status: `done` (maintenance batches 1-6-C complete; future control-plane work is planning-only)
+- Start/end: `2026-08-24 -> 2026-08-25`
 - Scope: 七批维护计划——①管理台初始化/token 流程 ②QQ 心跳 ACK 重连 ③index.mjs 装配拆分 ④Interaction Core 统一交互状态 ⑤入站内容模型 ⑥PR #12 移植评估 ⑦验证与文档同步。只做代码维护与自动化测试，不真机、不发版、不推公共镜像。管理台仅绑 127.0.0.1、审批/动作/提问 fail-closed、不泄 token、不引运行时依赖。
 - Plan:
   1. 基线平台稳定性（batch-0）：修 Windows 主机 8 个平台性测试失败（测试维护，不动生产）
@@ -17,7 +17,7 @@
   8. 第七批：全量验证 + 文档一致性（CHANGELOG/HANDOFF/README 双语/guide/risks 版本与测试数对齐）+ neat-freak 收尾
 - Owned files: `src/admin/ui.mjs` `src/admin/api.mjs` `src/inbound/qq-gw.mjs` `src/index.mjs` `src/actions.mjs` `src/approval/router.mjs` `src/questions/router.mjs` `src/inbound/_contract.mjs` `src/interaction/ledger.mjs` `src/inbound/message.mjs` + 对应测试与文档
 - Do not touch: 其他 workstream 保留的 `.agents/workstreams/*` 现有文件；公共镜像 `THEWOLFWALKER/dsh-notifier`。
-- Validation: `npm test`（node --test test/*.test.mjs test/*.spec.mjs）= **1104 契约**（批 6-A 后 HEAD `3a67e68`；1103 pass + 1 win32 skip，基线 1012 → 1024 → 1027 → 1046 → 1052 → 1060 → 1104）；Issue #15 未提交 4 个回归测试后工作树 = **1108**（1107 pass + 1 skip）；`node scripts/verify-release.mjs`；`node scripts/gen-channel-matrix.mjs --check`；`node --check src/index.mjs`（每批至少这四项）
+- Validation: `npm test`（node --test test/*.test.mjs test/*.spec.mjs）= **1111 契约**（1110 pass + 1 win32 skip；维护批 6-C 与 SEC-2 失败送达回归完成）；`node scripts/verify-release.mjs`；`node scripts/gen-channel-matrix.mjs --check`；`node --check src/index.mjs`（每批至少这四项）
 - Adversarial review: 每批独立复核——token 单飞/401 门、重连定时器泄漏、装配拆分行为等价、交互状态机并发/首达/超时/dispose、内容模型兼容性、PR #12 越权/重复点击路径。
 - Handoff: 见 commit 记录与批次汇报；每批先测后汇报再继续；遇安全边界/状态格式/公共 API/真机门问题先停下汇报。
 - Commit record:
@@ -41,9 +41,12 @@
 - 批 4 有意不抽：各链 `latestPendingFor` 归属/兜底启发式（approval exact/onChannel/intended + liveWaiters；questions exact/onChannel/hint + hintChannels）——匹配语义差异过大，抽进核心会引入行为漂移；核心只留六个原子账本操作。未加 approval.parallel（非目标）。
 - 批 5 纪律：`parseQQImageMessage` 与 fixture 只测**不接线**——QQ 官方机器人 C2C 媒体事件真实字段形状无真机证据，qq-gw 及所有适配器均不 import；真机确认 `d.extra` 段形状后翻转启用并落 CHANGELOG 说明依据。
 - 批 6 准备：5 维 review 完成（安全红线 7/7 OK / P0×2 / P1×5 / P2×6 / 测试缺口 10），战略选「按模块重写」非 cherry-pick（批 4 Interaction Core 可复用）。审查明细登记在 `.agents/workstreams/pr12-review-batch6.md`；按用户指示本地不动代码、不提交、不推送。
-  - 批 6-B（Issue #15 QQ RESUME/ACK 回归，契约 1108，未提交）：4 个回归测试钉住 qq-gw 实现——
+- 批 6-B（Issue #15 QQ RESUME/ACK 回归，契约 1108）：4 个回归测试钉住 qq-gw 实现——
     ① ACK 连丢判死重连走 RESUME（携带原 session_id 与最后 seq）
     ② 迟到 ACK 不取消已决策的重连、也不污染新会话心跳计数
     ③ stop() 清理完整性：reconnectTimer 清除、stop 幂等、restart 正常握手
     ④ stop 期间 dispose 顺序：心跳等待 ACK 时 stop 不抛、停后无副作用
     全部 mock fetch/WebSocket，无生产代码改动；真机/协议缺口见 `docs/memory/risks.md` 第 8 项。
+- 批 6-C（questions escalation target isolation，提交 `acdafca`）：升级提醒从按渠道类型的 `notifyAll` 改为按本题实际 `pushedTo`/兜底目标逐 chat `sendText`；同渠道不同 chat 隔离、空目标 fail-closed。提交 `4b90b50` 再补 SEC-2：纯入站编号兜底仅在至少一个 `sendText` 成功后登记 `hintChannels`，失败不留下虚假授权证据；出站编号兜底进一步检查 `notifyAll.delivered`，空目标/静音/失败不登记，并新增回归测试。残余：编号证据仍是渠道级，chat 级绑定留待 Control Core/session scope 阶段；本维护批不扩大范围。
+- 独立最终审查残余（P1）：`hintChannels` 与 `latestPendingFor` 仍是渠道级，编号入口没有 chat 级证据；同一用户在同一渠道的另一 chat 可能命中裸编号。不能在本维护批凭空推导安全的 chat 绑定，已登记 `docs/memory/risks.md`，下一阶段 Control Core 必须先做 `hintTargets`/来源 chat 闸门再扩展跨 IM 控制。
+- 维护接力验收：`npm test` = 1111（1110 pass + 1 win32 skip）；`node scripts/verify-release.mjs`、`node scripts/gen-channel-matrix.mjs --check`、`node --check src/index.mjs` 均通过。运行时收尾提交 `9ae636b`，此前目标级提醒隔离为 `acdafca`、失败 hint 证据为 `4b90b50`。公共仓库未操作；私有推送由主控在文档合并后执行。
