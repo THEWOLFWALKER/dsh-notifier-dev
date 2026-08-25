@@ -10,6 +10,7 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 - 提问编号兜底证据改为逐目标 `hintTargets`（`channel + userId + chatId`）；精确 chat 才能裁决。
 - 同渠道同用户的错误 chat 会消费消息并提示回原会话，不改变提问状态；缺少 `chatId`、跨渠道、旧 `hintChannels` 行、部分/失败送达均 fail-closed。
 - `notifyAll().delivered` 只有渠道级证据，不再被推导为具体 chat 的送达，也不再将新行写入 `hintChannels` 作为授权凭据。
+- 事实校准：旧版本条目中的 `hintChannels` 仅描述历史实现；当前实现只接受 `hintTargets` 的逐目标 `(channel,userId,chatId)` 送达证据，旧行按 fail-closed 处理。
 - 新增正确/错误 chat、缺 chatId、用户隔离、部分送达、旧行、重复与僵尸 pending 回归测试。真实渠道仍需协议级验证具体 chat 送达形状。
 
 ### 维护批 6-C：提问升级提醒渠道分流（MNT-6-C，2026-08-25）

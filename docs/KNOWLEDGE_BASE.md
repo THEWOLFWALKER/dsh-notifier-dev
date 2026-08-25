@@ -4,9 +4,10 @@ This is the navigation page for humans and agents. It deliberately points to one
 
 ## Current Baseline
 
-- Canonical engineering baseline: Git commit `9ae636b` (maintenance batches 1-6-C complete — Issue #10, Issue #15, and question target/failed-hint regressions — on `codex/maintenance-architecture`); package version `0.8.6` (published, maintenance work unreleased; the next version bump happens at the release cycle).
+- Canonical engineering baseline: private branch `codex/control-core-restart` (CC-1 exact-chat test migration commit `2c39cba`; maintenance-architecture remains the prior 9ae636b snapshot); package version `0.8.6` (published, maintenance/control-contract work unreleased).
 - Canonical collaboration repository: private `dsh-notifier-dev` (GitHub owner `THEWOLFWALKER`). The public repository `https://github.com/THEWOLFWALKER/dsh-notifier` is the release/source mirror, not the day-to-day relay workspace.
 - The public repository's `main` history is unrelated to the current hardening line; do not merge or force-push it implicitly. Public synchronization is a deliberate release operation.
+- Public issue snapshot (2026-08-25): #16/#15/#14/#13/#10/#7/#6/#5/#4/#3/#2/#1 open; #11/#8 closed. PR #12 is open reference material only; PR #9 is merged in the public mirror. These statuses are not claims that the private tree fixes every open issue.
 - Runtime: Node.js ESM, Node `>=22`, no build step, no production dependencies.
 - Test contract: `1111` total tests on the maintenance-architecture line (1110 pass + 1 win32 skip; final maintenance regression included). The published v0.8.6 release retains `909` as its documented test count until a release cycle updates version and count together.
 - The attached npm archive is a release artifact. The engineering archive is the source authority.
