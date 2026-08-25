@@ -27,9 +27,10 @@ Read `src/index.mjs`, `src/event-listener.mjs`, `src/inbound/conversation.mjs`, 
 3. Normalize supported host callback shapes in one pure function: `(session,event)`, `{session,event}`, and the documented host shape only. Reject ambiguous payloads instead of guessing.
 4. Register the documented event scope/timing. If more than one host version must be supported, use an explicit version/feature check or a narrow fallback registration with deduplication; never subscribe to every event blindly.
 5. Preserve current listener semantics: `turn/end` filtering, debounce, grace, dedup, registry touch, and channel failure isolation.
-6. Add tests for registration success, registration throw, each accepted callback shape, malformed payload, duplicate delivery, and zero-event diagnostics.
-7. Run `npm test`, `node scripts/verify-release.mjs`, `node scripts/gen-channel-matrix.mjs --check`, and `node --check src/index.mjs`.
-8. Record the real-device/protocol validation gap in `docs/memory/risks.md` if no dsh host is available. Do not close Issue #16 from mocks.
+6. Treat native `ask_user_question` as a separate host provider contract. Do not replace the Web provider with a mobile provider. The desktop UI must remain available; a future mobile mirror must be optional, first-valid-wins, and timeout/failure must return control to the desktop.
+7. Add tests for registration success, registration throw, each accepted callback shape, malformed payload, duplicate delivery, zero-event diagnostics, and “remote `ask_user` does not silently claim native Web UI parity”.
+8. Run `npm test`, `node scripts/verify-release.mjs`, `node scripts/gen-channel-matrix.mjs --check`, and `node --check src/index.mjs`.
+9. Record the real-device/protocol validation gap in `docs/memory/risks.md` if no dsh host is available. Do not close Issue #16 or claim Issue #5 native parity from mocks.
 
 ## Forbidden
 
