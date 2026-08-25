@@ -25,6 +25,7 @@ Allowed receipts: `accepted`, `rejected`, `expired`, `already_handled`, `transpo
 ## Mechanical procedure
 
 1. Add one cohesive module under `src/control/` and one focused test file. Reuse existing ledger and bus; do not duplicate settlement logic.
+   Implementation note: the facade may be callback-based (`getPending`, `settle`, `onAudit`) so this pack remains transport-agnostic; do not import provider adapters or mutate existing ledger keys.
 2. Implement pure `normalizeControlEvent(input, now)`. Reject missing fields, unknown commands, invalid timestamps, expired events, and non-string identifiers. An absent chat id is never a wildcard.
 3. Implement pure `makeReceipt(status, event, reason)`. Never include token, secret, authorization header, or full message content.
 4. Implement a compatibility facade that accepts the normalized event and delegates to existing bus/ledger contracts without changing unrelated store keys.
