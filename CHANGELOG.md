@@ -5,6 +5,13 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### Control Core Step 1：提问编号回复按 chat 隔离（CC-1，2026-08-25）
+
+- 提问编号兜底证据改为逐目标 `hintTargets`（`channel + userId + chatId`）；精确 chat 才能裁决。
+- 同渠道同用户的错误 chat 会消费消息并提示回原会话，不改变提问状态；缺少 `chatId`、跨渠道、旧 `hintChannels` 行、部分/失败送达均 fail-closed。
+- `notifyAll().delivered` 只有渠道级证据，不再被推导为具体 chat 的送达，也不再将新行写入 `hintChannels` 作为授权凭据。
+- 新增正确/错误 chat、缺 chatId、用户隔离、部分送达、旧行、重复与僵尸 pending 回归测试。真实渠道仍需协议级验证具体 chat 送达形状。
+
 ### 维护批 6-C：提问升级提醒渠道分流（MNT-6-C，2026-08-25）
 
 - 修复 `questions/router.mjs` 的升级提醒遗漏渠道过滤：提醒现在复用本题首次推送实际覆盖的出站渠道，不再无条件广播到全局渠道池。
