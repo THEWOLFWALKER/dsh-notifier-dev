@@ -5,6 +5,11 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 新增：Session 控制策略与命令仲裁契约（规划批次 3，2026-08-25）
+
+- 新增 `src/control/session-arbiter.mjs`：个人模式安全默认值、精确来源绑定、策略版本/撤销/过期、固定命令优先级与一次性事件收敛。
+- 该层不接入具体 IM，不包含 QQ 按钮、提问卡片或 `approval.parallel`；真实平台验证仍未宣称完成。
+
 ### Control Core Step 1：提问编号回复按 chat 隔离（CC-1，2026-08-25）
 
 - 提问编号兜底证据改为逐目标 `hintTargets`（`channel + userId + chatId`）；精确 chat 才能裁决。

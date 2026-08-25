@@ -6,7 +6,7 @@
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
 > 2026-08-23 接力合入公共镜像 v0.8.5 发布内容（issue #11 ask_user 编号回复修复 + PR #9 飞书扫码 SDK 适配），见「当前接力交代」。
 > 上一稳定发布位 v0.8.6 = `bf03a1c`（npm `dsh-notifier@0.8.6`，公共镜像 `db42908` 已清理 node_modules/package-lock）。
-> 快照刷新：2026-08-25，维护批 1..5 + 6-A/6-B/6-C 完成；Control Core Step 1（CC-1）补齐提问编号回复的 `(channel,userId,chatId)` 隔离，测试迁移提交 `2c39cba`。Task 02 已新增纯契约 facade（`29ef031`）与 7 个 focused tests；尚未接入 session arbiter 或任何 IM。`notifyAll().delivered` 仍只有渠道级证据，不能推导具体 chat 送达；未获逐目标 `sendText` 确认的编号兜底保持 fail-closed。PR #12 仅作参考，QQ 原生按钮、提问卡片与 `approval.parallel` 均等待 CC-2/CC-3 后重写，绝不整体 cherry-pick。公共仓库 issue 快照：#16/#15/#14/#13/#10 等仍开放；私有库是唯一开发基线，公共库今晚不 push/merge/release。版本串停在已发布 v0.8.6 / 909，发版轮再统一提。
+> 快照刷新：2026-08-25，维护批 1..5 + 6-A/6-B/6-C 完成；CC-1 补齐提问编号回复的 `(channel,userId,chatId)` 隔离，Task 02 契约 facade（`29ef031`）与 Task 03 session arbiter 已完成，但两者尚未接入具体 IM。`notifyAll().delivered` 仍只有渠道级证据，不能推导具体 chat 送达；未获逐目标 `sendText` 确认的编号兜底保持 fail-closed。PR #12 仅作参考，QQ 原生按钮、提问卡片与 `approval.parallel` 均等待后续批次重写，绝不整体 cherry-pick。公共仓库 issue 快照：#16/#15/#14/#13/#10 等仍开放；私有库是唯一开发基线，公共库不 push/merge/release。版本串停在已发布 v0.8.6 / 909，发版轮再统一提。
 
 ## 方向决策（2026-08-25，规划态）
 
