@@ -5,16 +5,18 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
-### 残差测试批：提问编号兜底 chat 级证据歧义残差钉（2026-08-25）
+### Control Core 第一步：提问编号兜底 chat 级证据闸门（2026-08-25）
 
-维护批 6-C 登记的 P1 残差（见 `docs/memory/risks.md`）：提问编号兜底的证据维度只有 `(channel, userId)`——`pushedTo` 的 exact 命中与 `hintChannels` 的渠道级登记都不携带 `chatId`，而入站信封明明带 `chatId`；按钮路径有 SEC-1/AUTH-1 来源会话校验，编号路径没有。本批只加测试钉住**当前**行为（零生产代码改动），为 Control Core 收紧 chat 闸门时提供必须翻转的断言基线；另修正两处文档漂移。
+维护批 6-C 登记的 P1 残差（见 `docs/memory/risks.md`）：提问编号兜底的证据维度只有 `(channel, userId)`——`pushedTo` 的 exact 命中与 `hintChannels` 的渠道级登记都不携带 `chatId`，而入站信封明明带 `chatId`；按钮路径有 SEC-1/AUTH-1 来源会话校验，编号路径没有。上一批只钉住了旧行为基线（3 个残差钉），本批实现 Control Core 收紧：chat 级证据闸门正式落地。
 
-- **exact 路径无 chat 校验**：卡片送达 chat A 后，同一用户从同渠道另一 chat 回裸编号仍被采纳——`latestPendingFor` 只按 `(channel, userId)` 匹配，不比对信封 `chatId`。
-- **hint 证据渠道级**：编号话术经入站 `sendText` 只送到 chat A，渠道获得 hint 证据后，owner 从同渠道另一 chat 回裸编号仍命中——行内不记「哪个 chat 收到过话术」。
-- **部分送达整渠道登记**：`outcomes.some(Boolean)` 使同渠道多目标只要一个 `sendText` 成功，整个渠道获得 hint 证据——未收到话术的目标与收到的目标共享同一渠道级凭据。
-- 三例均钉住当前行为并注明翻转契约：Control Core 落地 per-target hint 证据 / `(channel, userId, chatId)` 闸门时，这些断言必须翻转为拒绝，并同步关闭 `docs/memory/risks.md` 的 P1 残差条目。
-- 文档真相修正：`docs/memory/project-state.md` 的 main 位置核正为 `37f2ec7`（破甲线已并入私有 main）；`.agents/workstreams/pr12-review-batch6.md` 从未提交入库（留在已离场的 Windows 主机本地）的事实补记到 risks.md 与 workstream。
-- 验证：全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1114** 契约（Linux 沙箱 1114 通过 0 跳过；基线 1111 + 3 新增；win32 下为 1113 通过 + 1 symlink 权限跳过）；`verify-release.mjs` / `gen-channel-matrix --check` / 全量 `node --check` 通过。
+- **hintTargets per-target 证据落账**：`questions/router.mjs` 的 `pushQuestion` 引入 `hintTargets: [{channel, chatId, userId}]` 字段——编号话术的送达证据从渠道级 `hintChannels`（observability 快照，不再参与匹配）升级为 per-target 三元组。出站覆盖渠道按「绑定目标即广播受众」推导（notifyAll 不透出 per-target 明细；出站 delivered ≠ 入站目标已见话术，该推导是软证据，安全兜底靠 CRACK-004 owner 闸）；入站 `sendText` 逐目标按单次成败记账，部分送达不再让整渠道共享证据。
+- **(channel, userId, chatId) 三元组匹配**：`latestPendingFor` 接收 chatId 参数，匹配优先级 `exact ?? hint ?? chatMismatch`——exact = 卡片实际送达本会话（当事人级最强证词，与按钮路径 SEC-1 同口径）；hint = 编号话术实际送达本会话（叠加 CRACK-004 owner 闸）；chatMismatch = 同用户有待决但本会话非送达会话 → 消费裸编号 + 回执「请到原会话操作」，问题保持待决，原会话仍可作答。
+- **增量落账（persistHints）**：单次 `sendText` 确认送达即写盘（`persistHints()`），不等 `Promise.all` 聚合——多目标并行发送时最慢目标不应拉长「话术已送达但证据未落账」的窗口。
+- **僵尸行过滤（bus.hasWaiter）**：`src/inbound/bus.mjs` 新增 `hasWaiter(key)` 查询作为存活判定的单一事实源。`latestPendingFor` 据此过滤崩溃残留的 pending 僵尸行——进程崩溃/重启/写盘失败会留下 status=pending 但 waiter 已死的僵尸行，不得消费后续编号回复或产出「已被作答」误导回执（与审批链 C2/P1-5 同族模式）。
+- **3 个 P1 残差钉翻转**：原「钉住当前行为」的 3 个测试已翻转为拒绝语义（exact 跨 chat 拒、hint per-target 收紧、部分送达整渠道证据消除）。同步关闭 `docs/memory/risks.md` 的 P1 残差条目。
+- 新增回归测试：chat 级闸门回归 6 例（多 pending 跨 chat 隔离 / 旧行无 hintTargets fail-closed / 畸形信封 chatMismatch / 僵尸行不消费 / 僵尸行不遮蔽活行 / persistHints 增量落账窗口）；升级提醒 hintTargets 不变性 1 例；bus.hasWaiter 全出口契约 1 例。
+- 已知限制（登记 `docs/memory/risks.md`）：升级提醒文案明示「无卡片渠道可回复选项编号」，但话术投递失败的目标无 hintTargets 证据——该目标依提醒回编号会被闸门拦下并静默落回对话路由。后续按目标能力差异化提醒文案时处理。
+- 验证：全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1122** 契约（Linux 沙箱 1122 通过 0 跳过）；`verify-release.mjs` / `gen-channel-matrix --check` / 全量 `node --check` 通过。
 
 ### 维护批 6-C：提问升级提醒渠道分流（MNT-6-C，2026-08-25）
 

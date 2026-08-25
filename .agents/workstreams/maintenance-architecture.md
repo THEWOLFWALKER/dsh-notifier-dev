@@ -48,5 +48,6 @@
     ④ stop 期间 dispose 顺序：心跳等待 ACK 时 stop 不抛、停后无副作用
     全部 mock fetch/WebSocket，无生产代码改动；真机/协议缺口见 `docs/memory/risks.md` 第 8 项。
 - 批 6-C（questions escalation target isolation，提交 `acdafca`）：升级提醒从按渠道类型的 `notifyAll` 改为按本题实际 `pushedTo`/兜底目标逐 chat `sendText`；同渠道不同 chat 隔离、空目标 fail-closed。提交 `4b90b50` 再补 SEC-2：纯入站编号兜底仅在至少一个 `sendText` 成功后登记 `hintChannels`，失败不留下虚假授权证据；出站编号兜底进一步检查 `notifyAll.delivered`，空目标/静音/失败不登记，并新增回归测试。残余：编号证据仍是渠道级，chat 级绑定留待 Control Core/session scope 阶段；本维护批不扩大范围。
-- 独立最终审查残余（P1）：`hintChannels` 与 `latestPendingFor` 仍是渠道级，编号入口没有 chat 级证据；同一用户在同一渠道的另一 chat 可能命中裸编号。不能在本维护批凭空推导安全的 chat 绑定，已登记 `docs/memory/risks.md`，下一阶段 Control Core 必须先做 `hintTargets`/来源 chat 闸门再扩展跨 IM 控制。
+- 独立最终审查残余（P1）：~~`hintChannels` 与 `latestPendingFor` 仍是渠道级，编号入口没有 chat 级证据~~ **已解决（Control Core 第一步，`codex/questions-chat-gate`，2026-08-25）**：`hintTargets` per-target 三元组证据 + `(channel,userId,chatId)` 匹配 + `persistHints` 增量落账 + `bus.hasWaiter` 僵尸行过滤已落地，3 个残差钉翻转为拒绝语义，契约 1122。新限制（话术投递失败目标无证据、依提醒回编号被闸门拦下）已登记 `docs/memory/risks.md`。
+- Control Core 第一步验收：`node --test test/*.test.mjs test/*.spec.mjs` = **1122/1122**（Linux 沙箱，0 fail）。**工作区未提交、未推送**——待主控收尾提交推送。后续 Control Core 步骤按目标能力差异化升级提醒文案（消除话术失败目标的闸门误拦限制）。
 - 维护接力验收：`npm test` = 1111（1110 pass + 1 win32 skip）；`node scripts/verify-release.mjs`、`node scripts/gen-channel-matrix.mjs --check`、`node --check src/index.mjs` 均通过。运行时收尾提交 `9ae636b`，此前目标级提醒隔离为 `acdafca`、失败 hint 证据为 `4b90b50`。公共仓库未操作；私有推送由主控在文档合并后执行。

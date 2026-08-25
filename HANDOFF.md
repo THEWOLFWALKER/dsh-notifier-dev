@@ -29,7 +29,8 @@
   - **审查结论**：批次 A+B+C 已过一轮非实现者独立 review（`.agents/workstreams/crack-fix-plan/REVIEW-ABC.md`），**发现 6 个 bug 全部修完、0 遗留** —— 含一个致命语法错（`identity.mjs` 多括号 → 插件 import 即崩，而交接摘要却声称全绿）、一个过度收紧引入的新缺陷（管理台清理入口被锁死）、三个恒绿摆设、一个装配缝（删掉 `index.mjs` 两处 `identity` 传参仍 1011 全绿）。全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1012/1012**，连跑 3 轮一致。
   - **真机门（合 main / 发版前必过，宪法 #8）**：引导码文件交付端到端（起真引导实例 → `cat` 码文件 → 手机 `/pair`）、越权裁决回归（owner 代决 / 非 owner 被拒）、TG 卡片消息删除后回调的真实形状、飞书长连接负载 `context.open_chat_id` 恒带性（不恒带则 C1 会误拒真实点击 —— 主要回滚触发条件）、钉钉/QQ 超上限淘汰行为、微信真实 `context_token` 长度分布、C2 真实 kill -9 重启后僵尸行与新审批并存的裁决走向。清单基线见 `~/dsh-notifier-handoff/06-retest-checklist.md`。
   - 计划与残差：批次计划在 `.agents/workstreams/crack-fix-plan/`（`PLAN.md` 总表、`PLAN-B1.md`、`PLAN-B-k4-fin.md`、`REVIEW-ABC.md`、各轮 `SHORT-*.md`）；残差逐条登记在 `~/dsh-notifier-handoff/20-techdebt.md`。
-- 下一步：真机闭环清单见 `docs/memory/risks.md`（TG 护栏边界、长连接重连可见性、其他渠道 payload 证据、BurntToast 主机、npm 验收）。当前周期不再新增功能；继续 P1-4 admin UI 审计、安全计划 A3-A6、P2 结构性债务。
+- **Control Core 第一步 — 提问编号 chat 级证据闸门（`codex/questions-chat-gate`，2026-08-25，接续 `codex/hint-scope-regression` HEAD `7146f0f`）**：解决维护批 6-C 登记的 P1 残差——编号兜底证据只有 `(channel, userId)` 维度，跨会话同用户可命中。本批落地 chat 级闸门：`hintTargets: [{channel, chatId, userId}]` per-target 证据 + `(channel, userId, chatId)` 三元组匹配（`exact ?? hint ?? chatMismatch`）+ `persistHints` 增量落账 + `bus.hasWaiter` 僵尸行过滤。3 个残差钉翻转为拒绝语义；新增 chat 级闸门回归 6 例 + 升级提醒不变性 1 例 + `hasWaiter` 全出口契约 1 例。全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1122/1122**（Linux 沙箱）。P1 残差已关闭（见 `docs/memory/risks.md`），新限制登记（话术投递失败的目标无 hintTargets 证据，依提醒回编号会被闸门拦下）。**工作区未提交、未推送**——待本批收尾提交。
+- 下一步：真机闭环清单见 `docs/memory/risks.md`（TG 护栏边界、长连接重连可见性、其他渠道 payload 证据、BurntToast 主机、npm 验收）。当前周期不再新增功能；继续 P1-4 admin UI 审计、安全计划 A3-A6、P2 结构性债务；Control Core 后续按目标能力差异化升级提醒文案（消除话术失败目标的闸门误拦限制）。
 
 ---
 

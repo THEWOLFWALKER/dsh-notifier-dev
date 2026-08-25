@@ -308,6 +308,17 @@ export function createInboundBus(options = {}) {
       return waiters.size
     },
 
+    /**
+     * 该 key 是否仍有存活 waiter（2026-08-25，questions-chat-gate）：wait/settle/abandon/
+     * 超时/dispose 任一出口后即为 false。单一事实源——链路由据此过滤崩溃残留的
+     * pending 僵尸行（行还在账本里、但 waiter 已死，不得再消费编号回复）。
+     * questions 链已接入；审批链同族残差另行登记（见 docs/memory/risks.md）。
+     */
+    hasWaiter(approvalKey) {
+      const entry = waiters.get(approvalKey)
+      return entry !== undefined && !entry.settled
+    },
+
     dispose() {
       disposed = true
       for (const [approvalKey, entry] of waiters) {

@@ -16,9 +16,11 @@
 // 账本：store 键空间 'aq:'（与审批 'ap:' 隔离），行 = {
 //   question, options: [label], multiSelect, status: 'pending'|'resolved',
 //   pushedTo: [{channel, chatId, userId, messageId, kind:'aq'}], createdAt,
-//   hintChannels?: string[]（SEC-2：广播过编号话术的渠道，编号降级的 intended 兜底凭据，
-//     缺省/旧行 = 不兜底从严）, decision?: 'answered'|'timeout'|'error',
-//   answers?: [label]（重复点击回显用）
+//   hintTargets?: [{channel, chatId, userId}]（2026-08-25 chat 级闸门：编号话术实际
+//     送达的 (channel,chatId,userId) 三元组，latestPendingFor 的 hint/chatMismatch
+//     据此裁决；缺省/旧行 = 无 chat 级证据，fail-closed 从严）,
+//   hintChannels?: string[]（渠道级 observability 快照，不再参与匹配——仅记账/排障用）,
+//   decision?: 'answered'|'timeout'|'error', answers?: [label]（重复点击回显用）
 // }
 // 军规：任何异常只丢当次提问（工具返回明确失败对象），绝不弄崩宿主。
 
@@ -78,46 +80,60 @@ export function createQuestionBridge(deps) {
   })
 
   // Interaction Core：aq: 行统一状态机（pending→resolved，decision 终态裁决）。
-  // latestPendingFor 归属/兜底启发式（exact/onChannel/hint）是提问特有语义，保留在
+  // latestPendingFor 归属/兜底启发式（exact/hint/chatMismatch）是提问特有语义，保留在
   // 链内——核心只提供原子账本操作（见 interaction/ledger.mjs）。
   const core = createInteractionLedger({ keyPrefix: KEY_PREFIX, store })
   /**
-   * 最近一条待决提问（编号回复降级）。匹配优先级：
-    *  1) exact 推送过该 (channel,userId)；
-    *  2) onChannel 该 channel 推送过且 userId 一致；
-    *  3) hint 该 channel 收到过本问题的编号话术（=aq 行 hintChannels 含该渠道）——
-    *     替代旧 `any` 无条件兜底（SEC-2 / C-2 / BUG-11：关死「既没送卡、又没广播编号
-    *     话术的渠道裸数字越权仲裁」的面）。无卡片渠道的合法编号作答由 hint 接住。
-   * CRACK-004：返回值带 evidence（exact|onChannel|hint）——handleNumberedReply 的
-   * 归属闸据此放行当事人级命中、对 hint 要求 owner。questions 的 exact 与 onChannel
-   * 都是同 user 命中（SEC-5/6），只透归属证词等级，不改匹配语义。
+   * 最近一条待决提问（编号回复降级，2026-08-25 chat 级闸门）。匹配优先级：
+   *   1) exact pushedTo 中有 (channel,userId,chatId) 三元组命中；
+   *   2) hint hintTargets 中有三元组命中（编号话术实际送达的会话）；
+   *   3) chatMismatch 同 (channel,userId) 有待决但 chatId 不命中任何证据
+   *      （含信封缺 chatId 的畸形场景）——消费但不代答，回执「请到原会话操作」。
+   *   无任何三元组证据（旧行只有 hintChannels、pushedTo/hintTargets 也不含该 user）
+   *   → 不命中，fail-closed 从严（裸编号落回对话路由）。
+   * 僵尸行过滤：行还在账本但 waiter 已死（进程崩溃/重启残留）不得消费编号回复——
+   *   bus.hasWaiter 是单一事实源，链内不再维护 liveWaiters 并行集合。
+   * CRACK-004：返回值带 evidence（exact|hint|chatMismatch）——handleNumberedReply
+   * 的归属闸据此放行 exact（当事人级）、对 hint 要求 owner、对 chatMismatch 直接拒绝。
    */
-  const latestPendingFor = (channel, userId) => {
+  const latestPendingFor = (channel, userId, chatId) => {
     let exact = null
-    let onChannel = null
     let hint = null
+    let chatMismatch = null
+    // sameChat：三元组全中（信封缺 chatId 时 String(chatId)='undefined'，恒不中）。
+    const sameChat = (target) => target.channel === channel
+      && String(target.userId) === String(userId)
+      && String(target.chatId) === String(chatId)
+    // sameUser：同 (channel,userId)——有 per-target 证据但 chatId 不中即 chatMismatch。
+    const sameUser = (target) => target.channel === channel
+      && String(target.userId) === String(userId)
     for (const key of core.scanKeys()) {
       const row = core.get(key)
-      if (!core.isPending(row)) continue
+      // 僵尸行过滤：pending 但无存活 waiter 的行（崩溃残留）不参与匹配——
+      // 行还在账本里、waiter 已死，不得再消费编号回复（单一事实源 = bus.hasWaiter）。
+      if (!core.isPending(row) || !bus.hasWaiter(key)) continue
       const pushed = Array.isArray(row.pushedTo) ? row.pushedTo : []
-      if (pushed.some((target) => target.channel === channel)) {
-        if (pushed.some((target) => target.channel === channel && String(target.userId) === String(userId))) {
-          if (exact === null || row.createdAt > exact.row.createdAt) exact = { key, row, evidence: 'exact' }
-          if (onChannel === null || row.createdAt > onChannel.row.createdAt) onChannel = { key, row, evidence: 'onChannel' }
-        }
+      const targets = Array.isArray(row.hintTargets) ? row.hintTargets : []
+      const exactHit = pushed.some(sameChat)
+      const hintHit = targets.some(sameChat)
+      const hasStake = pushed.some(sameUser) || targets.some(sameUser)
+      if (exactHit) {
+        if (exact === null || row.createdAt > exact.row.createdAt) exact = { key, row, evidence: 'exact' }
       }
-      if (hint === null && isHintedChannel(row, channel)) hint = { key, row, evidence: 'hint' }
+      if (hintHit) {
+        if (hint === null || row.createdAt > hint.row.createdAt) hint = { key, row, evidence: 'hint' }
+      }
+      // chatMismatch：同 (channel,userId) 有 per-target 证据但 chatId 不命中任何三元组
+      // （含信封缺 chatId 的畸形场景——sameChat 恒 false）。无 per-target 证据的旧行
+      // （pushedTo/hintTargets 都不含该 user）不构成 chatMismatch，fail-closed 跳过。
+      if (!exactHit && !hintHit && hasStake) {
+        if (chatMismatch === null || row.createdAt > chatMismatch.row.createdAt) chatMismatch = { key, row, evidence: 'chatMismatch' }
+      }
     }
-    return exact ?? onChannel ?? hint
+    return exact ?? hint ?? chatMismatch
   }
   // 核心账本 + 提问专用归属启发式合成同一 ledger 面（其余调用点零改动）。
   const ledger = { ...core, latestPendingFor }
-
-  /** SEC-2：该渠道是否被本问题「广播过编号话术」（=aq 行 hintChannels）。无该字段的旧行不兜底（从严，fail-closed）。 */
-  function isHintedChannel(row, channel) {
-    if (Array.isArray(row.hintChannels)) return row.hintChannels.includes(channel)
-    return false
-  }
 
   /** 交互通道列表（归一 + 防御；getter 失败按空处理）。 */
   function interactiveEntries() {
@@ -152,6 +168,17 @@ export function createQuestionBridge(deps) {
       try {
         const row = ledger.get(qKey)
         if (row !== undefined) store.set(qKey, { ...row, pushedTo: [...pushedTo] })
+      } catch { /* 增量落账失败不致命，末尾整体落账兜底 */ }
+    }
+    // 2026-08-25 chat 级闸门：hintTargets 记录编号话术实际送达的 (channel,chatId,userId)
+    // 三元组，替代旧的渠道级 hintedChannels。增量落账（persistHints）确保多目标并行
+    // 发送时，先送达的目标证据即时写盘——崩溃窗口不拉长「话术已送达但证据未落账」
+    // 的暴露面（对抗审查 P1-1/G3）。末尾 askQuestions 整体落账兜底。
+    const hintTargets = []
+    const persistHints = () => {
+      try {
+        const row = ledger.get(qKey)
+        if (row !== undefined) store.set(qKey, { ...row, hintTargets: [...hintTargets] })
       } catch { /* 增量落账失败不致命，末尾整体落账兜底 */ }
     }
     for (const inbound of interactiveEntries()) {
@@ -217,10 +244,8 @@ export function createQuestionBridge(deps) {
     // 避免同号双发。只加目标用户已绑定的通道、话术确实送达才入 hintChannels——
     // 保持 SEC-2 fail-closed（没收到话术的渠道/用户裸编号仍拒绝）。
     const hintText = `${title}\n${content}\n\n${numberedHint(options, isMulti)}`
-    const hintedChannels = []
     for (const entry of hintedInbound) {
       const coveredByOutbound = isCoveredByOutbound(entry.channel, deliveredTextTypes)
-      let hintDelivered = coveredByOutbound
       const hintSends = []
       for (const target of entry.targets) {
         const targetKey = `${entry.channel}\u0000${target.chatId}\u0000${target.userId}`
@@ -228,23 +253,43 @@ export function createQuestionBridge(deps) {
           escalationTargetKeys.add(targetKey)
           escalationTargets.push({ inbound: entry.inbound, target })
         }
-        if (!coveredByOutbound) {
-          hintSends.push(entry.inbound.sendText(target.chatId, hintText).then((ok) => ok === true).catch(() => false))
+        if (coveredByOutbound) {
+          // 出站广播已覆盖该渠道（同名或别名对，如 qq-bot↔qq）——话术视同已送达该
+          // 目标，记 per-target 证据但不重发（避免同号双发，issue #11）。
+          hintTargets.push({ channel: entry.channel, chatId: String(target.chatId), userId: String(target.userId) })
+        } else {
+          // 纯入站通道（如 wechat iLink）或出站未覆盖：逐目标 sendText，成功才记证据
+          // （SEC-2 fail-closed：没收到话术的人凭裸编号不得命中）。增量落账在每条
+          // sendText resolve 后立即触发——先送达的目标证据即时写盘（persistHints）。
+          hintSends.push({
+            chatId: target.chatId,
+            userId: target.userId,
+            promise: entry.inbound.sendText(target.chatId, hintText).then((ok) => ok === true).catch(() => false),
+          })
         }
       }
-      if (!coveredByOutbound) {
-        const outcomes = await Promise.all(hintSends)
-        hintDelivered = outcomes.some(Boolean)
+      if (coveredByOutbound) {
+        if (hintTargets.length > 0) persistHints()
+      } else {
+        // 增量落账：每条 sendText 成功即 push hintTargets + persistHints——
+        // 最慢目标不应拉长「话术已送达但证据未落账」的崩溃窗口。
+        await Promise.all(hintSends.map(async (item) => {
+          if (await item.promise) {
+            hintTargets.push({ channel: entry.channel, chatId: String(item.chatId), userId: String(item.userId) })
+            persistHints()
+          }
+        }))
       }
-      // 只有出站广播覆盖，或至少一个逐目标 sendText 成功时，才记录 hint 证据。
-      // 发送失败不应让一个从未收到题目的人凭裸编号命中兜底路径。
-      if (hintDelivered) hintedChannels.push(entry.channel)
     }
-    // SEC-2：把编号话术覆盖过的渠道（出站 deliveredTextTypes + 实际 sendText 成功的
-    // 入站 hintedChannels）返回，供 askQuestions 落账为 aq 行的 hintChannels。
-    // 纯入站通道只有在至少一个目标确认 sendText 成功后才记账；失败不留下可被
-    // 裸编号命中的虚假证据。当前字段仍是渠道级，chat 级证据留待 Control Core。
-    return { pushedTo, hintChannels: [...new Set([...deliveredTextTypes, ...hintedChannels])], escalationTargets }
+    // hintChannels 降为渠道级 observability 快照：出站 deliveredTextTypes +
+    // hintTargets 涉及的渠道去重。不再参与 latestPendingFor 匹配——chat 级证据
+    // 以 hintTargets 三元组为准（渠道级 hintChannels 仅记账/排障用）。
+    return {
+      pushedTo,
+      hintChannels: [...new Set([...deliveredTextTypes, ...hintTargets.map((t) => t.channel)])],
+      hintTargets,
+      escalationTargets,
+    }
   }
 
   /** 把送达过的卡片全部改成终态（超时/已答；editTarget 按 pushedTo 行的 kind 选卡片形态）。 */
@@ -331,7 +376,7 @@ export function createQuestionBridge(deps) {
     if (!/^\d{1,2}([,，]\d{1,2})*$/.test(text)) return false
     const nums = text.split(/[,，]/).map(Number)
     if (nums.length === 0) return false
-    const pending = ledger.latestPendingFor(envelope.channel, envelope.userId)
+    const pending = ledger.latestPendingFor(envelope.channel, envelope.userId, envelope.chatId)
     if (pending === null) return false
     const row = pending.row
     const max = row.options.length
@@ -339,10 +384,18 @@ export function createQuestionBridge(deps) {
       const inbound = interactiveEntries().find((entry) => entry.channel === envelope.channel)
       if (inbound !== undefined) void inbound.sendText(envelope.chatId, message)
     }
-    // CRACK-004 归属闸：exact/onChannel 已是当事人级命中（SEC-5/6 同 user 校验），直接放行；
+    // chat 级闸门（2026-08-25）：chatMismatch = 同 (channel,userId) 有证据但 chatId
+    // 不命中（含信封缺 chatId 的畸形场景）。消费但不代答，回执「请到原会话操作」，
+    // 问题保持待决——原会话仍可正常作答（与按钮路径 SEC-1 来源会话校验同口径）。
+    if (pending.evidence === 'chatMismatch') {
+      warn(`提问编号跨会话拒绝 ${pending.key}（evidence=chatMismatch，来自 chat ${envelope.chatId ?? '(none)'}）`)
+      sendFeedback('请到原会话操作')
+      return true
+    }
+    // CRACK-004 归属闸：exact 已是当事人级命中（SEC-5/6 同 user+chat 校验），直接放行；
     // hint 属广播兜底——仅该渠道绑定的 owner 可代答。identity 缺失/异常一律 fail-closed。
     // 拒绝语义：消费裸编号（不进对话路由）+ 回执提示，问题保持待决，原提问者仍可作答。
-    const allowed = pending.evidence === 'exact' || pending.evidence === 'onChannel' || isAuthorizedDeciderQ(identity, envelope.channel, envelope.userId)
+    const allowed = pending.evidence === 'exact' || isAuthorizedDeciderQ(identity, envelope.channel, envelope.userId)
     if (!allowed) {
       warn(`提问编号越权拒绝 ${pending.key}（evidence=${pending.evidence}，user ${envelope.userId} 非 owner）`)
       sendFeedback('此提问不是你作答的（无权回答）')
@@ -431,9 +484,9 @@ export function createQuestionBridge(deps) {
           onAbandon: () => { try { ledger.terminate(qKey) } catch { } },
           allowChats,
         })
-        const { pushedTo, hintChannels, escalationTargets } = await pushQuestion(qKey, token, question, allowChats)
+        const { pushedTo, hintChannels, hintTargets, escalationTargets } = await pushQuestion(qKey, token, question, allowChats)
         const row = ledger.get(qKey)
-        if (row !== undefined) store.set(qKey, { ...row, pushedTo, hintChannels })
+        if (row !== undefined) store.set(qKey, { ...row, pushedTo, hintChannels, hintTargets })
         const startedAt = Date.now()
         escalation.start(qKey, (_key, stage) => {
           const text = `提问仍在等待作答：${String(question.question ?? '').slice(0, 40)}\n${stage.note ?? '仍在等待作答'}（已等待 ${Math.round((Date.now() - startedAt) / 1000)}s）。请点击选项卡片按钮作答；无卡片渠道可回复选项编号。`

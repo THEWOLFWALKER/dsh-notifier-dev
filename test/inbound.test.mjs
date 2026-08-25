@@ -540,6 +540,34 @@ test('bus：wait 超时 → resolve(null)（静默永不批准）', async () => 
   assert.equal(bus.pendingCount(), 0)
 })
 
+test('bus：hasWaiter 存活判定——wait 注册即真，settle/超时/abandon/dispose 任一出口即假', async () => {
+  // questions-chat-gate（2026-08-25）契约：链路由用它过滤崩溃残留的 pending 僵尸行，
+  // 必须与 waiters 的真实生灭严格一致（任何出口漏翻都会让僵尸行复活或误杀活行）。
+  const vault = createTokenVault({ secret: 'k' })
+  const bus = createInboundBus({ allowUsers: ['42'], vault })
+  assert.equal(bus.hasWaiter('ap:hw:1'), false, '未注册 → 假')
+  const waiting = bus.wait('ap:hw:1', 5000)
+  assert.equal(bus.hasWaiter('ap:hw:1'), true, 'wait 注册 → 真')
+  // 重复 wait 同 key：返回既有 promise，不改变存活语义
+  bus.wait('ap:hw:1', 5000)
+  assert.equal(bus.hasWaiter('ap:hw:1'), true)
+  bus.settle('ap:hw:1', 'allowed-once', 'telegram:reply', '42')
+  assert.equal(bus.hasWaiter('ap:hw:1'), false, 'settle 后 → 假')
+  assert.deepEqual(await waiting, { decision: 'allowed-once', via: 'telegram:reply', userId: '42' })
+
+  const timedOut = bus.wait('ap:hw:2', 30)
+  await timedOut
+  assert.equal(bus.hasWaiter('ap:hw:2'), false, '超时出口 → 假')
+
+  bus.wait('ap:hw:3', 5000)
+  assert.equal(bus.abandon('ap:hw:3'), true)
+  assert.equal(bus.hasWaiter('ap:hw:3'), false, 'abandon 出口 → 假')
+
+  bus.wait('ap:hw:4', 5000)
+  bus.dispose()
+  assert.equal(bus.hasWaiter('ap:hw:4'), false, 'dispose 出口 → 假')
+})
+
 test('bus：abandonByAgent 只收归属该 agent 的等待者', async () => {
   const bus = createInboundBus({ allowUsers: ['42'] })
   const first = bus.wait('ap:a:1', 5000, { agentId: 'agent-1' })
