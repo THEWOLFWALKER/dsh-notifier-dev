@@ -4,6 +4,7 @@ These taskpacks are execution instructions, not shipped features. Runtime source
 
 ## Order
 
+0. `00-host-event-compat.md` — diagnose and fix host event subscription compatibility (Issue #16).
 1. `00-cc1-test-migration.md` — finish exact-chat question test migration.
 2. `01-release-facts-cleanup.md` — reconcile issues, PR references, changelog and handoff facts.
 3. `02-control-contract.md` — add the control-plane contract and compatibility facade only.
