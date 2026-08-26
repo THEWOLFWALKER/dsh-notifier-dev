@@ -255,6 +255,7 @@ export function createQqInbound(options = {}) {
         // 平台 4xx 拒掉——mock fetch 不校验被动回复权限，单测测不出；带 msg_id 走被动回复）
         const envelope = {
           channel: 'qq', accountId: String(config?.appId ?? ''), userId, chatId: userId, messageId,
+          chatType: 'private',
           text: text || '[图片消息]',
           ...(image === null ? {} : { image: image.image, ...(text === '' ? { kind: 'image' } : {}) }),
         }
@@ -274,7 +275,7 @@ export function createQqInbound(options = {}) {
         if (messageId === '' || userId === '' || chatId === '' || text === '') return
         setBounded(targetKinds, chatId, 'group', CHAT_STATE_MAX, onEvict)
         // v0.7：群聊拒绝回执发回群（含「请私聊发送 /pair」引导）
-        const result = bus.accept({ channel: 'qq', accountId: String(config?.appId ?? ''), userId, chatId, messageId, text })
+        const result = bus.accept({ channel: 'qq', accountId: String(config?.appId ?? ''), userId, chatId, messageId, chatType: 'group', text })
         if (result?.reply !== undefined) {
           postMessage(chatId, String(result.reply), messageId).catch((error) => {
             warn(`回执发送失败: ${error instanceof Error ? error.message : String(error)}`) // 回执失败不致命
@@ -291,16 +292,19 @@ export function createQqInbound(options = {}) {
         const interactionId = String(d?.id ?? '')
         const buttonData = String(d?.data?.resolved?.button_data ?? '')
         const userId = String(d?.group_member_openid ?? d?.user_openid ?? '')
-        const chatId = String(d?.group_openid ?? d?.user_openid ?? '')
+        const groupOpenId = String(d?.group_openid ?? '')
+        const userOpenId = String(d?.user_openid ?? '')
+        const chatId = String(groupOpenId || userOpenId)
         if (interactionId === '' || userId === '' || chatId === '') return
         void ackInteraction(interactionId).catch((error) => {
           warn(`互动 ACK 失败: ${error instanceof Error ? error.message : String(error)}`)
         })
         setBounded(targetKinds, chatId, chatId === userId ? 'user' : 'group', CHAT_STATE_MAX, onEvict)
+        const chatType = groupOpenId !== '' ? 'group' : 'private'
         const parsed = parseApprovalAction(buttonData)
         const question = parseQuestionAction(buttonData)
         if (question !== null) {
-          const result = bus.accept({ channel: 'qq', accountId: String(config?.appId ?? ''), userId, chatId, messageId: interactionId,
+          const result = bus.accept({ channel: 'qq', accountId: String(config?.appId ?? ''), userId, chatId, chatType, messageId: interactionId,
             text: `[提问按钮:${question.optIdx}] ${question.qKey}`,
             questionAction: question })
           if (result?.reply !== undefined) postMessage(chatId, String(result.reply), interactionId).catch(() => {})
@@ -312,6 +316,7 @@ export function createQqInbound(options = {}) {
           accountId: String(config?.appId ?? ''),
           userId,
           chatId,
+          chatType,
           messageId: interactionId,
           text: `[审批按钮:${parsed.decision}] ${parsed.approvalKey}`,
           approvalAction: { decision: parsed.decision, approvalKey: parsed.approvalKey, token: parsed.token },

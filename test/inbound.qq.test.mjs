@@ -485,7 +485,7 @@ test('INVALID_SESSION（op9）：丢弃 session，重连走全新 IDENTIFY', asy
 
 // ---------------------------------------------------------------- 事件入站
 
-test('C2C_MESSAGE_CREATE：单聊文本 → bus envelope（chatId=userId）', async () => {
+test('C2C_MESSAGE_CREATE：单聊文本 → bus envelope（chatId=userId，chatType=private）', async () => {
   const rig = makeRig()
   const accepted = []
   rig.bus.onMessage((envelope) => accepted.push(envelope))
@@ -495,6 +495,7 @@ test('C2C_MESSAGE_CREATE：单聊文本 → bus envelope（chatId=userId）', as
   assert.equal(accepted[0].channel, 'qq')
   assert.equal(accepted[0].userId, 'u_open')
   assert.equal(accepted[0].chatId, 'u_open')
+  assert.equal(accepted[0].chatType, 'private')
   assert.equal(accepted[0].messageId, 'evt_1')
   assert.equal(accepted[0].text, '跑一下测试')
   await rig.inbound.stop()
@@ -544,7 +545,7 @@ test('Issue #14：QQ malformed/missing URL 静默拒绝，图片重放和非白�
   await rig.inbound.stop()
 })
 
-test('GROUP_AT_MESSAGE_CREATE：群 @ 消息剥离提及占位；chatId=group_openid', async () => {
+test('GROUP_AT_MESSAGE_CREATE：群 @ 消息剥离提及占位；chatId=group_openid，chatType=group', async () => {
   const rig = makeRig()
   const accepted = []
   rig.bus.onMessage((envelope) => accepted.push(envelope))
@@ -557,6 +558,7 @@ test('GROUP_AT_MESSAGE_CREATE：群 @ 消息剥离提及占位；chatId=group_op
   assert.equal(accepted[0].channel, 'qq')
   assert.equal(accepted[0].userId, 'u_open')
   assert.equal(accepted[0].chatId, 'g_open')
+  assert.equal(accepted[0].chatType, 'group')
   assert.equal(accepted[0].text, '帮我跑测试')
   await rig.inbound.stop()
 })
@@ -576,7 +578,26 @@ test('INTERACTION_CREATE：QQ 按钮回调保留显式 approvalAction/questionAc
   assert.equal(accepted.length, 1)
   assert.equal(accepted[0].accountId, 'APP_ID')
   assert.equal(accepted[0].chatId, 'u_open')
+  assert.equal(accepted[0].chatType, 'private')
   assert.deepEqual(accepted[0].approvalAction, { decision: 'allowed-once', approvalKey: 'ap:demo:1', token: 'tok' })
+  await rig.inbound.stop()
+})
+
+test('INTERACTION_CREATE：群按钮回调明确标记 group，避免进入控制路径', async () => {
+  const rig = makeRig()
+  const accepted = []
+  rig.bus.onMessage((envelope) => { accepted.push(envelope); return true })
+  const ws = await driveReady(rig)
+  ws.serverSend({
+    op: 0, t: 'INTERACTION_CREATE', s: 6,
+    d: {
+      id: 'interaction_group', type: 11, group_openid: 'g_open', group_member_openid: 'u_open',
+      data: { resolved: { button_data: 'ap:allowed-once:ap:demo:2:tok' } },
+    },
+  })
+  assert.equal(accepted.length, 1)
+  assert.equal(accepted[0].chatType, 'group')
+  assert.equal(accepted[0].chatId, 'g_open')
   await rig.inbound.stop()
 })
 

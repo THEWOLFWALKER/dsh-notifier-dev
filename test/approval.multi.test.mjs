@@ -139,12 +139,12 @@ test('Control Core：QQ 按钮回调统一裁决；错误 account/chat、群聊�
   await new Promise((resolve) => setTimeout(resolve, 30))
   const card = qq.state.cards[0]
   const action = buildApprovalAction('allowed-once', card.approvalKey, card.token)
-  const accepted = rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', userId: 'u1', chatId: 'qq-chat-01', messageId: 'qq-click-1', text: `[审批按钮:allowed-once] ${card.approvalKey}`, approvalAction: parseApprovalAction(action) })
+  const accepted = rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', userId: 'u1', chatId: 'qq-chat-01', chatType: 'private', messageId: 'qq-click-1', text: `[审批按钮:allowed-once] ${card.approvalKey}`, approvalAction: parseApprovalAction(action) })
   assert.equal(accepted.ok, true)
   assert.equal(await outcome, 'allowed-once')
 
   // Same explicit callback again is a replay: the interaction ledger is already settled.
-  const replay = rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', userId: 'u1', chatId: 'qq-chat-01', messageId: 'qq-click-2', text: 'replay', approvalAction: parseApprovalAction(action) })
+  const replay = rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', userId: 'u1', chatId: 'qq-chat-01', chatType: 'private', messageId: 'qq-click-2', text: 'replay', approvalAction: parseApprovalAction(action) })
   assert.equal(replay.ok, true)
   assert.match(qq.state.texts.at(-1).text, /已处理|失效/)
 
@@ -152,14 +152,14 @@ test('Control Core：QQ 按钮回调统一裁决；错误 account/chat、群聊�
   const second = rig.handle({ callId: 'call-2', toolName: 'bash-2' })
   await new Promise((resolve) => setTimeout(resolve, 30))
   const card2 = qq.state.cards.at(-1)
-  const wrongAccount = rig.bus.accept({ channel: 'qq', accountId: 'OTHER_APP', userId: 'u1', chatId: 'qq-chat-01', messageId: 'qq-wrong-account', text: 'x', approvalAction: parseApprovalAction(buildApprovalAction('allowed-once', card2.approvalKey, card2.token)) })
+  const wrongAccount = rig.bus.accept({ channel: 'qq', accountId: 'OTHER_APP', userId: 'u1', chatId: 'qq-chat-01', chatType: 'private', messageId: 'qq-wrong-account', text: 'x', approvalAction: parseApprovalAction(buildApprovalAction('allowed-once', card2.approvalKey, card2.token)) })
   assert.equal(wrongAccount.ok, true)
   assert.match(qq.state.texts.at(-1).text, /处理|失效|接收人/)
   assert.equal(rig.store.get(card2.approvalKey).status, 'pending')
-  const wrongChat = rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', userId: 'u1', chatId: 'qq-chat-02', messageId: 'qq-wrong-chat', text: 'x', approvalAction: parseApprovalAction(buildApprovalAction('allowed-once', card2.approvalKey, card2.token)) })
+  const wrongChat = rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', userId: 'u1', chatId: 'qq-chat-02', chatType: 'private', messageId: 'qq-wrong-chat', text: 'x', approvalAction: parseApprovalAction(buildApprovalAction('allowed-once', card2.approvalKey, card2.token)) })
   assert.equal(wrongChat.ok, true)
   assert.equal(rig.store.get(card2.approvalKey).status, 'pending')
-  const wrongUser = rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', userId: 'u2', chatId: 'qq-chat-01', messageId: 'qq-wrong-user', text: 'x', approvalAction: parseApprovalAction(buildApprovalAction('allowed-once', card2.approvalKey, card2.token)) })
+  const wrongUser = rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', userId: 'u2', chatId: 'qq-chat-01', chatType: 'private', messageId: 'qq-wrong-user', text: 'x', approvalAction: parseApprovalAction(buildApprovalAction('allowed-once', card2.approvalKey, card2.token)) })
   assert.equal(wrongUser.ok, true)
   assert.equal(rig.store.get(card2.approvalKey).status, 'pending')
   const group = rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', userId: 'u1', chatId: 'qq-chat-01', chatType: 'group', messageId: 'qq-group', text: 'x', approvalAction: parseApprovalAction(buildApprovalAction('allowed-once', card2.approvalKey, card2.token)) })

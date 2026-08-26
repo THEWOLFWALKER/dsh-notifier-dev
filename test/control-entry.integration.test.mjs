@@ -80,6 +80,35 @@ test('personal default keeps converse disabled while private stop remains availa
   assert.equal(calls, 1)
 })
 
+test('QQ group and unknown-source controls fail closed for every command, while legacy C2C remains private', () => {
+  const control = createControlEntry({
+    policy: { mode: 'team', capabilities: { converse: true, groupChatControl: true } },
+    now: () => 150,
+  })
+  const pendingRow = pending('qq', 'g-open', { accountId: 'QQ_APP', userId: 'u1' })
+  const calls = []
+  const base = {
+    channel: 'qq', accountId: 'QQ_APP', userId: 'u1', chatId: 'g-open', sessionId: 'session-1', policyVersion: '1',
+    pending: pendingRow, settle: () => { calls.push('settled'); return true },
+  }
+  for (const command of ['stop', 'approval', 'question-answer', 'steer', 'ordinary-message']) {
+    const result = control.handle({ ...base, command, eventId: `group-${command}`, chatType: 'group' })
+    assert.equal(result.status, 'rejected')
+    assert.equal(result.reason, 'group_chat_disabled')
+  }
+  const unknown = control.handle({ ...base, command: 'stop', eventId: 'unknown', chatType: undefined })
+  assert.equal(unknown.status, 'rejected')
+  assert.equal(unknown.reason, 'source_chat_type_unknown')
+  assert.equal(calls.length, 0)
+
+  const legacyC2c = control.handle({
+    ...base, command: 'stop', eventId: 'legacy-c2c', userId: 'u1', chatId: 'u1', chatType: undefined,
+    pending: pending('qq', 'u1', { accountId: 'QQ_APP', userId: 'u1' }),
+  })
+  assert.equal(legacyC2c.status, 'accepted')
+  assert.equal(calls.length, 1)
+})
+
 test('action callbacks from Telegram and Feishu settle through the shared entry', () => {
   const rows = new Map()
   const store = {

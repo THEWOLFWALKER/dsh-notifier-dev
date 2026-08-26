@@ -50,9 +50,24 @@ function bound(value) {
   return text(value)
 }
 
+/** Classify provider-neutral chat scope, keeping QQ legacy compatibility narrow. */
+export function chatScopeOf(event) {
+  const type = String(event?.chatType ?? '').trim().toLowerCase()
+  if (String(event?.channel ?? '').trim().toLowerCase() === 'qq') {
+    if (type === 'group' || type === 'supergroup' || type === '2' || type === 'chat') return 'group'
+    if (type === 'private' || type === 'p2p' || type === '1') return 'private'
+    // Pre-chatType C2C envelopes are safe to retain only when the provider
+    // shape itself proves a one-to-one user/chat binding. A group_openid
+    // cannot pass this compatibility path because it differs from userId.
+    if (type === '' && bound(event?.chatId) !== null && bound(event?.userId) !== null && bound(event.chatId) === bound(event.userId)) return 'private'
+    return 'unknown'
+  }
+  if (type === 'group' || type === 'supergroup' || type === '2' || type === 'chat') return 'group'
+  return 'private'
+}
+
 function isGroupChat(event) {
-  const type = String(event?.chatType ?? '').toLowerCase()
-  if (type === 'group' || type === 'supergroup' || type === '2' || type === 'chat') return true
+  if (chatScopeOf(event) === 'group') return true
   const chatId = String(event?.chatId ?? '')
   // Provider-neutral shape guards: these are only a deny-side hint. A provider
   // with an unknown shape remains subject to its explicit chatType metadata.
@@ -68,7 +83,16 @@ export function canAcceptCommand(policy, event, now = Date.now()) {
     if (bound(policy[key]) !== event[key]) return { ok: false, reason: `source_mismatch_${key}` }
   }
   if (!COMMANDS.includes(event.command)) return { ok: false, reason: 'unknown_command' }
+  const chatScope = chatScopeOf(event)
+  if (String(event.channel ?? '').toLowerCase() === 'qq' && chatScope === 'unknown') {
+    return { ok: false, reason: 'source_chat_type_unknown' }
+  }
   const caps = policy.capabilities ?? {}
+  // QQ group control is intentionally never enabled by policy. Group
+  // notifications remain valid, while callbacks/text are receipt-only.
+  if (String(event.channel ?? '').toLowerCase() === 'qq' && chatScope === 'group') {
+    return { ok: false, reason: 'group_chat_disabled' }
+  }
   if (isGroupChat(event) && caps.groupChatControl !== true) return { ok: false, reason: 'group_chat_disabled' }
   if (event.command === 'stop' && caps.stop !== true) return { ok: false, reason: 'stop_disabled' }
   if (event.command === 'approval' && caps.approve !== true) return { ok: false, reason: 'approval_disabled' }

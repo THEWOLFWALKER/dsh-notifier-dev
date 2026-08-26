@@ -15,6 +15,7 @@
 import { randomUUID } from 'node:crypto'
 import { workspaceOf } from '../routing/session-registry.mjs'
 import { CHANNEL_TYPES } from '../config.mjs'
+import { chatScopeOf } from '../control/session-arbiter.mjs'
 
 const DEFAULT_MERGE_WINDOW_MS = 1500
 const SUMMARY_MAX_CHARS = 120
@@ -522,6 +523,14 @@ export function registerConversationRouter(deps) {
     const command = trimmed === '/stop' || trimmed.startsWith('/stop ') ? 'stop'
       : (trimmed.startsWith(steerPrefix) ? 'steer' : (trimmed.startsWith('/') ? null : 'ordinary-message'))
     if (control === null || command === null) return routeUnsafe(envelope, text)
+    // QQ group/ambiguous envelopes must not fall through to the legacy route
+    // when no session is resolved; consume with a receipt instead.
+    if (String(envelope.channel ?? '').toLowerCase() === 'qq' && chatScopeOf(envelope) !== 'private') {
+      reply(envelope.channel, envelope.chatId, chatScopeOf(envelope) === 'group'
+        ? '群聊不允许远程控制，请回原私聊会话操作'
+        : '远程控制来源无法确认，请回原私聊会话操作')
+      return
+    }
     const target = resolveTarget(envelope)
     if (target.sessionId === null) return routeUnsafe(envelope, text)
     const receipt = control.handle({
