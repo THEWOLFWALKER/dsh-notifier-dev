@@ -458,3 +458,28 @@ test('onboarding：旧 overview（无 members 字段）时 UI 不崩，按 0 成
   assert.equal(rig.els.get('#statMembers').textContent, '–',
     '无 members 数据时成员统计显示 –（占位符）')
 })
+
+// ————————————————— ⑤ Task 04：个人模式首屏与可恢复操作 —————————————————
+
+test('Task 04：首屏明确四态进度、个人模式默认、高级设置显式开启', () => {
+  const html = ADMIN_UI_HTML
+  for (const label of ['未配置', '已配对', '测试通知', '正常运行']) assert.ok(html.includes(label), `首屏应包含进度态 ${label}`)
+  assert.match(html, /id="modeToggle"[^>]*>打开高级设置</, '高级设置必须有明确入口')
+  assert.match(html, /class="tabbtn advanced-tab"[^>]*data-tab="bindings"[^>]*hidden/, '绑定矩阵默认隐藏')
+  assert.match(html, /class="tabbtn advanced-tab"[^>]*data-tab="sessions"[^>]*hidden/, '会话默认隐藏')
+  assert.ok(html.includes('MODE_KEY') && html.includes("'advanced'"), '模式切换必须是显式个人/高级状态')
+})
+
+test('Task 04：YAML 仅作为高级入口，空通道状态给出字段配置指引', () => {
+  const html = ADMIN_UI_HTML
+  assert.ok(html.includes('YAML 仅作为高级入口'), '空通道不应把 YAML 当默认路径')
+  assert.ok(html.includes('按字段配置'), '空状态应指向字段驱动的通道页')
+  assert.ok(html.includes('打开「高级设置」') || html.includes('打开高级设置'), '文档/界面应说明高级设置入口')
+})
+
+test('Task 04：测试通知成功/失败均给出下一步与重试文案', () => {
+  const html = ADMIN_UI_HTML
+  assert.ok(html.includes('下一步：回 Dashboard 确认状态'), '成功测试需给出后续路径')
+  assert.ok(html.includes('检查必填凭证后重试'), '失败测试需给出可执行重试路径')
+  assert.ok(html.includes('测试失败：'), '异常响应需可见')
+})

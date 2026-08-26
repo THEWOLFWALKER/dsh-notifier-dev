@@ -20,10 +20,10 @@ Use `$DSH_HOME/dsh-notifier` when `DSH_HOME` is set; otherwise the plugin falls 
 ## First-Time Setup
 
 1. Install the registry package with the DSH plugin command and select the real profile.
-2. Enable the loopback admin UI if browser configuration is desired.
-3. Configure one outbound channel and use the admin test or `scripts/test-channel.mjs`.
+2. Enable the loopback admin UI if browser configuration is desired; open the exact URL printed in the `Web 管理台已就绪` startup line rather than guessing a port.
+3. In the default personal-mode console, configure one outbound channel and use its per-channel test action. A failed channel reports its reason and does not hide other channel results.
 4. Configure one inbound channel, pair the intended `(channel, userId)`, and verify `/whoami`.
-5. Exercise one notification, one approval fallback, and one `ask_user` timeout before enabling unattended workflows.
+5. Exercise one notification, one approval fallback, and one `ask_user` timeout before enabling unattended workflows. Use the console's **打开高级设置** only when session or binding controls are needed.
 
 The full end-user flow is in `docs/guide.md`. The CLI-only upgrade and rollback procedure is in `docs/upgrade-guide.md` and its English counterpart.
 

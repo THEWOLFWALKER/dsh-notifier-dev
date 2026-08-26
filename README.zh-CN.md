@@ -40,7 +40,7 @@ DSH 会话事件 ─自动推送──────────┘   分级路由
 
 ## 界面预览
 
-Web 管理台（`admin.enabled: true`，仅绑 127.0.0.1；v0.5 起移动端自适应）六页实拍（演示数据）：
+Web 管理台（`admin.enabled: true`，仅绑 127.0.0.1；v0.5 起移动端自适应）六页实拍（演示数据）。首次打开默认是个人模式：配置、配对、测试后即可使用；绑定矩阵和会话等复杂设置需显式点击「打开高级设置」。请打开启动日志「Web 管理台已就绪」行中的完整本机 URL，不要猜端口 `8104`：
 
 | 页面 | 内容 |
 |---|---|
@@ -137,7 +137,7 @@ insert:
 | `approval` | 超时、编号回复、升级提醒 | `mode: answer` |
 | `conversation` | 合并窗、steer 前缀 | `mergeWindowMs: 1500` |
 | `route` | 多 agent 路由 | `sessionTtlHours: 24` |
-| `admin` | 网页控制台 | `enabled: true, port: 8104` |
+| `admin` | 网页控制台 | `enabled: true`（`port` 可选；以启动日志中的 URL 为准） |
 | `events` / `keywords` / `graceSeconds` | 防打扰闸门 | `exclude: ["heartbeat"]` |
 | `events.turnStart` / `longRunning` / `stall` | v0.5 状态上报线 | `longRunning: { firstAfterMs: 900000 }` |
 | `digest` | 账本 + 每日摘要 | `enabled: true` |

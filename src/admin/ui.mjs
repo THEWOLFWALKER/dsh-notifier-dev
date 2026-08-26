@@ -23,6 +23,7 @@ header { display: flex; align-items: center; gap: 12px; padding: 10px 18px; back
 header h1 { font-size: 16px; margin: 0; font-weight: 600; }
 header h1 small { color: var(--muted); font-weight: 400; margin-left: 6px; }
 #loadState { color: var(--accent); }
+#entryHint { color: var(--muted); font-size: 12px; }
 #tokenState { margin-left: auto; color: var(--muted); border-style: dashed; }
 nav { display: flex; gap: 6px; padding: 10px 18px 0; flex-wrap: wrap; }
 main { padding: 14px 18px 48px; max-width: 1240px; }
@@ -102,6 +103,11 @@ label.fld input { flex: 1; }
 .onboard-step.done .onboard-num { background: var(--ok); }
 .onboard-step.done .onboard-title { color: var(--muted); text-decoration: line-through; }
 .muted-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); font-size: 12px; padding: 3px 10px; }
+.first-run-state { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 0 0 14px; }
+.first-run-state .state-node { display: inline-flex; gap: 5px; align-items: center; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); font-size: 12px; }
+.first-run-state .state-node.current { color: var(--accent); border-color: var(--accent); }
+.first-run-state .state-node.done { color: var(--ok); border-color: var(--ok); }
+.first-run-state .state-arrow { color: var(--muted); }
 
 /* v0.5 特性 D：移动端适配（≤768px 单列 / 导航横滚 / 宽表横滚 / 触控目标 ≥44px）。
    纯 CSS 增量，零逻辑变更零构建；桌面端（>768px）逐字节不变。 */
@@ -124,25 +130,33 @@ label.fld input { flex: 1; }
 <header>
   <h1>dsh-notifier 管理台<small>v0.8.6</small></h1>
   <span id="loadState"></span>
+  <span id="entryHint">本地管理台 · 地址见启动日志</span>
   <button id="tokenState" title="点击输入或更换访问 token"></button>
   <button id="btnRefresh">刷新</button>
 </header>
 <nav>
   <button class="tabbtn active" data-tab="dashboard">Dashboard</button>
-  <button class="tabbtn" data-tab="bindings">绑定矩阵</button>
-  <button class="tabbtn" data-tab="sessions">会话</button>
+  <button class="tabbtn advanced-tab" data-tab="bindings" hidden>绑定矩阵</button>
+  <button class="tabbtn advanced-tab" data-tab="sessions" hidden>会话</button>
   <button class="tabbtn" data-tab="channels">通道</button>
   <button class="tabbtn" data-tab="members">成员</button>
   <button class="tabbtn" data-tab="notify">通知</button>
+  <button id="modeToggle" class="muted-btn" title="显示或隐藏高级会话与绑定设置">打开高级设置</button>
 </nav>
 <main>
   <div id="globalMsg" class="msg"></div>
 
   <section id="tab-dashboard" class="tabsec active">
+    <div id="firstRunState" class="first-run-state" aria-label="首次配置进度">
+      <span class="state-node current" data-state="unconfigured">未配置</span><span class="state-arrow">→</span>
+      <span class="state-node" data-state="paired">已配对</span><span class="state-arrow">→</span>
+      <span class="state-node" data-state="tested">测试通知</span><span class="state-arrow">→</span>
+      <span class="state-node" data-state="ready">正常运行</span>
+    </div>
     <!-- 首次使用引导：无成员 + 无出站通道配置时显示，完成后自动隐藏 -->
     <div id="onboarding" class="card" hidden>
       <div class="card-head" style="cursor:default">
-        <span class="dot ok"></span><b>三步开始使用 dsh-notifier</b>
+        <span class="dot ok"></span><b>个人模式：四步开始使用 dsh-notifier</b>
         <span class="badge none" id="onboardDismiss">已完成可关闭</span>
       </div>
       <div class="card-body">
@@ -165,6 +179,14 @@ label.fld input { flex: 1; }
           </div>
           <div class="onboard-step" id="step3">
             <div class="onboard-num">3</div>
+            <div class="onboard-body">
+              <div class="onboard-title">发送测试通知</div>
+              <div class="onboard-desc">回到「通道」页点击「测试发送」。成功后再开始使用，失败时页面会显示原因和下一步。</div>
+              <button class="tabbtn" data-tab="channels">去「通道」页测试 →</button>
+            </div>
+          </div>
+          <div class="onboard-step" id="step4">
+            <div class="onboard-num">4</div>
             <div class="onboard-body">
               <div class="onboard-title">开始使用</div>
               <div class="onboard-desc">给 agent 发消息，它会把通知推到你刚配的通道上。需要审批的操作会发送通知给你，按提示回复编号或点按钮即可决定。</div>
@@ -291,6 +313,8 @@ var state = { overview: null, bindings: null, sessions: null, channels: null, me
 var draft = null
 var scanTimers = {}
 var flashTimer = null
+var MODE_KEY = 'dsh-admin-mode'
+var TESTED_KEY = 'dsh-admin-first-run-tested'
 
 function $(sel, root) { return (root || document).querySelector(sel) }
 function $all(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)) }
@@ -474,6 +498,28 @@ function switchTab(name) {
   $all('.tabsec').forEach(function (s) { s.classList.toggle('active', s.id === 'tab-' + name) })
 }
 
+// 个人模式是默认路径；高级导航仅在用户明确打开后显示。localStorage 受限时按个人模式降级。
+function readAdminMode() {
+  try { return window.localStorage.getItem(MODE_KEY) === 'advanced' ? 'advanced' : 'personal' } catch (e) { return 'personal' }
+}
+function applyAdminMode() {
+  var advanced = readAdminMode() === 'advanced'
+  $all('.advanced-tab').forEach(function (el) { el.hidden = !advanced })
+  var toggle = $('#modeToggle')
+  if (toggle) toggle.textContent = advanced ? '关闭高级设置' : '打开高级设置'
+  if (!advanced && (document.querySelector('#tab-bindings.active') || document.querySelector('#tab-sessions.active'))) switchTab('dashboard')
+}
+function setAdminMode(mode) {
+  try { window.localStorage.setItem(MODE_KEY, mode === 'advanced' ? 'advanced' : 'personal') } catch (e) {}
+  applyAdminMode()
+}
+function readTestedState() {
+  try { return window.localStorage.getItem(TESTED_KEY) === '1' } catch (e) { return false }
+}
+function markTestedState() {
+  try { window.localStorage.setItem(TESTED_KEY, '1') } catch (e) {}
+}
+
 // ---------- Dashboard：通道健康矩阵 + 统计 + 审计流 ----------
 /** 审计 detail 归一为可展示文本：对象/数组 JSON.stringify，空值空串（避免 [object Object]）。 */
 function fmtDetail(v) {
@@ -515,9 +561,24 @@ function renderDashboard() {
   var step1Done = anyOutEnabled
   var step2Done = hasMembers
   var step3Done = hasMembers && anyOutEnabled && sess.total > 0
+  var step4Done = step3Done
   $('#step1').classList.toggle('done', step1Done)
   $('#step2').classList.toggle('done', step2Done)
   $('#step3').classList.toggle('done', step3Done)
+  var step4 = $('#step4')
+  if (step4) step4.classList.toggle('done', step4Done)
+  // 进度条单独表达首次配置状态；不写服务器状态，也不把本地测试标记当成凭证。
+  var configured = anyOutConfigured
+  var tested = readTestedState() || step3Done
+  var ready = anyOutEnabled && hasMembers && tested
+  var current = !configured ? 'unconfigured' : !hasMembers ? 'paired' : (!tested || !anyOutEnabled) ? 'tested' : 'ready'
+  var order = ['unconfigured', 'paired', 'tested', 'ready']
+  var currentIndex = order.indexOf(current)
+  $all('#firstRunState [data-state]').forEach(function (el) {
+    var idx = order.indexOf(el.getAttribute('data-state'))
+    el.classList.toggle('done', ready ? idx < order.length - 1 : idx < currentIndex)
+    el.classList.toggle('current', idx === currentIndex)
+  })
   var userDismissed = false
   try { userDismissed = window.localStorage.getItem('onboard_dismissed') === '1' } catch (e) {}
   var allDone = step1Done && step2Done
@@ -531,7 +592,7 @@ function renderDashboard() {
     ['已启用（configured 且 enabled）', 'ok', out.filter(function (c) { return c.configured && c.enabled })],
     ['已配置未启用', 'warn', out.filter(function (c) { return c.configured && !c.enabled })],
     ['未配置', 'none', out.filter(function (c) { return !c.configured })]
-  ], '出站通道 ' + out.length + ' 个，均未配置（先用 YAML bootstrap 凭证）')
+  ], '出站通道 ' + out.length + ' 个，均未配置（打开「通道」页按字段配置；YAML 仅作为高级入口）')
   $('#inGroups').innerHTML = chipGroups([
     ['已配置', 'ok', inn.filter(function (c) { return c.configured })],
     ['未配置', 'none', inn.filter(function (c) { return !c.configured })]
@@ -822,7 +883,12 @@ function testChannel(key, btn) {
   api('/api/channels/' + encodeURIComponent(type) + '/test', { method: 'POST' })
     .then(function (r) {
       var ok = plain(r).ok === true
-      setStatus(msg, (ok ? '测试通过' : '测试失败') + (r.detail ? '：' + r.detail : ''), ok ? 'ok' : 'err')
+      if (ok) {
+        markTestedState()
+        setStatus(msg, '测试通过' + (r.detail ? '：' + r.detail : '') + '；下一步：回 Dashboard 确认状态，或直接开始使用', 'ok')
+      } else {
+        setStatus(msg, '测试失败' + (r.detail ? '：' + r.detail : '') + '；下一步：检查必填凭证后重试', 'err')
+      }
     })
     .catch(function (e) { setStatus(msg, '测试失败：' + errText(e), 'err') })
     .then(function () { btn.disabled = false; btn.textContent = old })
@@ -1222,6 +1288,11 @@ function init() {
     b.addEventListener('click', function () { switchTab(b.getAttribute('data-tab')) })
   })
   $('#btnRefresh').addEventListener('click', function () { loadAll() })
+  applyAdminMode()
+  var modeToggle = $('#modeToggle')
+  if (modeToggle) modeToggle.addEventListener('click', function () {
+    setAdminMode(readAdminMode() === 'advanced' ? 'personal' : 'advanced')
+  })
   // Issue #10：Dashboard 首屏引导——手动隐藏记 localStorage，下次不弹
   var hideBtn = $('#btnHideOnboard')
   if (hideBtn) hideBtn.addEventListener('click', function () {

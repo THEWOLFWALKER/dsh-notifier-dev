@@ -40,7 +40,7 @@ Every message resolves through one chain — level (`timeSensitive` / `active` /
 
 ## Screenshots
 
-The web admin console (`admin.enabled: true`, loopback only, mobile-friendly since v0.5) — all six pages (demo data):
+The web admin console (`admin.enabled: true`, loopback only, mobile-friendly since v0.5) — all six pages (demo data). The browser opens in personal mode: first configure, pair, test, then use; bindings and sessions stay behind an explicit advanced-settings toggle. Open the exact loopback URL printed by the `Web 管理台已就绪` startup line instead of guessing port `8104`:
 
 | Page | What it shows |
 |---|---|
@@ -137,7 +137,7 @@ Optional blocks each opt in under their own key:
 | `approval` | Timeout, numbered reply, escalation | `mode: answer` |
 | `conversation` | Merge window, steer prefix | `mergeWindowMs: 1500` |
 | `route` | Multi-agent routing | `sessionTtlHours: 24` |
-| `admin` | Web console | `enabled: true, port: 8104` |
+| `admin` | Web console | `enabled: true` (optional `port`; use the startup URL) |
 | `events` / `keywords` / `graceSeconds` | Anti-disturb gates | `exclude: ["heartbeat"]` |
 | `events.turnStart` / `longRunning` / `stall` | v0.5 status line | `longRunning: { firstAfterMs: 900000 }` |
 | `digest` | Ledger + daily summary | `enabled: true` |
