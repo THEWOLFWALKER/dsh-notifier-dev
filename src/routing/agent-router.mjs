@@ -436,6 +436,8 @@ export function createAgentRouter({ store, agentsList } = {}) {
       assertNonEmptyString(sessionId, 'setSessionOutbound: sessionId')
       const normalized = patch === undefined || patch === null ? {} : patch
       if (plainObjectOf(normalized) === null) throw new TypeError('agent-router: setSessionOutbound: patch 必须是对象')
+      // 阶段 5 P2：整表读-改-写防 sibling clobber——先读当前表计算本次 outbound diff，
+      // 再 re-read 最新整表（捕获并发写入），把 diff 合并到最新记录上写回。
       const sessions = readMap(KEY_SESSIONS)
       const record = { ...plainObjectOf(sessions[sessionId]) }
       const diff = { ...plainObjectOf(record.outbound) }
@@ -453,9 +455,12 @@ export function createAgentRouter({ store, agentsList } = {}) {
         if (normalized.quiet === undefined || normalized.quiet === null) delete diff.quiet
         else diff.quiet = normalizeQuiet(normalized.quiet)
       }
-      if (Object.keys(diff).length > 0) record.outbound = diff
-      else delete record.outbound
-      return writeMap(KEY_SESSIONS, { ...sessions, [sessionId]: record })
+      // Re-read 最新整表，合并本次 outbound diff 到最新记录（防并发覆盖 sibling）
+      const latest = readMap(KEY_SESSIONS)
+      const merged = { ...plainObjectOf(latest[sessionId]) }
+      if (Object.keys(diff).length > 0) merged.outbound = diff
+      else delete merged.outbound
+      return writeMap(KEY_SESSIONS, { ...latest, [sessionId]: merged })
     },
 
     /**
@@ -478,6 +483,8 @@ export function createAgentRouter({ store, agentsList } = {}) {
       assertNonEmptyString(sessionId, 'setSessionControl: sessionId')
       const normalized = patch === undefined || patch === null ? {} : patch
       if (plainObjectOf(normalized) === null) throw new TypeError('agent-router: setSessionControl: patch 必须是对象')
+      // 阶段 5 P2：整表读-改-写防 sibling clobber——先读当前表计算本次 control overlay，
+      // 再 re-read 最新整表（捕获并发写入），把 overlay 合并到最新记录上写回。
       const sessions = readMap(KEY_SESSIONS)
       const record = { ...plainObjectOf(sessions[sessionId]) }
       const overlay = { ...(plainObjectOf(record.control) ?? {}) }
@@ -488,9 +495,12 @@ export function createAgentRouter({ store, agentsList } = {}) {
         else overlay[key] = value
       }
       const canonical = normalizeControlOverlay(overlay)
-      if (canonical === null) delete record.control
-      else record.control = JSON.parse(JSON.stringify(canonical))
-      return writeMap(KEY_SESSIONS, { ...sessions, [sessionId]: record })
+      // Re-read 最新整表，合并本次 control overlay 到最新记录（防并发覆盖 sibling）
+      const latest = readMap(KEY_SESSIONS)
+      const merged = { ...plainObjectOf(latest[sessionId]) }
+      if (canonical === null) delete merged.control
+      else merged.control = JSON.parse(JSON.stringify(canonical))
+      return writeMap(KEY_SESSIONS, { ...latest, [sessionId]: merged })
     },
 
     /**

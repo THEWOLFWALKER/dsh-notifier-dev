@@ -463,6 +463,61 @@ test('setSessionControl：写入防御——store 缺 set → 不抛、返回 fa
   assert.throws(() => router.setSessionControl('s-1', 'not-object'), TypeError)
 })
 
+// ———————— 并发回归（阶段 5 P2：setSessionOutbound/setSessionControl 防 sibling clobber） ————————
+
+test('setSessionOutbound 并发：session A 更新后 session B 更新不覆盖 A 的 outbound', () => {
+  const { store, router } = makeRouter()
+  // session A：设置 outbound channels
+  router.setSessionOutbound('s-A', { channels: ['telegram'] })
+  // session B：设置不同 session 的 outbound（不应影响 s-A）
+  router.setSessionOutbound('s-B', { channels: ['bark'] })
+  // s-A 的 outbound 仍完好
+  assert.deepEqual(store.get('route:sessions')['s-A'].outbound, { channels: ['telegram'] })
+  assert.deepEqual(store.get('route:sessions')['s-B'].outbound, { channels: ['bark'] })
+  // s-A 追加 quiet（模拟并发更新：re-read 最新表后合并）
+  router.setSessionOutbound('s-A', { quiet: true })
+  const sA = store.get('route:sessions')['s-A']
+  assert.deepEqual(sA.outbound, { channels: ['telegram'], quiet: true }, 'A 的 channels 不被丢失')
+  // s-B 的 outbound 仍完好
+  assert.deepEqual(store.get('route:sessions')['s-B'].outbound, { channels: ['bark'] })
+})
+
+test('setSessionControl 并发：session A 更新后 session B 更新不覆盖 A 的 control', () => {
+  const { store, router } = makeRouter()
+  // session A：设置 control overlay
+  router.setSessionControl('s-A', { owner: 'u1', mode: 'team' })
+  // session B：设置不同 session 的 control（不应影响 s-A）
+  router.setSessionControl('s-B', { owner: 'u2' })
+  // s-A 的 control 仍完好
+  const sAControl = store.get('route:sessions')['s-A'].control
+  assert.equal(sAControl.owner, 'u1')
+  assert.equal(sAControl.mode, 'team')
+  // s-A 追加 approvalOwnerOnly（模拟并发更新）
+  router.setSessionControl('s-A', { approvalOwnerOnly: true })
+  const sAAfter = store.get('route:sessions')['s-A'].control
+  assert.equal(sAAfter.owner, 'u1', 'A 的 owner 不被丢失')
+  assert.equal(sAAfter.mode, 'team', 'A 的 mode 不被丢失')
+  assert.equal(sAAfter.approvalOwnerOnly, true, 'A 的新字段已写入')
+  // s-B 的 control 仍完好
+  assert.equal(store.get('route:sessions')['s-B'].control.owner, 'u2')
+})
+
+test('setSessionOutbound 与 setSessionControl 并发：分别更新不同字段不互相覆盖', () => {
+  const { store, router } = makeRouter()
+  // 先设 outbound
+  router.setSessionOutbound('s-1', { channels: ['telegram'] })
+  // 再设 control（不应清空 outbound）
+  router.setSessionControl('s-1', { owner: 'u1' })
+  const rec = store.get('route:sessions')['s-1']
+  assert.deepEqual(rec.outbound, { channels: ['telegram'] }, 'outbound 不被 control 写入清除')
+  assert.equal(rec.control.owner, 'u1', 'control 已写入')
+  // 再更新 outbound（不应清空 control）
+  router.setSessionOutbound('s-1', { quiet: true })
+  const rec2 = store.get('route:sessions')['s-1']
+  assert.deepEqual(rec2.outbound, { channels: ['telegram'], quiet: true }, 'outbound 已合并更新')
+  assert.equal(rec2.control.owner, 'u1', 'control 不被 outbound 写入清除')
+})
+
 // ———————— describe 与防御 ————————
 
 test('describe：把出站解析每层来源串成可读文本（含各层键名与最终结果）', () => {
