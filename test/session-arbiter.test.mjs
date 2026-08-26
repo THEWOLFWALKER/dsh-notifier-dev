@@ -39,6 +39,15 @@ test('owner-only approval and revoke fail closed', () => {
   const p = policy({ approvalOwnerOnly: true })
   assert.equal(canAcceptCommand(p, event({ command: 'approval', userId: 'u2' })).reason, 'owner_only')
   assert.equal(canAcceptCommand(p, event({ command: 'question-answer', userId: 'u2' })).reason, 'owner_only')
+  // ownerOnly is not a userId-only gate: an owner id from the wrong channel or
+  // wrong account must never settle (exact source binding)
+  assert.equal(canAcceptCommand(p, event({ command: 'approval', userId: 'u1', channel: 'feishu' })).reason, 'owner_only')
+  assert.equal(canAcceptCommand(p, event({ command: 'approval', userId: 'u1', accountId: 'z1' })).reason, 'owner_only')
+  assert.equal(canAcceptCommand(p, event({ command: 'question-answer', userId: 'u1', channel: 'feishu' })).reason, 'owner_only')
+  assert.equal(canSettleApproval(p, event({ command: 'approval', userId: 'u1', channel: 'feishu' })), false)
+  assert.equal(canSettleApproval(p, event({ command: 'approval', userId: 'u1', accountId: 'z1' })), false)
+  // the true owner source still settles
+  assert.equal(canSettleApproval(p, event({ command: 'approval', userId: 'u1' })), true)
   assert.equal(canAcceptCommand(revokePolicy(p, 'manual', 120), event(), 120).reason, 'revoked')
 })
 
@@ -82,7 +91,13 @@ test('team member exact triple may approve/question-answer; owner overrides; non
   assert.equal(canAcceptCommand(p, event({ command: 'approval', userId: 'u2', channel: 'feishu' })).reason, 'member_not_allowed')
   assert.equal(canAcceptCommand(p, event({ command: 'approval', userId: 'u2', accountId: 'z1' })).reason, 'member_not_allowed')
   assert.equal(canAcceptCommand(p, event({ command: 'approval', userId: 'u9' })).reason, 'member_not_allowed')
-  // membership must never grant steer / ordinary-message
+  // team owner override is also exact-source, not a userId-only bypass: an owner id
+  // from the wrong channel/account cannot claim the owner exemption
+  assert.equal(canAcceptCommand(teamPolicy(), event({ command: 'approval', userId: 'u1', channel: 'feishu' })).reason, 'member_not_allowed')
+  assert.equal(canAcceptCommand(teamPolicy(), event({ command: 'approval', userId: 'u1', accountId: 'z1' })).reason, 'member_not_allowed')
+  assert.equal(canSettleApproval(teamPolicy(), event({ command: 'approval', userId: 'u1', channel: 'feishu' })), false)
+  assert.equal(canSettleApproval(teamPolicy(), event({ command: 'approval', userId: 'u1', accountId: 'z1' })), false)
+  // ownership / membership never grant steer or ordinary-message
   const conv = teamPolicy({ capabilities: { approve: true, converse: true } })
   assert.equal(canAcceptCommand(conv, event({ command: 'steer', userId: 'u2' })).reason, 'source_mismatch_userId')
   assert.equal(canAcceptCommand(conv, event({ command: 'ordinary-message', userId: 'u2' })).reason, 'source_mismatch_userId')

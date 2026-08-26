@@ -169,6 +169,8 @@ test('team approvalMembers authorize only listed members and the owner through t
   // caught by the pending-row binding layer first; both fail closed)
   assert.equal(control.handle({ ...base, eventId: 'x', userId: 'intruder' }).reason, 'member_not_allowed')
   assert.equal(control.handle({ ...base, eventId: 'y', accountId: 'other' }).status, 'rejected')
+  // the owner id from the wrong account is not the true source: fails closed, no settlement
+  assert.equal(control.handle({ ...base, eventId: 'oa', accountId: 'other', userId: 'owner-1' }).status, 'rejected')
   assert.equal(settled.length, 2)
 })
 

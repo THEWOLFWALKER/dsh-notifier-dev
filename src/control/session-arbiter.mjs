@@ -104,17 +104,30 @@ function isGroupChat(event) {
 /**
  * Decide whether a normalized event may settle approval/question-answer under the
  * policy object (which must already be a normalized snapshot). Pure; exported for
- * tests. Returns true when no explicit member/owner restriction applies — the caller
- * still enforces the exact per-person source binding for personal / team-without-list.
+ * tests. Only exact `(channel, accountId, userId)` sources settle here.
+ *
+ * - `approvalOwnerOnly=true`: only the owner, bound to the policy's own
+ *   channel/accountId, may settle. An owner userId arriving from a different
+ *   channel or account is rejected (exact source binding).
+ * - `mode='team'` with a non-empty list: the event's exact normalized
+ *   `(channel, accountId, userId)` triple must be listed, unless it is the owner
+ *   bound to the policy's conversation channel/accountId.
+ * - personal / team-without-list: returns true so the caller's exact per-person
+ *   source binding decides; membership is never granted for steer/ordinary-message.
  */
 export function canSettleApproval(policy, event) {
   if (policy == null || event == null) return false
-  if (policy.approvalOwnerOnly === true) {
-    return policy.owner != null && String(event.userId) === String(policy.owner)
-  }
   const members = Array.isArray(policy.approvalMembers) ? policy.approvalMembers : []
+  const ownerSource =
+    policy.owner != null &&
+    String(event.userId) === String(policy.owner) &&
+    bound(event.channel) === bound(policy.channel) &&
+    bound(event.accountId) === bound(policy.accountId)
+  if (policy.approvalOwnerOnly === true) {
+    return ownerSource
+  }
   if (policy.mode === 'team' && members.length > 0) {
-    if (policy.owner != null && String(event.userId) === String(policy.owner)) return true
+    if (ownerSource) return true
     return members.some((m) => m.channel === event.channel && m.accountId === event.accountId && m.userId === event.userId)
   }
   return true
