@@ -591,3 +591,100 @@ test('跨组件：带 control 的会话被回收时，盘上墓碑删干净且�
   assert.equal(sessions.s1, undefined)                // 盘上删干净：墓碑生效，不被基底复活
   assert.equal(sessions.s2.workspace, 'w')          // 未 dispose 的无关会话保留
 })
+
+// ---- Stage-4 P1 收官：回收墓碑持久化收官（durable 布尔传播）----
+// createStore 自 v0.8.7 起 set() 返回持久化是否真正到达盘的布尔（durable）。sweep 落击杀时的
+// persist 若 durable=false（写没到盘），removedIds 一旦被连带清掉，盘上仍残留过期记录；日后某次
+// 生命周期写（ensure/touch）再次 persist，从盘上基底读回过期 id、又没了墓碑可删——过期会话复活。
+// 修复后：只有 durable 成功（返回非 false）才清墓碑，失败的 sweep 写留下的墓碑在下次成功写时补删。
+
+/** durable-fake store：模拟 createStore 的 durable 布尔 + 「false 即不改盘」语义。
+ * 盘（disk）是持久化层，只被 durable=true 的 set() 提交；durable=false 时盘保持原样（写未到盘，
+ * 下一次 get 仍见旧真相——正是「失败的 sweep 写 → 后续写读到过期基底」的复活窗口）。
+ * get() 返回价值拷贝（value-copy），注册表内存态与盘上真相互不 alias——与真实 createStore 的
+ * in-memory-alias get 不同，但更直接地命中「写未到盘 → 读回旧真相」这条持久化级病根。 */
+function makeDurableStore(initial = {}, writeOk = () => true) {
+  const disk = { ...initial }
+  const writes = { attempts: 0, fails: 0 }
+  const store = {
+    disk,
+    writes,
+    setWriteOk(fn) { store._ok = fn },
+    _ok: (typeof writeOk === 'function' ? writeOk : () => Boolean(writeOk)),
+    get(key, fallback = undefined) { return key in disk ? structuredClone(disk[key]) : fallback },
+    set(key, value) {
+      writes.attempts += 1
+      const ok = store._ok(key, value)
+      if (ok) disk[key] = value
+      else writes.fails += 1
+      return ok
+    },
+    keys(prefix = '') { return Object.keys(disk).filter((key) => key.startsWith(prefix)) },
+  }
+  return store
+}
+
+test('墓碑持久化：sweep 写盘 durable=false 后，后续成功生命周期写不复活过期会话、无关记录/字段保留', () => {
+  const t = 1_000_000
+  // 盘上预置：过期 disposed 会话 old；无关 dispose 未到期会话 pending；无关活跃 keep（带兄弟键 inbound）。
+  const disk = makeDurableStore({
+    'route:sessions': {
+      old: { inherit: 'w', workspace: 'w', createdAt: 0, lastActiveAt: 0, disposedAt: t - 400_000 },
+      keep: { inherit: 'w', workspace: 'w', createdAt: 0, lastActiveAt: t - 50, inbound: [{ channel: 'telegram', userId: 'u9' }] },
+      pending: { inherit: 'w', workspace: 'w', createdAt: 0, lastActiveAt: 0, disposedAt: t - 10_000 },
+    },
+  })
+  const clock = { t }
+  const registry = createSessionRegistry({
+    ctx: makeCtx({ withAgents: true }).ctx,
+    store: disk,
+    now: () => clock.t,
+    ttlHours: 0.01,                    // ttl=36s：old(400s ago) 过期、pending(10s ago) 未过期
+    touchWriteMs: 0,                   // 后续 lifecycle 写每次都真写
+    sweepEveryMs: Number.MAX_SAFE_INTEGER, // 用显式 sweep()，避开内联扫
+  })
+  // 阶段一：sweep 触发 persist，但唯一写盘 slot = durable=false（写未到盘，盘仍含 old）。
+  disk.setWriteOk(() => false)
+  assert.deepEqual(registry.sweep(), ['old'])
+  assert.equal(registry.getSession('old'), undefined) // 内存态已回收
+  assert.ok(disk.writes.fails >= 1)                   // 这记写确实被标成失败
+  assert.equal(disk.disk['route:sessions'].old.disposedAt, t - 400_000) // 盘上仍残留 old——正是复活根源
+
+  // 阶段二：后续成功生命周期写（touch 触发 persist）。
+  // 若 removedIds 在阶段一的失败写里被连带清掉，这次 persist 从盘上基底（仍含 old）读回又无墓碑可删
+  // → old 在盘上复活；修复后墓碑保留，这次成功写把 old 补删干净。
+  disk.setWriteOk(() => true)
+  assert.ok(registry.touch('keep') !== undefined)
+  const after = disk.disk['route:sessions']
+  assert.equal(after.old, undefined)                  // 过期会话补删：未复活
+  assert.equal(after.keep.workspace, 'w')             // 无关活跃会话保留
+  assert.deepEqual(after.keep.inbound, [{ channel: 'telegram', userId: 'u9' }]) // 兄弟字段保留
+  assert.equal(after.pending.disposedAt, t - 10_000)  // 未到期的 disposed 保留（供重连）
+  assert.equal(registry.getSession('old'), undefined)
+  registry.dispose()
+})
+
+test('墓碑持久化：store.set 返回 undefined 的既有 store 兼容——照常清墓碑（行为不破坏）', () => {
+  // makeStore 的 set 返回 undefined（非 durable）。持久化无 durable 布尔时墓碑照清、sweep 正常落盘
+  // ——回归既有语义，不被 false 判据误伤。
+  const t = 1_000_000
+  const seeded = makeStore({
+    'route:sessions': {
+      old: { inherit: 'w', workspace: 'w', createdAt: 0, lastActiveAt: 0, disposedAt: t - 400_000 },
+      keep: { inherit: 'w', workspace: 'w', createdAt: 0, lastActiveAt: t - 50 },
+    },
+  })
+  const clock = { t }
+  const registry = createSessionRegistry({
+    ctx: makeCtx({ withAgents: true }).ctx,
+    store: seeded,
+    now: () => clock.t,
+    ttlHours: 0.01,
+    touchWriteMs: 0,
+    sweepEveryMs: Number.MAX_SAFE_INTEGER,
+  })
+  assert.deepEqual(registry.sweep(), ['old'])
+  assert.equal(seeded.state['route:sessions'].old, undefined) // 墓碑照删落盘
+  assert.equal(seeded.state['route:sessions'].keep.workspace, 'w') // 无关会话保留
+  registry.dispose()
+})

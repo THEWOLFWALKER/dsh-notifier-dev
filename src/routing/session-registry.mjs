@@ -165,9 +165,15 @@ export function createSessionRegistry(options = {}) {
         else merged.control = deepCopyPlain(control)
         next[id] = merged
       }
-      store?.set?.(SESSIONS_KEY, next)
-      removedIds.clear()
-    } catch { /* 写盘失败：内存态继续工作 */ }
+      const writeResult = store?.set?.(SESSIONS_KEY, next)
+      // Stage-4 P1 收官（墓碑持久化收官）：只有持久化真到达盘上才清回收墓碑。
+      // store.set 显式返回 false 是 createStore 的 durable 布尔（v0.8.7 起 save() 传播持久化成功与否，
+      // 写未到达盘）；此时清掉 removedIds 会让「失败的 sweep 写 + 后续生命周期写」把过期会话从盘上
+      // 基底复活——下次 persist 从 store.get 读到未删的盘上旧记录、又没了墓碑可删，过期 id 在盘上
+      // 卷土重来（重启即重现）。故只在 durable 成功（返回非 false）时清；返回 undefined 的既有
+      // store 保持兼容（undefined !== false 仍清）。set 抛错的路径本来就在外层 catch，不复删。
+      if (writeResult !== false) removedIds.clear()
+    } catch { /* 写盘失败（set 抛）：内存态继续工作，removedIds 留待下次再删 */ }
   }
 
   /** 记录读取（形状异常当不存在，返回 undefined）。 */
