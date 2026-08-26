@@ -14,6 +14,10 @@ git switch -c codex/task-05-wechat-ilink
 
 Read `src/inbound/wechat-ilink.mjs`, `src/inbound/capability-matrix.mjs`, `src/inbound/pairing.mjs`, `src/admin/api.mjs`, `src/admin/ui.mjs`, `docs/test-notes/WECHAT-TEST.md`, and `docs/memory/risks.md`.
 
+## Required module boundary
+
+Create the new adapter boundary under `src/channels/wechat-ilink/` with matching tests under `test/channels/wechat-ilink/`. Existing `src/inbound/wechat-ilink.mjs` may be wrapped or migrated only through a compatibility facade; do not scatter new protocol logic across unrelated inbound files.
+
 ## Allowed files
 
 - `src/inbound/wechat-ilink.mjs` and one small protocol helper under `src/inbound/` if needed;
