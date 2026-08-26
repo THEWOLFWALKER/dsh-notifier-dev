@@ -2,7 +2,7 @@
 
 > 写给下一个 agent。本文档是完整的工作上下文快照：设计理念、军规约定、架构地图、
 > 版本脉络、审查记录、已知坑、待办清单。读完这一份即可无缝接手。
-> 当前快照：2026-08-26，分支 `codex/issue16-host-events`，提交链至少包含 `e077dbe`、`7a70dd0`、`3f4f397`、`c24c22e`/`0be902d`。当前开发线 `npm test` = 1174（1173 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。QQ 单聊原生按钮、群聊控制拒绝/文本回退，以及 QQ/微信 iLink/钉钉图片代码已接线并通过契约测试；真实设备/宿主协议仍未验证，能力只能标记 declared/contract-tested。
+> 当前快照：2026-08-26，开发线已合入 `c4fef26`。当前开发线 `npm test` = 1177（1176 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。QQ C2C 单聊原生按钮、GROUP 文本回退，以及 QQ/微信 iLink/钉钉图片代码已接线并通过契约测试；缺失 `chatType` 或未知来源控制 fail-closed，`conversation` 的 `routeUnsafe` 旁路已堵。Web/admin 与 desktop 仍无安全可复用的 `ask_user` settlement 入口，不能宣称双端共享；真实设备/宿主协议仍未验证，能力只能标记 declared/contract-tested。
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
 > 2026-08-23 接力合入公共镜像 v0.8.5 发布内容（issue #11 ask_user 编号回复修复 + PR #9 飞书扫码 SDK 适配），见「当前接力交代」。
 > 上一稳定发布位 v0.8.6 = `bf03a1c`（npm `dsh-notifier@0.8.6`，公共镜像 `db42908` 已清理 node_modules/package-lock）。
@@ -48,7 +48,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 零运行时依赖（只用 fetch + node:crypto + 原生 WebSocket）。
 
 - 语言/运行时：Node.js ESM（.mjs），无 TypeScript，无构建步骤
-- 代码量：src+test+scripts ≈ 36,000 行；46 个测试文件，1174 测试（1173 pass + 1 skip；已发布 v0.8.6 = 909）
+- 代码量：src+test+scripts ≈ 36,000 行；46 个测试文件，1177 测试（1176 pass + 1 skip；已发布 v0.8.6 = 909）
 - 文档：README.md / README.zh-CN.md / ADAPTER.md（渠道接入规范）/ PLUGINS.md（插件互操作）/ docs/v0.5-design.md / docs/v0.6-design.md / CHANGELOG.md（最详细的历史）
 
 ---
@@ -58,8 +58,8 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 项 | 状态 |
 |---|---|
 | 版本 | package.json = 0.8.6；CHANGELOG、admin UI、双语 README 和发布守卫已同步；npm 已发布 `dsh-notifier@0.8.6`；公共镜像 `main` 已清理 `node_modules/` 与 `package-lock.json` |
-| git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前分支 `codex/issue16-host-events`（开发线未发布） |
-| 测试 | `npm test` 已发布 v0.8.6 契约 = **909 tests**；当前开发线 = **1174**（1173 pass + 1 skip） |
+| git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前开发线含 `c4fef26`（文档同步分支未发布） |
+| 测试 | `npm test` 已发布 v0.8.6 契约 = **909 tests**；当前开发线 = **1177**（1176 pass + 1 skip） |
 | 发布 | v0.8.6 已发布；下一位 agent 接手时无需再走发布 gate，除非版本再次 bump |
 | 真机验证 | 当前分支未完成真实设备/宿主协议验证；QQ/微信 iLink/钉钉图片与 QQ 按钮仅有 contract-tested/declared 证据。历史 v0.6.1/v0.7 验证记录保留在下文 |
 
@@ -78,7 +78,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 用户文档 | `docs/guide.md` · `docs/upgrade-guide.md` · `docs/upgrade-guide.en.md` | README 双语均链接 guide；升级/回滚是装包用户高频需求 |
 | 互操作契约 | `PLUGINS.md` | 其他插件作者消费 notifier 服务时的契约（README 链接） |
 | CLI | `scripts/`（channel-login · test-channel · route · gen-channel-matrix 等） | guide.md 教用户直接 `node scripts/...` |
-| 测试 | `test/` | 行为契约随包分发是项目惯例（已发布 v0.8.6 = 909 用例；开发线 HEAD 1174，装包即可 `npm test`） |
+| 测试 | `test/` | 行为契约随包分发是项目惯例（已发布 v0.8.6 = 909 用例；开发线 HEAD 1177，装包即可 `npm test`） |
 
 **仅工程仓库（不进 npm 包）**：
 
@@ -262,7 +262,7 @@ src/
 ## 8. 快速上手
 
 ```bash
-npm test                    # 当前开发线 1174（1173 pass + 1 skip）；已发布 v0.8.6 契约仍为 909
+npm test                    # 当前开发线 1177（1176 pass + 1 skip）；已发布 v0.8.6 契约仍为 909
 npm run lint 2>/dev/null || node --check src/index.mjs   # 无 lint 配置的话用 node --check
 node scripts/route.mjs --help        # 路由 CLI
 node scripts/channel-login.mjs --help

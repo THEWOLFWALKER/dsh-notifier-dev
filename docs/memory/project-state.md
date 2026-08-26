@@ -1,14 +1,14 @@
 # Project State
 
-Snapshot date: 2026-08-26 (current development line `codex/issue16-host-events`).
+Snapshot date: 2026-08-26 (current development line after `c4fef26`).
 
 Planning decision (2026-08-25): after the current maintenance batch, the product direction is a personal-mode-first cross-IM control plane. The approved staged architecture and channel plan live in `docs/architecture-roadmap.md`; this does not mean those features are implemented or released.
 
 - Canonical development repository: private `https://github.com/THEWOLFWALKER/dsh-notifier-dev`.
 - Public release/source mirror: `https://github.com/THEWOLFWALKER/dsh-notifier`.
-- Branch topology (2026-08-26): current HEAD `e077dbe` on `codex/issue16-host-events`; preceding commits include `c24c22e`, `0be902d`, `3f4f397`, and `7a70dd0`. Control Core is wired through host events and inbound callbacks; capability/fallback alignment and runtime assembly extraction are present.
-- Current test baseline: **1174** total (1173 pass + 1 skip). The published v0.8.6 contract remains **909**; package/version stays `0.8.6`, and this development line is unreleased.
-- QQ single-chat native buttons and QQ group control rejection/text fallback are contract-tested. QQ, WeChat iLink, and DingTalk image paths are wired and contract-tested; real provider/device and host protocol evidence is still absent. Web/admin has no secure `ask_user` settlement entry. Issue #16/#14 are code/contract complete but pending validation.
+- Branch topology (2026-08-26): current development line includes `c4fef26` (QQ C2C/GROUP source guard); Control Core is wired through host events and inbound callbacks; capability/fallback alignment and runtime assembly extraction are present.
+- Current test baseline: **1177** total (1176 pass + 1 skip). The published v0.8.6 contract remains **909**; package/version stays `0.8.6`, and this development line is unreleased.
+- QQ C2C single-chat native buttons and QQ GROUP text fallback are contract-tested. Missing `chatType` or unknown source metadata fail closed, and the conversation `routeUnsafe` bypass is blocked. QQ, WeChat iLink, and DingTalk image paths are wired and contract-tested; real provider/device and host protocol evidence is still absent. Web/admin and desktop have no safe reusable `ask_user` settlement entry, so dual-end sharing is not claimed.
 - Earlier snapshot (2026-08-23, ox-alpha relay, second round):
 - Branch topology (post-merge 2026-08-23): private `main` = `52c467a`, the no-ff merge of `codex/p1-3-state-stress` (P1-3 crash-stale-lock recovery, contract 902 → 906). All prior relay lines (security-hardening, protocol-guards, error-visibility) and the P1-3 branch are contained in `main` and retired.
 - Active line: `main` (all relay work merged); new relay topics branch from `main` as `codex/<topic>`.
@@ -24,7 +24,7 @@ Planning decision (2026-08-25): after the current maintenance batch, the product
 
 ## Validation Evidence
 
-- `npm test` (current development line, 2026-08-26): `1174 total` = `1173 pass + 1 skip`.
+- `npm test` (current development line, 2026-08-26): `1177 total` = `1176 pass + 1 skip`.
 - `node scripts/verify-release.mjs`: passed with documented tests = `909`.
 - `node scripts/verify-release.mjs`, `node scripts/gen-channel-matrix.mjs --check`, and `node --check src/index.mjs` remain release/shape checks against the published v0.8.6 count of 909; the development count must not alter `package.json`.
 

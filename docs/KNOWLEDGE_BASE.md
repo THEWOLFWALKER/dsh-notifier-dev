@@ -4,12 +4,12 @@ This is the navigation page for humans and agents. It deliberately points to one
 
 ## Current Baseline
 
-- Canonical engineering baseline: private branch `codex/issue16-host-events` at `e077dbe` (runtime assembly lifecycle isolation; preceding control-core/capability commits include `c24c22e`, `0be902d`, `3f4f397`, `7a70dd0`); package version `0.8.6` (published, current maintenance/control-contract line unreleased).
+- Canonical engineering baseline: private development line after `c4fef26` (QQ group/unknown-source control fail-closed and conversation `routeUnsafe` bypass blocked); package version `0.8.6` (published, current maintenance/control-contract line unreleased).
 - Canonical collaboration repository: private `dsh-notifier-dev` (GitHub owner `THEWOLFWALKER`). The public repository `https://github.com/THEWOLFWALKER/dsh-notifier` is the release/source mirror, not the day-to-day relay workspace.
 - The public repository's `main` history is unrelated to the current hardening line; do not merge or force-push it implicitly. Public synchronization is a deliberate release operation.
 - Public issue snapshot (2026-08-25): #16/#15/#14/#13/#10/#7/#6/#5/#4/#3/#2/#1 open; #11/#8 closed. PR #12 is open reference material only; PR #9 is merged in the public mirror. These statuses are not claims that the private tree fixes every open issue.
 - Runtime: Node.js ESM, Node `>=22`, no build step, no production dependencies.
-- Test baseline: `1174` total on the current development line (1173 pass + 1 skip). The published v0.8.6 release retains `909` as its documented test count until a release cycle updates version and count together.
+- Test baseline: `1177` total on the current development line (1176 pass + 1 skip). The published v0.8.6 release retains `909` as its documented test count until a release cycle updates version and count together.
 - The attached npm archive is a release artifact. The engineering archive is the source authority.
 
 ## Read Order
@@ -51,7 +51,7 @@ The product, UX, planning, review-loop, and DSH GUI consistency contract is main
 - Agent integration: `notify`, `notify_test`, optional `ask_user`, public `ctx.notifier` facade, and `dsh-notifier/sent` events.
 - Operations: JSON state store with key-level merge, cross-process lock, convergence reads, JSONL ledger, local admin API/UI, SSE event stream, route CLI, and channel login/test CLIs.
 - Security posture: installed DSH plugins share the host process and must currently be treated as trusted code; notifier-specific leakage, audit, identity, and resource-bound fixes are tracked separately from DSH host isolation requirements.
-- Control status: QQ single-chat native approval/question buttons and QQ group text fallback are contract-tested only. Web/admin has no secure `ask_user` settlement entry; issue #16/#14 code and contract work is complete pending real-device/host validation.
+- Control status: QQ C2C native approval/question buttons and QQ GROUP text fallback are contract-tested only; GROUP, missing `chatType`, and unknown source metadata fail closed, and conversation `routeUnsafe` cannot bypass the gate. Web/admin and desktop have no safe reusable `ask_user` settlement entry, so dual-end sharing is not claimed. Real-device/provider and host-protocol validation remains pending.
 
 ## Authority Rules
 
