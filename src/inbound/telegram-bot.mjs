@@ -60,10 +60,16 @@ function clampTelegramText(text) {
  * @param {number} [options.errorBackoffMs=5000] - 轮询异常退避（测试可缩短）
  * @param {number} [options.callbackTtlMs] - 按钮短引用有效期（缺省 15min，略长于 token TTL）
  */
-export function createTelegramInbound({ config, bus, vault, store = null, logger = null, fetchImpl, errorBackoffMs, actions = null, callbackTtlMs, identity = null, questions = null, control = null } = {}) {
+export function createTelegramInbound({ config, bus, vault, store = null, logger = null, fetchImpl, errorBackoffMs, actions = null, callbackTtlMs, identity = null, questions = null, control = null, accountId = null } = {}) {
   const apiBase = (config.apiBase || DEFAULT_API_BASE).replace(/\/+$/, '')
   const botToken = String(config.botToken ?? '')
   const backoffMs = Math.max(0, Number(errorBackoffMs) || DEFAULT_ERROR_BACKOFF_MS)
+  // Stable per-provider account id, injected into every normalized envelope so shared
+  // Control Core source binding accepts valid callbacks and rejects a different account.
+  // NEVER derived from botToken — account ids may appear in audit receipts and pushing a
+  // secret there would leak it. Explicit config.accountId wins; otherwise a literal stable
+  // default. The facade owns this decision and passes it down as a top-level option.
+  const resolvedAccountId = String(accountId ?? config.accountId ?? '').trim() || 'default'
   const doFetch = fetchImpl ?? globalThis.fetch.bind(globalThis)
   // v0.6.2 按钮短引用注册表：callback_data 64 字节硬限的修复载体（见 callback-refs.mjs 头注）
   const refs = createCallbackRefs({ ttlMs: callbackTtlMs })
@@ -154,7 +160,7 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
       if (parts[0] === 'ac' && actions !== null && parts.length >= 3) {
         const actionKey = parts.slice(1, -1).join(':')
         const token = parts[parts.length - 1]
-        const result = actions.dispatch({ actionKey, token, via: 'telegram:action', userId: query.from?.id, chatId: query.message?.chat?.id, ...(query.message?.chat?.type !== undefined ? { chatType: query.message.chat.type } : {}) })
+        const result = actions.dispatch({ actionKey, token, via: 'telegram:action', userId: query.from?.id, accountId: resolvedAccountId, chatId: query.message?.chat?.id, ...(query.message?.chat?.type !== undefined ? { chatType: query.message.chat.type } : {}) })
         const actionText = result?.ok === true
           ? result.message
           : (result?.message ?? '该操作已处理或已过期')
@@ -174,8 +180,8 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
         const optIdx = parts[parts.length - 2]
         const token = parts[parts.length - 1]
         const verdict = control !== null
-          ? control.handle({ command: 'question-answer', qKey, optIdx, token, via: 'telegram', channel: 'telegram', userId: String(query.from?.id ?? ''), chatId: String(query.message?.chat?.id ?? ''), chatType: query.message?.chat?.type })
-          : questions.decide({ qKey, optIdx, token, via: 'telegram', userId: query.from?.id, chatId: query.message?.chat?.id })
+          ? control.handle({ command: 'question-answer', qKey, optIdx, token, via: 'telegram', channel: 'telegram', accountId: resolvedAccountId, userId: String(query.from?.id ?? ''), chatId: String(query.message?.chat?.id ?? ''), chatType: query.message?.chat?.type })
+          : questions.decide({ qKey, optIdx, token, via: 'telegram', accountId: resolvedAccountId, userId: query.from?.id, chatId: query.message?.chat?.id })
         const text = verdict?.message ?? (verdict?.status === 'accepted' ? '✅ 已作答' : '该提问已回答或已过期')
         await api('answerCallbackQuery', { callback_query_id: query.id, text: String(text).slice(0, 200) }).catch(() => {})
         if (query.message?.chat?.id !== undefined) {
@@ -195,12 +201,13 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
         const approvalKey = parts.slice(2, -1).join(':')
         const token = parts[parts.length - 1]
         const verdict = control !== null
-          ? control.handle({ command: 'approval', approvalKey, decision, token, via: 'telegram', channel: 'telegram', userId: String(query.from?.id ?? ''), chatId: String(query.message?.chat?.id ?? ''), chatType: query.message?.chat?.type })
+          ? control.handle({ command: 'approval', approvalKey, decision, token, via: 'telegram', channel: 'telegram', accountId: resolvedAccountId, userId: String(query.from?.id ?? ''), chatId: String(query.message?.chat?.id ?? ''), chatType: query.message?.chat?.type })
           : bus.decide({
           approvalKey,
           decision,
           token,
           via: 'telegram',
+          accountId: resolvedAccountId,
           userId: query.from?.id,
           chatId: query.message?.chat?.id,
         })
@@ -229,6 +236,7 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
       // v0.7：chatType 透传（/pair 私聊判定）；accept 返回值消费——拒绝/命令回执不再已读不回
       const envelope = {
         channel: 'telegram',
+        accountId: resolvedAccountId,
         userId: String(message.from?.id ?? ''),
         chatId: String(message.chat?.id ?? ''),
         chatType: String(message.chat?.type ?? ''),
@@ -255,10 +263,25 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
           timeout: POLL_TIMEOUT_S,
           allowed_updates: ['message', 'callback_query'],
         })
+        // Process-before-commit: advance/persist the offset ONLY after an update has
+        // actually been handled. If handling a control update throws (crash, adapter
+        // error mid-callback) we do NOT advance, so Telegram long-poll redelivers it on
+        // the next getUpdates instead of silently dropping an unaccepted command. A batch
+        // that fails is left un-committed by breaking out; earlier updates in the same
+        // batch are redelivered alongside it and deduped by bus messageId / control
+        // eventId (documented redelivery dedup). Bounded: a persistent failure backs off
+        // and keeps the loop alive without spinning hot or burning the connection.
         for (const update of updates ?? []) {
-          offset = Math.max(offset, (update.update_id ?? 0) + 1)
-          store?.set('tg:offset', offset)
-          await handleUpdate(update)
+          const next = (update.update_id ?? 0) + 1
+          try {
+            await handleUpdate(update)
+            offset = Math.max(offset, next)
+            store?.set('tg:offset', offset)
+          } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error)
+            warn(`update ${update.update_id} 处理失败，offset 未前移（下轮重投，靠 messageId/eventId 去重）: ${reason}`)
+            break
+          }
         }
       } catch (error) {
         if (!running) break
@@ -274,6 +297,9 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
 
   return {
     channel: 'telegram',
+
+    /** Truthful lifecycle state for the provider facade's status() (polling vs idle). */
+    clientState() { return running ? 'connected' : 'stopped' },
 
     /** 启动长轮询（幂等）。 */
     start() {
@@ -389,6 +415,10 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
       const chatId = isTarget ? targetOrChatId.chatId : targetOrChatId
       const messageId = isTarget ? targetOrChatId.messageId : messageIdOrText
       const text = isTarget ? messageIdOrText : maybeText
+      // Text-fallback ladder: edit the live card to a terminal state; if the edit fails
+      // (message edited or deleted / 400), append the button-failure suffix and try a
+      // second edit; if that too fails (message is gone), send ONE fresh text message so
+      // the desktop-side outcome still reaches the user instead of vanishing silently.
       try {
         await api('editMessageText', { chat_id: chatId, message_id: messageId, text })
       } catch (error) {
@@ -401,7 +431,10 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
             reply_markup: { inline_keyboard: [] },
           })
         } catch (error2) {
-          warn(`终态失效兜底再次失败，按钮可能仍可点击: ${error2 instanceof Error ? error2.message : String(error2)}`)
+          warn(`终态失效兜底再次失败，改发独立文本: ${error2 instanceof Error ? error2.message : String(error2)}`)
+          try {
+            await api('sendMessage', { chat_id: chatId, text: clampTelegramText(`${text}\n（操作已完成；原消息可能已删除）`) })
+          } catch { /* 最后的兜底也失败则静默——总比二次报错强 */ }
         }
       }
     },
@@ -412,7 +445,9 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
      */
     async sendText(chatId, text) {
       try {
-        await api('sendMessage', { chat_id: chatId, text: String(text ?? '').slice(0, 4000) })
+        // clampTelegramText keeps the reply within the UTF-16 4096 hard limit and never
+        // splits a surrogate pair (millions of astral emoji would otherwise 400 on device).
+        await api('sendMessage', { chat_id: chatId, text: clampTelegramText(text) })
         return true
       } catch (error) {
         warn(`回执发送失败: ${error instanceof Error ? error.message : String(error)}`)

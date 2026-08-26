@@ -15,7 +15,7 @@ import { createActionDispatcher } from '../src/actions.mjs'
  * 伪造 @larksuiteoapi/node-sdk：记录 Client/WSClient 全部交互。
  * wsClient.start() 捕获 eventDispatcher，测试用 handlers['im.message.receive_v1'] 直接投喂事件。
  */
-function makeFakeSdk({ failStart = false, failCreate = 0, bareWs = false } = {}) {
+function makeFakeSdk({ failStart = false, failCreate = 0, bareWs = false, failPatch = 0 } = {}) {
   const state = {
     loadCount: 0,
     clientOptions: [],
@@ -41,6 +41,7 @@ function makeFakeSdk({ failStart = false, failCreate = 0, bareWs = false } = {})
               return { code: 0, msg: 'ok', data: { message_id: `om_${state.sent.length}` } }
             },
             async patch({ path, data }) {
+              if (state.patched.length < failPatch) throw new Error('mock patch down')
               state.patched.push({ messageId: path.message_id, content: data.content })
               return { code: 0, msg: 'ok' }
             },
@@ -110,7 +111,7 @@ function makeRig({ allowUsers = ['ou_1'], config = {}, sdkOptions = {}, fallback
   const bus = createInboundBus({ allowUsers, logger })
   const fake = makeFakeSdk(sdkOptions)
   const inbound = createFeishuInbound({
-    config: { appId: 'cli_a', appSecret: 's', allowUsers: config.allowUsers, domain: config.domain },
+    config: { appId: 'cli_a', appSecret: 's', allowUsers: config.allowUsers, domain: config.domain, accountId: config.accountId },
     bus,
     fallbackTargets,
     logger,
@@ -864,3 +865,116 @@ test('stop()：SDK 无 close/stop 时 terminate 底层 ws 实例（#4），不�
   assert.equal(fake.state.closed, false, 'bare WS 原型上根本没有 close（形态校验）')
   await inbound.stop() // 幂等
 })
+
+// ---------------------------------------------------------------- Stage-6（task-09）对抗
+
+test('Stage-6 入站 envelope：accountId 注入每条规范化消息（config.accountId，非事件）', async () => {
+  const rig = makeRig({ config: { accountId: 'acct_fs' } })
+  const accepted = []
+  rig.bus.onMessage((envelope) => accepted.push(envelope))
+  rig.inbound.start()
+  await tick()
+  rig.fake.state.dispatcher.handlers['im.message.receive_v1']({
+    sender: { sender_id: { open_id: 'ou_1' } },
+    message: { message_id: 'om_s6', chat_id: 'oc_g', message_type: 'text', content: JSON.stringify({ text: 'hi' }) },
+  })
+  assert.equal(accepted.length, 1)
+  assert.equal(accepted[0].accountId, 'acct_fs', '消息 envelope 必须带稳定 accountId')
+  assert.equal(accepted[0].channel, 'feishu')
+  await rig.inbound.stop()
+})
+
+test('Stage-6 生命周期：starting→connected；SDK 缺失→unavailable；WS 握手失败→error；stop→stopped', async () => {
+  // 正常启动成功
+  const ok = makeRig()
+  assert.equal(ok.inbound.clientState(), 'idle')
+  ok.inbound.start()
+  assert.equal(ok.inbound.clientState(), 'starting')
+  await tick()
+  assert.equal(ok.inbound.clientState(), 'connected')
+  await ok.inbound.stop()
+  assert.equal(ok.inbound.clientState(), 'stopped')
+
+  // SDL 缺失 → unavailable（伪造 resolve 错误）
+  const del = createFeishuInbound({
+    config: { appId: 'a', appSecret: 's' }, bus: createInboundBus({ allowUsers: ['ou_1'] }), logger: makeLogger(),
+    sdkLoader: async () => { const e = new Error("Cannot find package '@larksuiteoapi/node-sdk'"); throw e },
+  })
+  del.start()
+  await tick()
+  assert.equal(del.clientState(), 'unavailable', 'SDK 缺失必须报告 unavailable 而非 error')
+
+  // WS 握手失败 → error
+  const err = makeRig({ sdkOptions: { failStart: true } })
+  err.inbound.start()
+  await tick()
+  assert.equal(err.inbound.clientState(), 'error', '握手失败必须报告 error')
+  await err.inbound.stop()
+})
+
+test('Stage-6 群聊敏感控制降级：审批/动作卡 oc_* 群发纯文本，不投递可误点按钮', async () => {
+  const rig = makeRig()
+  rig.inbound.start()
+  await tick()
+  // 审批卡到群
+  const ap = await rig.inbound.sendApprovalCard({ chatId: 'oc_group1', title: '需要批准', content: '敏感审批', approvalKey: 'ap:x:1', token: 'tk' })
+  assert.equal(ap.downgraded, true, '群聊审批须标记降级')
+  assert.match(ap.messageId, /^downgraded:/)
+  const apSent = rig.fake.state.sent[0]
+  assert.equal(apSent.msgType, 'text', '群聊降级必须发纯文本而非 interactive 卡片')
+  assert.notEqual(apSent.receiveIdType, 'open_id')
+  assert.match(JSON.parse(apSent.content).text, /降级为纯文本/)
+  // 动作卡到群
+  const ac = await rig.inbound.sendActionCard({ chatId: 'oc_group2', title: '操作', content: 'c', actions: [{ label: '⏹ 停止', data: 'ac:x:y' }] })
+  assert.equal(ac.downgraded, true)
+  assert.equal(rig.fake.state.sent[1].msgType, 'text', '动作卡同样降级为文本')
+  // 提问卡到群 → 直接拦截（不发任何消息）
+  const q = await rig.inbound.sendQuestionCard({ chatId: 'oc_group3', title: '提问', content: 'q', qKey: 'aq:1', token: 'tk', options: ['是', '否'] })
+  assert.equal(q, null, '提问按钮绝不放给整群')
+  assert.equal(rig.fake.state.sent.length, 2, '提问卡群发不产生任何消息')
+  await rig.inbound.stop()
+})
+
+test('Stage-6 群聊降级不影响私聊：ou_* 仍发完整 interactive 审批卡', async () => {
+  const rig = makeRig()
+  rig.inbound.start()
+  await tick()
+  const card = await rig.inbound.sendApprovalCard({ chatId: 'ou_1', title: '需要批准', content: 'c', approvalKey: 'ap:p1', token: 'tk' })
+  assert.deepEqual(card, { messageId: 'om_1' })
+  assert.equal(rig.fake.state.sent[0].msgType, 'interactive', '私聊必须仍发卡片')
+  await rig.inbound.stop()
+})
+
+test('Stage-6 patch 失败：卡片回调补发「恰好一条」文本兜底（不静默、不重复、不抛）', async () => {
+  const logger = makeLogger()
+  const vault = createTokenVault({ secret: 'k' })
+  const bus = createInboundBus({ allowUsers: ['ou_1'], vault, logger })
+  const fake = makeFakeSdk({ failPatch: 1 })
+  const inbound = createFeishuInbound({ config: { appId: 'a', appSecret: 's' }, bus, logger, sdkLoader: fake.loader })
+  inbound.start()
+  await tick()
+  const key = 'ap:pf:1'
+  const token = vault.mint(key)
+  const outcome = bus.wait(key, 2000, { allowChats: new Map([['feishu', new Set(['oc_pf'])]]) })
+  const toast = fake.state.dispatcher.handlers['card.action.trigger']({
+    operator: { open_id: 'ou_1' },
+    action: { value: { act: buildApprovalAction('allowed-once', key, token) } },
+    context: { open_message_id: 'om_pf', open_chat_id: 'oc_pf' },
+  })
+  assert.equal(toast.toast.type, 'success')
+  assert.equal((await outcome).decision, 'allowed-once', '裁决本身不受 patch 失败影响')
+  await tick()
+  // patch 失败（failPatch=1，全失败）→ 恰发一条文本兜底到点击会话
+  const texts = rigTexts(fake.state.sent)
+  assert.equal(texts.length, 1, 'patch 失败必须恰好补发一条文本，绝不重复')
+  assert.equal(texts[0].receiveId, 'oc_pf', '兜底发到点击会话')
+  assert.match(texts[0].body, /已批准/)
+  await inbound.stop()
+})
+
+function rigTexts(sent) {
+  return sent.filter((s) => s.msgType === 'text').map((s) => ({
+    receiveId: s.receiveId,
+    body: JSON.parse(s.content).text ?? '',
+  }))
+}

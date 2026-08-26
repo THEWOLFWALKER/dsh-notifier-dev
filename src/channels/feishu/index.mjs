@@ -14,7 +14,10 @@ export const FEISHU_CAPABILITIES = Object.freeze({
   realDeviceVerified: false,
 })
 
-/** Normalize only the transport metadata needed by the shared Control Core. */
+/** Normalize only the transport metadata needed by the shared Control Core.
+ *  The accountId is intentionally NEVER taken from the event payload — the transport
+ *  overlays its own resolved `accountId ?? appId` in `normalizeCallback`, so an adapter
+ *  or attacker cannot mint the source a later authorization compares against. */
 export function normalizeFeishuCallback(input) {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return null
   const value = input.action?.value
@@ -22,12 +25,14 @@ export function normalizeFeishuCallback(input) {
   const chatId = String(input.context?.open_chat_id ?? input.open_chat_id ?? input.chat_id ?? '').trim()
   const userId = String(input.operator?.open_id ?? input.sender?.sender_id?.open_id ?? '').trim()
   if (action === '' || chatId === '' || userId === '') return null
-  return Object.freeze({ channel: 'feishu', accountId: String(input.accountId ?? ''), userId, chatId, action })
+  return Object.freeze({ channel: 'feishu', accountId: '', userId, chatId, action })
 }
 
 export function createFeishuTransport(options = {}) {
-  const legacy = createLegacyInbound(options)
-  const accountId = String(options.config?.accountId ?? options.config?.appId ?? 'default').trim()
+  // Stable resolver: explicit config.accountId wins, else appId. NEVER event-supplied or
+  // derived from a secret. Fed down so the shared inbound injects it into every envelope.
+  const accountId = String(options.config?.accountId ?? options.config?.appId ?? '').trim()
+  const legacy = createLegacyInbound({ ...options, accountId })
   const fileAdapter = options.fileAdapter
   return {
     ...legacy,
@@ -35,7 +40,7 @@ export function createFeishuTransport(options = {}) {
     accountId,
     capabilities: Object.freeze({ ...FEISHU_CAPABILITIES, ...(legacy.capabilities ?? {}) }),
     status() {
-      return { state: legacy.clientState?.() ?? 'unknown', accountId, websocket: true }
+      return { state: legacy.clientState?.() ?? 'idle', accountId, websocket: legacy.clientState?.() === 'connected' }
     },
     async sendFile(target, file) {
       if (typeof fileAdapter?.sendFile !== 'function') return false

@@ -5,13 +5,17 @@
 // routing, and each instance is stopped defensively. Permission, approval,
 // question, and conversation semantics remain in their existing modules.
 
-import { createTelegramInbound } from '../inbound/telegram-bot.mjs'
-import { createFeishuInbound } from '../inbound/feishu-bot.mjs'
+import { createTelegramInbound } from '../channels/telegram/index.mjs'
+import { createFeishuInbound } from '../channels/feishu/index.mjs'
 import { createQqInbound } from '../inbound/qq-gw.mjs'
 import { createWxpusherInbound } from '../inbound/wxpusher-callback.mjs'
 import { createWechatIlinkInbound, resolveWechatInboundConfig, ACCOUNT_KEY } from '../channels/wechat-ilink/index.mjs'
 import { createDingtalkInbound } from '../inbound/dingtalk-stream.mjs'
 
+// Telegram/Feishu factories are the provider facades (channels/*), which wrap the shared
+// inbound bots and inject a stable per-provider accountId + capability evidence into every
+// envelope. Callers may still override any entry via the `factories` option (merged below)
+// or import the legacy `inbound/*-bot.mjs` `create*Inbound` directly — both stay exported.
 const DEFAULT_FACTORIES = Object.freeze({
   telegram: createTelegramInbound,
   feishu: createFeishuInbound,

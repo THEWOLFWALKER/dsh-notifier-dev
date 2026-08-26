@@ -14,27 +14,32 @@ export const TELEGRAM_CAPABILITIES = Object.freeze({
   realDeviceVerified: false,
 })
 
-/** Normalize Telegram callback metadata before handing the action to Control Core. */
+/** Normalize Telegram callback metadata before handing the action to Control Core.
+ *  The accountId is intentionally NEVER taken from the event payload — an adapter or
+ *  attacker must not mint the source a later authorization compares against. The
+ *  transport overlays its own resolved accountId in `normalizeCallback`. */
 export function normalizeTelegramCallback(input) {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return null
   const action = String(input.data ?? '').trim()
   const chatId = String(input.message?.chat?.id ?? '').trim()
   const userId = String(input.from?.id ?? '').trim()
   if (action === '' || chatId === '' || userId === '') return null
-  return Object.freeze({ channel: 'telegram', accountId: String(input.accountId ?? '').trim(), userId, chatId, action })
+  return Object.freeze({ channel: 'telegram', accountId: '', userId, chatId, action })
 }
 
 export function createTelegramTransport(options = {}) {
-  const legacy = createLegacyInbound(options)
   // Never use botToken as an account identifier: account ids may appear in receipts/audit.
   const accountId = String(options.config?.accountId ?? 'default').trim() || 'default'
+  // Feed the resolved accountId through to the shared inbound so it is injected into every
+  // normalized envelope (message, callback, action, approval, question).
+  const legacy = createLegacyInbound({ ...options, accountId })
   const fileAdapter = options.fileAdapter
   return {
     ...legacy,
     channel: 'telegram',
     accountId,
     capabilities: Object.freeze({ ...TELEGRAM_CAPABILITIES, ...(legacy.capabilities ?? {}) }),
-    status() { return { state: 'managed', accountId, polling: true } },
+    status() { return { state: legacy.clientState?.() ?? 'stopped', accountId, polling: legacy.clientState?.() === 'connected' } },
     async sendFile(target, file) {
       if (typeof fileAdapter?.sendFile !== 'function') return false
       try {

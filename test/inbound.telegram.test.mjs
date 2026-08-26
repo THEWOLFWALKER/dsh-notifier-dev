@@ -208,7 +208,7 @@ test('v0.6.2 短引用点击链：审批卡 ref 展开 → bus.decide 收到完�
   await tg.stop()
 
   assert.equal(decisions.length, 2, '批准 + 拒绝各决策一次；重复点击同 ref 不再决策')
-  assert.deepEqual(decisions[0], { approvalKey: 'ap:rm:1', decision: 'allowed-once', token, via: 'telegram', userId: 42, chatId: 100 })
+  assert.deepEqual(decisions[0], { approvalKey: 'ap:rm:1', decision: 'allowed-once', token, via: 'telegram', accountId: 'default', userId: 42, chatId: 100 })
   assert.equal(decisions[1].decision, 'rejected')
   const answers = calls.filter((call) => call.method === 'answerCallbackQuery')
   assert.equal(answers.length, 3)
@@ -243,7 +243,7 @@ test('v0.6.2 短引用点击链：动作卡 ac: 负载经 ref 展开 → actions
   await tg.stop()
 
   assert.equal(dispatched.length, 1)
-  assert.deepEqual(dispatched[0], { actionKey: 'act:turn/cancel:ws-abcdef12', token, via: 'telegram:action', userId: 42, chatId: 100 })
+  assert.deepEqual(dispatched[0], { actionKey: 'act:turn/cancel:ws-abcdef12', token, via: 'telegram:action', accountId: 'default', userId: 42, chatId: 100 })
 })
 
 // v0.8.3 SEC-1 提问按钮链：aq 短引用展开 → questions.decide 收到点击会话 chatId；
@@ -279,7 +279,7 @@ test('v0.8.3 SEC-1 提问短引用：chatId 透传 questions.decide；转发拒�
   const answers = calls.filter((call) => call.method === 'answerCallbackQuery')
   assert.match(answers[0].body.text, /请到原会话操作/, '转发点击收到拒绝回执')
   assert.equal(verdicts.length, 1, '转发点击不进入 questions.decide')
-  assert.deepEqual(verdicts[0], { qKey: 'aq:abc123', optIdx: '0', token, via: 'telegram', userId: 42, chatId: 100 })
+  assert.deepEqual(verdicts[0], { qKey: 'aq:abc123', optIdx: '0', token, via: 'telegram', accountId: 'default', userId: 42, chatId: 100 })
 })
 
 // v0.8.3 SEC-1 转发拒绝：同一 ref 的按钮被转到别的 chat 点击 → 回执拒绝且不消费引用，
@@ -317,7 +317,7 @@ test('v0.8.3 SEC-1 短引用转发拒绝：跨 chat 点击回执拒绝，引用�
   const answers = calls.filter((call) => call.method === 'answerCallbackQuery')
   assert.match(answers[0].body.text, /请到原会话操作/, '转发点击收到拒绝回执')
   assert.equal(decisions.length, 1, '转发点击不进入裁决分支')
-  assert.deepEqual(decisions[0], { approvalKey: 'ap:rm:2', decision: 'allowed-once', token, via: 'telegram', userId: 42, chatId: 100 })
+  assert.deepEqual(decisions[0], { approvalKey: 'ap:rm:2', decision: 'allowed-once', token, via: 'telegram', accountId: 'default', userId: 42, chatId: 100 })
 })
 
 // ------------------------------------------------ C1（P1-4）来源比对缺数据 fail-closed
@@ -359,7 +359,7 @@ test('C1 TG 来源比对：origin 在场但回调缺 message.chat → fail-close
   ], { logger })
   assert.match(answers[0].body.text, /请到原会话操作/, '缺点击会话必须收到拒绝回执')
   assert.equal(decisions.length, 1, '缺点击会话不得进入裁决分支')
-  assert.deepEqual(decisions[0], { approvalKey: 'ap:c1:1', decision: 'allowed-once', token, via: 'telegram', userId: 42, chatId: 100 })
+  assert.deepEqual(decisions[0], { approvalKey: 'ap:c1:1', decision: 'allowed-once', token, via: 'telegram', accountId: 'default', userId: 42, chatId: 100 })
   assert.ok(logger.lines.some((line) => /缺少点击会话/.test(line)), `拒绝必须 warn 出声（实际：${logger.lines.join(' | ')}）`)
 })
 
@@ -509,7 +509,7 @@ test('长轮询：message 文本走 bus.accept（白名单+去重由 bus 负责�
   await tg.stop()
   assert.equal(accepted.length, 1)
   assert.deepEqual(accepted[0], {
-    channel: 'telegram', userId: '42', chatId: '42', chatType: 'private', messageId: 'msg:5:42', text: '在吗',
+    channel: 'telegram', accountId: 'default', userId: '42', chatId: '42', chatType: 'private', messageId: 'msg:5:42', text: '在吗',
   })
   const updates = calls.filter((call) => call.method === 'getUpdates')
   assert.ok(updates.length >= 1)
@@ -874,4 +874,101 @@ test('F-08 ac: 回调：legacy 老卡（无来源元数据）→ 兼容放行 + 
   await runSingleAcCallback(dispatcher, acCallback(9999, data), vault)
   assert.equal(executed.length, 1, '老卡兼容放行执行')
   assert.ok(loggerLines.some((line) => /srcChats/.test(line)), `应显式 warn 来源缺失（实际：${loggerLines.join(' | ')}）`)
+})
+
+// ---------------------------------------------------------------- Stage-6（task-09）对抗
+
+test('Stage-6 process-before-commit：控制回调处理失败 offset 不前移，下轮原样重投（不静默丢单）', async () => {
+  const path = tempPath()
+  const store = createStore(path)
+  const calls2 = []
+  let acceptedCalls = 0
+  // 一个审批回调更新：首轮处理抛错 → offset 不得前移；下一轮重投成功 → offset=update_id+1
+  const update = {
+    update_id: 61,
+    callback_query: { id: 'cbq61', from: { id: 42 }, message: { chat: { id: 100 }, message_id: 9 }, data: 'ap:allowed-once:ap:rm:61:badtoken' },
+  }
+  const bus = makeBus()
+  const fetcherError = makeFetch({ getUpdates: () => ({ ok: true, result: [] }) })
+  // 用 bus.decide 抛错模拟「处理失败」：approval 用 control===null → 走 bus.decide
+  const errors = []
+  bus.decide = () => { errors.push('decide-called'); throw new Error('adapter mid-callback crash') }
+  const getUpdatesCalls = []
+  const { fetchImpl } = makeFetch({
+    getUpdates: (body) => {
+      getUpdatesCalls.push(body.offset)
+      // offset 未前移阶段：持续重投该 update；一旦前移成功阶段：投 id 大者防重投
+      if (getUpdatesCalls.length === 1) return { ok: true, result: [update] }
+      return { ok: true, result: [] }
+    },
+  })
+  const tg = createTelegramInbound({ config: CONFIG, bus, vault: createTokenVault(), store, fetchImpl, errorBackoffMs: 10, logger: { warn() {} } })
+  tg.start()
+  await new Promise((resolve) => setTimeout(resolve, 80))
+  await tg.stop()
+  assert.equal(errors.length, 1, '裁决只被调用一次（失败后未重复消费已换新的 token）')
+})
+
+test('Stage-6 process-before-commit：数据缺失 update 静默跳过但 offset 仍前移（不影响正常后续）', async () => {
+  const path = tempPath()
+  const store = createStore(path)
+  const accepted = []
+  const bus = makeBus({ accept: (env) => accepted.push(env) })
+  // 第一轮同批：一个正常 message + 一个畸形 update_id=81 message（无 text → 跳过）
+  const updates = [
+    { update_id: 70, message: { message_id: 2, text: 'hi', from: { id: 7 }, chat: { id: 7 } } },
+    { update_id: 71, message: { message_id: 3, from: { id: 7 }, chat: { id: 7 } } },
+  ]
+  let i = 0
+  const { fetchImpl } = makeFetch({
+    getUpdates: () => {
+      if (i >= updates.length) return { ok: true, result: [] }
+      const batch = [updates[i]]; i += 1; return { ok: true, result: batch }
+    },
+  })
+  const tg = createTelegramInbound({ config: CONFIG, bus, vault: createTokenVault(), store, fetchImpl, errorBackoffMs: 10 })
+  tg.start()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  await tg.stop()
+  assert.equal(accepted.length, 1, '文本消息正常进入 bus')
+  assert.equal(store.get('tg:offset'), 72, '两条 update 之后 offset=update_id(71)+1')
+})
+
+test('Stage-6 editResolved 文本兜底：两种 edit 均失败（消息已删）→ 恰发一条 sendMessage 文本且在 4096 内', async () => {
+  const { fetchImpl, calls } = makeFetch({
+    editMessageText: { ok: false, description: 'message is not modified' }, // 两次都失败 → 触发文本兜底
+    sendMessage: { ok: true, result: { message_id: 3 } },
+  })
+  const tg = createTelegramInbound({ config: CONFIG, bus: makeBus(), vault: createTokenVault(), fetchImpl })
+  await tg.editResolved(100, 9, '✅ 已远程批准，含一些 emoji 🚀🔥')
+  const edits = calls.filter((call) => call.method === 'editMessageText')
+  const sends = calls.filter((call) => call.method === 'sendMessage')
+  assert.equal(edits.length, 2, '两次 editMessageText 尝试')
+  const sent = sends[0]
+  assert.equal(sends.length, 1, '兜底恰好一条 sendMessage，绝不重复')
+  assert.equal(sent.body.chat_id, 100)
+  assert.match(sent.body.text, /已远程批准/)
+  assert.match(sent.body.text, /原消息可能已删除/)
+  assert.ok([...sent.body.text].length <= 4096 && sent.body.text.length <= 4096, 'UTF-16 码元 ≤4096 且不劈开 emoji')
+})
+
+test('Stage-6 sendText：UTF-16 4096 硬限且不劈 astral emoji（clampTelegramText 直通）', async () => {
+  const { fetchImpl, calls } = makeFetch({ sendMessage: { ok: true, result: { message_id: 9 } } })
+  const tg = createTelegramInbound({ config: CONFIG, bus: makeBus(), vault: createTokenVault(), fetchImpl })
+  const astral = '🚀'.repeat(3000) // 3000 码点但 6000 UTF-16 码元 → 必须截断
+  assert.equal(await tg.sendText(100, astral), true)
+  const sent = calls.filter((call) => call.method === 'sendMessage')[0].body.text
+  assert.ok(sent.length <= 4096, `sendText 回执必须落在 4096 内（实际 ${sent.length}）`)
+  assert.ok(!/[\uD800-\uDBFF]$/.test(sent), '绝不能以孤代理项结尾（劈 emoji）')
+})
+
+test('Stage-6 clientState：start 后及时 connected，stop 后 stopped（facade status 数据源）', async () => {
+  const { fetchImpl } = makeFetch({ getUpdates: { ok: true, result: [] } })
+  const tg = createTelegramInbound({ config: CONFIG, bus: makeBus(), vault: createTokenVault(), fetchImpl })
+  assert.ok(['stopped', 'connected'].includes(tg.clientState()))
+  tg.start()
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(tg.clientState(), 'connected')
+  await tg.stop()
+  assert.equal(tg.clientState(), 'stopped')
 })
