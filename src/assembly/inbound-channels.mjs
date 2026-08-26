@@ -90,7 +90,12 @@ export function createInboundChannelRegistry(deps = {}) {
 
   if (inboundBotToken !== '') {
     attach('telegram', factory.telegram, {
-      config: { botToken: inboundBotToken, apiBase: tgRaw.apiBase, notifyChatIds },
+      config: {
+        botToken: inboundBotToken,
+        apiBase: tgRaw.apiBase,
+        notifyChatIds,
+        accountId: tgRaw.accountId,
+      },
       bus, vault, store, logger, identity, actions, questions, control,
     }, telegramReadyMessage)
   }
