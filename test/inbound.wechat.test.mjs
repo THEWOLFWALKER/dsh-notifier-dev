@@ -226,6 +226,23 @@ test('轮询入站：msgs → bus envelope；游标持久化并随请求回传',
   await rig.inbound.stop()
 })
 
+test('重连/游标恢复后的重投不会重复执行控制命令（bus 按 messageId 去重）', async () => {
+  const rig = makeRig({ script: { updates: [
+    { ret: 0, get_updates_buf: 'BUF_C', msgs: [textMsg({ message_id: 'RCTRL', item_list: [{ type: 1, text_item: { text: '批准 1' } }] })] },
+    // 模拟重连/游标恢复：provider 用同一 batch 重投（consumer 却已推进到 BUF_C）
+    { ret: 0, get_updates_buf: 'BUF_C', msgs: [textMsg({ message_id: 'RCTRL', item_list: [{ type: 1, text_item: { text: '批准 1' } }] })] },
+    { ret: 0, get_updates_buf: 'BUF_D', msgs: [] },
+  ] } })
+  const executed = []
+  rig.bus.onMessage((envelope) => executed.push(envelope.messageId))
+  rig.inbound.start()
+  await tick(20)
+  assert.equal(executed.length, 1, '同一控制命令被重投两次只执行一次（bus 持久化去重）')
+  assert.equal(executed[0], 'wx:RCTRL')
+  assert.equal(rig.store.get('wechat:sync_buf'), 'BUF_D', '重投被去重后游标照常推进')
+  await rig.inbound.stop()
+})
+
 test('游标跨重启续传：新实例同 store 从 BUF_2 起轮（不从头重收）', async () => {
   const first = makeRig({ script: { updates: [{ ret: 0, get_updates_buf: 'BUF_A', msgs: [] }] } })
   first.inbound.start()

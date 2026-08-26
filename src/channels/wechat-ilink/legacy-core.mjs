@@ -296,12 +296,18 @@ export function createWechatIlinkInbound(options = {}) {
         }
         failures = 0
         if (batch.cursorRejected) warn('getupdates 返回超长或非法游标，已拒收并保留旧游标（上限 4096）')
-        // 先处理整批，再推进游标；控制路径异常不会把未消费消息永久跳过。
+        // 至少一次投递语义：先处理整批，再推进游标；游标只在本批全部消息成功处理后
+        // 才落新值。只要任一消息处理抛异常——例如一条应执行的控制命令未被 bus 接受——
+        // 就保留旧游标，让下一轮从同一点重投本批：未接受的控制命令因此重试、绝不永久
+        // 跳过；已消费的消息由 bus 按 messageId 去重，重投也不会重复执行。
+        let fullyConsumed = true
         for (const msg of batch.messages) {
           try { handleInboundMsg(msg) } catch (error) {
-            warn(`入站消息处理异常: ${error instanceof Error ? error.message : String(error)}`)
+            fullyConsumed = false
+            warn(`入站消息处理异常，本批游标不推进（至少一次投递，稍后将重投整批）: ${error instanceof Error ? error.message : String(error)}`)
           }
         }
+        if (!fullyConsumed) continue // 保留旧游标：让 provider 重投本批，不丢未接受的控制命令
         const nextBuf = batch.cursor
         if (nextBuf !== '' && nextBuf !== syncBuf) {
           syncBuf = nextBuf
