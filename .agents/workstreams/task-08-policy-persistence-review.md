@@ -5,7 +5,7 @@ _Authored before implementation (plan first). Adversarial-review fix round for S
 - Agent identity: `claude_fable_5 | claude-code | Windows 11 desktop`
 - Branch: `codex/stage3-team-policy`
 - Status: complete (all P1 + P2 fixed; code/contract-tested; no real-device validation, no public push)
-- Commit: `???` (feature + tests + CHANGELOG/risks/workstream) + `???` (HANDOFF pin). Fill from `git log -1 --format=%h` on `codex/stage3-team-policy` after commit.
+- Commit: `5c6b4fc` (feature + tests + CHANGELOG/risks/workstreams) + handoff-pin commit after it.
 - Start: `2026-08-26`
 - Upstream: Stage 4 `69ad33f` (`task-07-policy-persistence.md`) — persisted session control overlay via registry + loopback admin API; `normalizeControlOverlay` single-spec; already reviewed.
 - Mandate: fix adversarial-review P1s + low-risk P2s; provider-neutral Stage-4 files/tests/docs only. No adapters, UI redesign, real-device validation, approval.parallel, version bump, or public push.
