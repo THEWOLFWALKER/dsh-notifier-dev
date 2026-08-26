@@ -349,6 +349,43 @@ export function createQuestionBridge(deps) {
     return settle(qKey, row, optIdxes, via, userId)
   }
 
+  // Button callbacks carry an explicit qKey/token. They never use the
+  // "latest pending" fallback, so concurrent questions cannot cross-talk.
+  function handleCardAction(envelope) {
+    const action = envelope?.questionAction
+    if (action === null || typeof action !== 'object') return false
+    const qKey = String(action.qKey ?? '')
+    const optIdx = String(action.optIdx ?? '')
+    const inbound = interactiveEntries().find((entry) => entry.channel === envelope.channel)
+    const feedback = (text) => { if (inbound !== undefined) void inbound.sendText(envelope.chatId, text).catch(() => {}) }
+    if (optIdx === 'c' || optIdx === 'custom') {
+      feedback('✍️ 自定义回答：直接回复「答：<你的回答>」')
+      return true
+    }
+    if (optIdx === 's' || optIdx === 'skip') {
+      const tokenVerdict = vault.verify(String(action.token ?? ''))
+      if (!tokenVerdict.ok || tokenVerdict.key !== qKey) { feedback('作答被拒绝（校验失败）'); return true }
+      const row = ledger.get(qKey)
+      if (row === undefined || row.status !== 'pending') { feedback('该提问已回答或已过期'); return true }
+      const sourceChat = envelope.chatId !== undefined && envelope.chatId !== null ? String(envelope.chatId) : ''
+      const target = Array.isArray(row.pushedTo) ? row.pushedTo.find((item) => String(item.channel) === String(envelope.channel) && String(item.chatId) === sourceChat && String(item.userId) === String(envelope.userId)) : null
+      if (target === null || sourceChat === '') { feedback('请到原会话操作'); return true }
+      const verdict = bus.settle(qKey, { kind: 'aq-skip', idxs: [] }, `${envelope.channel}:button`, envelope.userId)
+      if (!verdict.ok) { feedback('该提问已被作答（首达采纳）'); return true }
+      ledger.resolve(qKey, 'skipped', { via: `${envelope.channel}:button`, userId: String(envelope.userId) })
+      feedback('⏭ 已跳过该提问：交还桌面处理')
+      return true
+    }
+    const sourceRow = ledger.get(qKey)
+    const sourceChat = envelope.chatId !== undefined && envelope.chatId !== null && String(envelope.chatId) !== '' ? String(envelope.chatId) : null
+    if (sourceRow === undefined || sourceChat === null) { feedback('请到原会话操作'); return true }
+    const sourceTargets = Array.isArray(sourceRow.pushedTo) ? sourceRow.pushedTo.filter((target) => String(target.channel) === String(envelope.channel) && String(target.chatId) === sourceChat) : []
+    if (sourceTargets.length === 0 || !sourceTargets.some((target) => String(target.userId) === String(envelope.userId))) { feedback('请到原会话操作'); return true }
+    const verdict = decide({ qKey, optIdx, token: String(action.token ?? ''), via: `${envelope.channel}:button`, userId: envelope.userId, chatId: envelope.chatId })
+    feedback(verdict.message ?? '该提问已回答或已过期')
+    return true
+  }
+
   function settle(qKey, row, optIdxes, via, userId) {
     const idxs = resolveIdxs(row, optIdxes)
     if (idxs === null) {
@@ -376,6 +413,20 @@ export function createQuestionBridge(deps) {
    */
   function handleNumberedReply(envelope) {
     const text = String(envelope.text ?? '').trim()
+    if (/^答[:：]/.test(text)) {
+      const chatId = envelope.chatId !== undefined && envelope.chatId !== null ? String(envelope.chatId) : null
+      const pending = ledger.latestPendingFor(envelope.channel, envelope.userId, chatId)
+      if (pending === null) return false
+      if (chatId === null || pending.evidence !== 'exact' && pending.evidence !== 'hint') return true
+      const answer = text.replace(/^答[:：]\s*/, '').trim()
+      const inbound = interactiveEntries().find((entry) => entry.channel === envelope.channel)
+      if (answer === '') { if (inbound !== undefined) void inbound.sendText(envelope.chatId, '请在「答：」后面写回答').catch(() => {}); return true }
+      const verdict = bus.settle(pending.key, { kind: 'aq-text', idxs: [], text: answer }, `${envelope.channel}:text`, envelope.userId)
+      if (!verdict.ok) { if (inbound !== undefined) void inbound.sendText(envelope.chatId, '该提问已被作答（首达采纳）').catch(() => {}); return true }
+      ledger.resolve(pending.key, 'answered', { answers: [answer], via: `${envelope.channel}:text`, userId: String(envelope.userId) })
+      if (inbound !== undefined) void inbound.sendText(envelope.chatId, `✅ 已作答（自定义）：${answer}`).catch(() => {})
+      return true
+    }
     if (!/^\d{1,2}([,，]\d{1,2})*$/.test(text)) return false
     const nums = text.split(/[,，]/).map(Number)
     if (nums.length === 0) return false
@@ -448,6 +499,7 @@ export function createQuestionBridge(deps) {
   }
 
   let disposeMessage = null
+  let disposeCardAction = null
   let disposed = false
 
   /**
@@ -455,8 +507,9 @@ export function createQuestionBridge(deps) {
    * 消费优先级：审批 '1'/'2' 先于提问编号，避免歧义时提问抢走审批回复）。
    */
   function attach() {
-    if (disposeMessage !== null || disposed) return
-    disposeMessage = bus.onMessage(handleNumberedReply)
+    if (disposed) return
+    if (disposeCardAction === null) disposeCardAction = bus.onMessage(handleCardAction)
+    if (disposeMessage === null) disposeMessage = bus.onMessage(handleNumberedReply)
   }
 
   /**
@@ -521,6 +574,18 @@ export function createQuestionBridge(deps) {
           allAnswered = false
           continue
         }
+        if (outcome?.decision?.kind === 'aq-skip') {
+          await markResolved(ledger.get(qKey)?.pushedTo ?? [], '⏭ 已跳过：交还桌面处理')
+          results.push({ question: String(question.question ?? ''), answered: false, reason: 'skipped-by-user' })
+          allAnswered = false
+          continue
+        }
+        if (outcome?.decision?.kind === 'aq-text') {
+          const answer = String(outcome.decision.text ?? '')
+          await markResolved(ledger.get(qKey)?.pushedTo ?? [], `✅ 已作答（自定义）：${answer}`)
+          results.push({ question: String(question.question ?? ''), answered: true, answers: [answer], via: outcome.via })
+          continue
+        }
       } catch (error) {
         warn(`提问推送/等待异常（交还桌面语义）: ${error instanceof Error ? error.message : String(error)}`)
         try { escalation.stop(qKey) } catch { /* 清理不致命 */ }
@@ -553,7 +618,9 @@ export function createQuestionBridge(deps) {
 
   function dispose() {
     disposed = true
+    try { disposeCardAction?.() } catch { }
     try { disposeMessage?.() } catch { /* 反注册失败不致命 */ }
+    disposeCardAction = null
     disposeMessage = null
     escalation.dispose()
   }

@@ -10,7 +10,7 @@
 //  - observe 模式只旁观：推完卡片立即 next()，桌面照常决定
 
 import { createEscalationChain } from './escalation.mjs'
-import { normalizeInbound } from '../inbound/_contract.mjs'
+import { normalizeInbound, parseApprovalAction } from '../inbound/_contract.mjs'
 import { guardTargets } from '../inbound/target-guard.mjs'
 import { createInteractionLedger } from '../interaction/ledger.mjs'
 import { workspaceOf } from '../routing/session-registry.mjs'
@@ -19,6 +19,7 @@ import { displayNameOf } from '../inbound/capability-matrix.mjs'
 
 const OUTCOME_ALLOWED = 'allowed-once'
 const OUTCOME_REJECTED = 'rejected'
+const INTERACTIVE_ALIASES = Object.freeze({ 'qq-bot': 'qq' })
 
 // 通道名 → 用户可读名（广播文案用；统一从 capability-matrix.mjs 读取，单一事实来源）
 const DISPLAY_NAMES = {
@@ -160,7 +161,13 @@ export function registerApprovalHandler(deps) {
     try {
       const globalTypes = Array.isArray(notifier?.channels) ? notifier.channels : []
       const { channelTypes } = router.resolveOutbound(String(agentId), workspaceOf(request.agent), globalTypes)
-      return channelTypes
+      if (!Array.isArray(channelTypes)) return channelTypes
+      const merged = new Set(channelTypes)
+      for (const type of channelTypes) {
+        const alias = INTERACTIVE_ALIASES[String(type)]
+        if (alias !== undefined) merged.add(alias)
+      }
+      return [...merged]
     } catch (error) {
       // P1-2 错误可见性（2026-08-20，Trae1）：路由解析异常与「空集」同样回落全局广播
       // （fail-safe 投递语义不变），但异常路径原先零日志——同函数的空集回落自 v0.6.5
@@ -234,13 +241,22 @@ export function registerApprovalHandler(deps) {
     const channelNotes = []
     if (buttonChannels.length > 0) channelNotes.push(`${buttonChannels.join('、')} 已发可点按钮`)
     if (textChannels.length > 0) channelNotes.push(`${textChannels.join('、')} 已发审批通知`)
+    const outbound = new Set(Array.isArray(notifier?.channels) ? notifier.channels : [])
+    const carded = new Set(pushedTo.map((target) => String(target.channel)))
+    const broadcastTypes = channelTypes === null
+      ? null
+      : channelTypes.filter((type) => {
+        const alias = INTERACTIVE_ALIASES[String(type)]
+        return alias === undefined || !carded.has(alias)
+      }).filter((type) => outbound.size === 0 || outbound.has(type))
+    if (broadcastTypes !== null && broadcastTypes.length === 0) return pushedTo
     await notifier.notifyAll({
       title,
       content: channelNotes.length > 0
         ? `${content}\n\n（${channelNotes.join('；')}；无按钮渠道可回复 1 批准 / 2 拒绝）`
         : `${content}\n\n（本渠道无按钮：回复 1 批准 / 2 拒绝）`,
       level: 'timeSensitive',
-    }, channelTypes !== null ? { channelTypes } : {}).catch(() => {})
+    }, broadcastTypes !== null ? { channelTypes: broadcastTypes } : {}).catch(() => {})
     return pushedTo
   }
 
@@ -251,6 +267,49 @@ export function registerApprovalHandler(deps) {
       await inbound.editTarget(target, text)
     }
   }
+
+  // Explicit button action path. The payload is bound to its original key and
+  // token; no "latest pending" heuristic is used, including for group chats.
+  function handleApprovalAction(envelope) {
+    let action = envelope?.approvalAction
+    if (action === null || action === undefined) {
+      const text = String(envelope?.text ?? '').trim()
+      if (!text.startsWith('ap:')) return false
+      const parsed = parseApprovalAction(text)
+      if (parsed === null) return false
+      action = parsed
+    }
+    if (action === null || typeof action !== 'object') return false
+    const key = String(action.approvalKey ?? '')
+    const decision = action.decision === OUTCOME_ALLOWED || action.decision === OUTCOME_REJECTED ? action.decision : null
+    if (key === '' || decision === null) return false
+    const row = ledger.get(key)
+    const reply = (message) => {
+      const inbound = interactiveByChannel.get(envelope.channel)
+      if (inbound !== undefined) void inbound.sendText(envelope.chatId, message).catch(() => {})
+    }
+    if (row === undefined || row.status !== 'pending') {
+      reply('该审批已被处理或已失效，此次点击无效')
+      return true
+    }
+    const targets = Array.isArray(row.pushedTo) ? row.pushedTo.filter((target) => String(target.channel) === String(envelope.channel)) : []
+    if (targets.length > 0 && !targets.some((target) => String(target.userId) === String(envelope.userId))) {
+      reply('仅审批接收人可点击裁决')
+      return true
+    }
+    const verdict = bus.decide({
+      approvalKey: key,
+      decision,
+      token: typeof action.token === 'string' ? action.token : undefined,
+      via: `${envelope.channel}:button`,
+      userId: envelope.userId,
+      chatId: envelope.chatId,
+    })
+    if (!verdict.ok) reply(verdict.message ?? '该审批已被处理或已失效，此次点击无效')
+    return true
+  }
+
+  const disposeApprovalAction = bus.onMessage(handleApprovalAction)
 
   // 编号回复降级（无按钮渠道）：白名单用户回复 1/2 核销最近一条待决审批。
   // v0.6.3 返回 true = 消息已被审批消费——bus 据此停止扇出，同一消息不再进对话路由
@@ -340,7 +399,12 @@ export function registerApprovalHandler(deps) {
         onAbandon: () => { try { ledger.terminate(key) } catch { } },
         allowChats,
       }
-      const decisionPromise = mode === 'answer' ? bus.wait(key, timeoutMs, waitOptions) : null
+      const decisionPromise = mode === 'answer'
+        ? Promise.resolve().then(() => bus.wait(key, timeoutMs, waitOptions)).catch((error) => {
+          warn(`远程审批等待异常，按超时交还桌面: ${error instanceof Error ? error.message : String(error)}`)
+          return null
+        })
+        : null
       if (decisionPromise !== null) {
         liveWaiters.add(key)
         decisionPromise.then(
@@ -360,6 +424,34 @@ export function registerApprovalHandler(deps) {
 
       if (mode !== 'answer') {
         return next() // observe：只旁观，桌面照常决定
+      }
+
+      // Explicit opt-in only. The default remains exclusive desktop-first
+      // waiting; this branch never changes permissions or token semantics.
+      if (approvalConfig.parallel === true) {
+        const desktopAsk = Promise.resolve().then(() => next())
+        desktopAsk.catch(() => {})
+        const race = await new Promise((resolve) => {
+          let settled = false
+          const finish = (value) => { if (!settled) { settled = true; resolve(value) } }
+          decisionPromise.then((decision) => {
+            if (decision !== null) finish({ kind: 'remote', decision })
+            else {
+              ledger.resolve(key, ledger.get(key)?.decision === 'terminated' ? 'terminated' : 'timeout')
+              void markRemoteResolved(pushedTo, '⏱ 手机端等待结束：请到桌面处理（按钮已失效）').catch(() => {})
+            }
+          }).catch(() => {})
+          desktopAsk.then((result) => finish({ kind: 'desktop', result }), () => finish({ kind: 'desktop', result: undefined }))
+        })
+        if (race.kind === 'remote') {
+          ledger.resolve(key, race.decision.decision)
+          await markRemoteResolved(pushedTo, race.decision.decision === OUTCOME_ALLOWED ? '✅ 已远程批准（本次）' : '❌ 已远程拒绝')
+          return race.decision.decision
+        }
+        try { bus.abandon?.(key, 'desktop-first') } catch { }
+        try { ledger.terminate(key) } catch { }
+        await markRemoteResolved(pushedTo, '🖥️ 已在桌面处理（手机按钮已失效）')
+        return race.result
       }
 
       // 升级链与 wait 并行：每到一个 stage 再推一轮更高 level 提醒
@@ -399,6 +491,7 @@ export function registerApprovalHandler(deps) {
   const disposeApproval = ctx.on('approval/request', handler)
   return () => {
     disposeApproval?.()
+    disposeApprovalAction?.()
     disposeMessage?.()
     escalation.dispose()
   }

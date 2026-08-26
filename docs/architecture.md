@@ -75,6 +75,6 @@ The server is a zero-dependency `node:http` wrapper around `admin/api.mjs`. It i
 
 - Add fixed HTTP notification channels to `src/adapters/spec-channels.mjs` plus a fixture; use a code adapter only for token exchange or multi-step control flow.
 - Keep the adapter contract `resolve(cfg) -> resolved` and `send(resolved, msg) -> Promise`.
-- Inbound channels implement the shared contract and may expose optional action/question card methods; callers must always retain text/number fallbacks.
+- Inbound channels implement the shared contract and may expose optional action/question card methods; callers must always retain text/number fallbacks. The QQ transport uses explicit `INTERACTION_CREATE` key/token callbacks for single-chat cards; group targets remain text-only. Approval/question decisions stay in the shared Control Core, and `approval.parallel` is an explicit opt-in (default off) with fail-closed rejection handling.
 - Other plugins consume the injected `notifier` service and `dsh-notifier/sent` event; they must declare static injection and must not push from a sent-event handler.
 - Future bidirectional channels must keep transport, control semantics, and native rendering separate. External SDKs are optional and lazy-loaded only after license, maintenance, security, and dependency review; unlicensed or `UNLICENSED` code is not copied.

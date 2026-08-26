@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- PR #12 modular rework: QQ interaction callbacks now use the shared approval/question Control Core with explicit source binding and text fallback. QQ group targets remain non-actionable to avoid cross-member disclosure. `approval.parallel` remains disabled by default and is explicit opt-in only; wait rejection is fail-closed. Real QQ protocol/device verification is still pending.
+
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 SemVer。
 DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏性变更（会在条目中标注）。
 

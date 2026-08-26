@@ -1,12 +1,13 @@
 # Project State
 
-Snapshot date: 2026-08-26 (WeChat iLink batch 4 provider slice done on `codex/task-05-wechat-ilink`).
+Snapshot date: 2026-08-26 (PR #12 modular batch completed on `codex/task-06-pr12-modular`).
 
 Planning decision (2026-08-25): after the current maintenance batch, the product direction is a personal-mode-first cross-IM control plane. The approved staged architecture and channel plan live in `docs/architecture-roadmap.md`; this does not mean those features are implemented or released.
 
 - Canonical development repository: private `https://github.com/THEWOLFWALKER/dsh-notifier-dev`.
 - Public release/source mirror: `https://github.com/THEWOLFWALKER/dsh-notifier`.
 - Branch topology (2026-08-26): private `main` = `52c467a` (post P1-3). Active line `codex/task-05-wechat-ilink` adds the WeChat iLink provider slice on top of the maintenance line: `src/channels/wechat-ilink/` owns protocol normalization and the app assembly enters through its compatibility facade; batch 4 focused contract is **1141** tests (1140 pass + 1 win32 skip). Media remains declared-only pending real protocol/device evidence. Prior maintenance batches 1..5 + 6-A/6-B/6-C remain in the parent line. Plan/workstream in `.agents/workstreams/task-05-wechat-ilink.md`.
+- PR #12 modular batch is implemented on `codex/task-06-pr12-modular`: QQ single-chat approval/question buttons use explicit key/token callbacks and shared Control Core; old clients and group targets use text fallback, `approval.parallel` is explicit opt-in and defaults off. QQ device/protocol verification is still pending.
 - Earlier snapshot (2026-08-23, ox-alpha relay, second round):
 - Branch topology (post-merge 2026-08-23): private `main` = `52c467a`, the no-ff merge of `codex/p1-3-state-stress` (P1-3 crash-stale-lock recovery, contract 902 → 906). All prior relay lines (security-hardening, protocol-guards, error-visibility) and the P1-3 branch are contained in `main` and retired.
 - Active line: `main` (all relay work merged); new relay topics branch from `main` as `codex/<topic>`.
