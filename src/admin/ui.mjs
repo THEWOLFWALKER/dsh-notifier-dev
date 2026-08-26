@@ -109,6 +109,8 @@ label.fld input { flex: 1; }
 .first-run-state .state-node.current { color: var(--accent); border-color: var(--accent); }
 .first-run-state .state-node.done { color: var(--ok); border-color: var(--ok); }
 .first-run-state .state-arrow { color: var(--muted); }
+.first-visit-hint { border-left: 3px solid var(--accent); }
+.first-visit-hint .card-head { cursor: default; }
 
 /* v0.5 特性 D：移动端适配（≤768px 单列 / 导航横滚 / 宽表横滚 / 触控目标 ≥44px）。
    纯 CSS 增量，零逻辑变更零构建；桌面端（>768px）逐字节不变。 */
@@ -151,6 +153,22 @@ label.fld input { flex: 1; }
   <div id="globalMsg" class="msg"></div>
 
   <section id="tab-dashboard" class="tabsec active">
+    <div id="firstVisitHint" class="card first-visit-hint">
+      <div class="card-head">
+        <span class="dot ok"></span><b>首次打开：先走个人模式</b>
+        <span class="badge none">无需先写 YAML</span>
+      </div>
+      <div class="card-body">
+        <p>这是仅本机可访问的管理台。地址已显示在顶部；服务启动时会在终端打印访问 token，点击右上角「未设置 token」输入即可（token 只保存在当前浏览器会话）。</p>
+        <div class="row">
+          <button id="btnFirstVisitToken" type="button">输入管理台 token</button>
+          <button class="tabbtn" data-tab="channels" type="button">配置通道 / 扫码授权 →</button>
+          <button class="tabbtn" data-tab="members" type="button">配对成员 →</button>
+        </div>
+        <p class="muted small">个人模式默认：observe + approve 已开启；converse 可按需开启；群聊控制默认关闭。绑定矩阵与会话覆盖等高级设置默认隐藏，完成基础配置后可点顶部「打开高级设置」。</p>
+        <p class="muted small">当前管理台入口：<code id="firstVisitEntryUrl"></code>（也可点顶部「复制地址」）</p>
+      </div>
+    </div>
     <div id="firstRunState" class="first-run-state" aria-label="首次配置进度">
       <span class="state-node current" data-state="unconfigured">未配置</span><span class="state-arrow">→</span>
       <span class="state-node" data-state="paired">已配对</span><span class="state-arrow">→</span>
@@ -416,10 +434,14 @@ function renderTokenState() {
   var t = getToken()
   $('#tokenState').textContent = t ? '会话 token 已设置（点击更换）' : '未设置 token（点击输入）'
   $('#btnLogout').disabled = !t
+  var firstVisit = $('#firstVisitHint')
+  if (firstVisit) firstVisit.hidden = !!t
 }
 function renderEntryPoint() {
   var target = window.location.origin + window.location.pathname
   $('#entryUrl').textContent = target
+  var firstVisitEntry = $('#firstVisitEntryUrl')
+  if (firstVisitEntry) firstVisitEntry.textContent = target
   return target
 }
 function copyEntryPoint() {
@@ -1423,10 +1445,13 @@ function init() {
     try { window.localStorage.setItem('onboard_dismissed', '1') } catch (e) {}
     $('#onboarding').hidden = true
   })
-  $('#tokenState').addEventListener('click', function () {
+  function promptAndLoadToken() {
     var t = askToken()
     if (t) { authGen += 1; recoveryUsed = false; stopNotifyStream(); setCandidateToken(t); renderTokenState(); loadAll(); startNotifyStream(t) } // 候选仅在成功响应后写入会话
-  })
+  }
+  $('#tokenState').addEventListener('click', promptAndLoadToken)
+  var firstVisitToken = $('#btnFirstVisitToken')
+  if (firstVisitToken) firstVisitToken.addEventListener('click', promptAndLoadToken)
   $('#btnLogout').addEventListener('click', function () {
     authGen += 1
     stopNotifyStream()

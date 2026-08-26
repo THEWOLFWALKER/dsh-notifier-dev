@@ -143,6 +143,7 @@ ${extractScript(ADMIN_UI_HTML).replace(/\ninit\(\)\s*$/, '\n')}
   const exports_ = vm.runInContext(wrapped, context, { filename: 'admin-ui-inline.mjs' })
   return {
     ...exports_,
+    window: sandbox.window,
     els,
     store,
     localStore,
@@ -546,6 +547,49 @@ test('Task 04：测试通知成功/失败均给出下一步与重试文案', () 
   assert.ok(html.includes('下一步：回 Dashboard 确认状态'), '成功测试需给出后续路径')
   assert.ok(html.includes('检查必填凭证后重试'), '失败测试需给出可执行重试路径')
   assert.ok(html.includes('测试失败：'), '异常响应需可见')
+})
+
+test('首访卡：无 token 时可见，验证 token 后自动收起并保留 loopback 入口', () => {
+  const rig = boot()
+  rig.renderEntryPoint()
+  rig.renderTokenState()
+  assert.equal(rig.els.get('#firstVisitHint').hidden, false, '无 token 首访应显示快速路径卡')
+  assert.equal(rig.els.get('#firstVisitEntryUrl').textContent, 'http://127.0.0.1:8104/', '首访卡应显示当前管理台地址')
+  rig.setToken('SESSION')
+  rig.renderTokenState()
+  assert.equal(rig.els.get('#firstVisitHint').hidden, true, '已有会话 token 后首访卡应收起')
+})
+
+test('入口复制：Clipboard 成功与失败/不可用均给出可读反馈', async () => {
+  const rig = boot()
+  const copied = []
+  rig.window.navigator.clipboard = { writeText: async (value) => { copied.push(value) } }
+  await rig.copyEntryPoint()
+  assert.deepEqual(copied, ['http://127.0.0.1:8104/'], '复制成功应写入精确 loopback 地址')
+  assert.match(rig.els.get('#globalMsg').textContent, /管理台地址已复制/)
+
+  rig.window.navigator.clipboard = { writeText: async () => { throw new Error('NotAllowedError') } }
+  await rig.copyEntryPoint()
+  assert.match(rig.els.get('#globalMsg').textContent, /复制失败.*当前地址已显示在顶部，可手动复制/)
+
+  rig.window.navigator.clipboard = undefined
+  await rig.copyEntryPoint()
+  assert.match(rig.els.get('#globalMsg').textContent, /当前地址已显示在顶部，可手动复制/)
+})
+
+test('首访快速路径：通道/扫码与成员按钮可达，个人模式默认策略和高级隐藏文案清楚', () => {
+  const html = ADMIN_UI_HTML
+  const start = html.indexOf('id="firstVisitHint"')
+  const end = html.indexOf('</div>\n    <div id="firstRunState"', start)
+  const card = html.slice(start, end)
+  assert.match(card, /id="btnFirstVisitToken"/, '首访卡应有 token 输入按钮')
+  assert.match(card, /class="tabbtn"[^>]*data-tab="channels"[^>]*>配置通道 \/ 扫码授权/, '首访卡应直达通道/扫码配置')
+  assert.match(card, /class="tabbtn"[^>]*data-tab="members"[^>]*>配对成员/, '首访卡应直达成员配对')
+  assert.match(card, /observe \+ approve 已开启/, '个人模式应明确 observe + approve 默认开启')
+  assert.match(card, /converse 可按需开启/, '个人模式应明确 converse 可选')
+  assert.match(card, /群聊控制默认关闭/, '个人模式应明确群聊控制关闭')
+  assert.match(card, /高级设置默认隐藏/, '应明确高级设置默认隐藏')
+  assert.match(card, /无需先写 YAML/, '首次路径不应依赖 YAML')
 })
 
 // ————————————————— ⑥ 路线图阶段 2A：待处理远程提问面板 —————————————————
