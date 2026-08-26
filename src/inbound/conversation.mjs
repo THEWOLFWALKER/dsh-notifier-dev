@@ -60,6 +60,7 @@ export function registerConversationRouter(deps) {
   const cfg = deps.config ?? {}
   const router = deps.router ?? null
   const registry = deps.registry ?? null
+  const control = deps.control ?? null
   // mergeWindowMs 归一：undefined/null → 默认；0 合法（README 承诺「0 = 关闭合并」，立即投递）；
   // 非数字/NaN → 默认；负数 → 0（Math.max 兜底）。注意不能用 `Number(x) || 默认`——那会把
   // 显式 0 当 falsy 回落 1500，使下方 `mergeWindowMs === 0` 的立即投递分支永不可达（v0.3.2 审查修复）。
@@ -482,7 +483,7 @@ export function registerConversationRouter(deps) {
     const merged = entry.forceSteer ? `${steerPrefix}${text}` : text
     route(envelope, merged)
   }
-  function route(envelope, text) {
+  function routeUnsafe(envelope, text) {
     if (text.startsWith('/')) {
       if (handleCommand(envelope, text)) return
     }
@@ -512,6 +513,34 @@ export function registerConversationRouter(deps) {
           `已投 ${bound}（该 workspace 有 ${count} 个活跃会话，用 /agent use 或 /bind 精确指定）`)
       }
     }
+  }
+
+  // Control Core gate for session-affecting inbound text. Ordinary outbound
+  // notifications never pass here; only remote control/conversation commands do.
+  function route(envelope, text) {
+    const trimmed = String(text ?? '').trim()
+    const command = trimmed === '/stop' || trimmed.startsWith('/stop ') ? 'stop'
+      : (trimmed.startsWith(steerPrefix) ? 'steer' : (trimmed.startsWith('/') ? null : 'ordinary-message'))
+    if (control === null || command === null) return routeUnsafe(envelope, text)
+    const target = resolveTarget(envelope)
+    if (target.sessionId === null) return routeUnsafe(envelope, text)
+    const receipt = control.handle({
+      command,
+      channel: envelope.channel,
+      accountId: envelope.channel,
+      userId: String(envelope.userId ?? ''),
+      chatId: String(envelope.chatId ?? ''),
+      chatType: envelope.chatType,
+      sessionId: String(target.sessionId),
+      policyVersion: '1',
+      pending: { status: 'pending', sessionId: String(target.sessionId), createdAt: Date.now() - 1, expiresAt: Date.now() + 10 * 60 * 1000 },
+      settle: () => { routeUnsafe(envelope, text); return true },
+    })
+    if (receipt.status === 'accepted') return
+    if (receipt.reason === 'conversation_disabled') reply(envelope.channel, envelope.chatId, '远程对话默认关闭，请在 session policy 中显式开启')
+    else if (receipt.reason === 'group_chat_disabled') reply(envelope.channel, envelope.chatId, '群聊不允许远程控制，请回原私聊会话操作')
+    else if (receipt.reason === 'not_paired') reply(envelope.channel, envelope.chatId, '请先完成配对后再操作')
+    else reply(envelope.channel, envelope.chatId, '远程控制被拒绝，请回桌面确认')
   }
 
   const disposeMessage = bus.onMessage((envelope) => {

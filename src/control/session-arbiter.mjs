@@ -12,6 +12,7 @@ export function normalizeSessionPolicy(input = {}, now = Date.now()) {
   const capabilities = {
     observe: input.capabilities?.observe !== false,
     approve: input.capabilities?.approve !== false,
+    stop: input.capabilities?.stop !== false,
     converse: input.capabilities?.converse === true,
     groupChatControl: input.capabilities?.groupChatControl === true,
   }
@@ -49,6 +50,15 @@ function bound(value) {
   return text(value)
 }
 
+function isGroupChat(event) {
+  const type = String(event?.chatType ?? '').toLowerCase()
+  if (type === 'group' || type === 'supergroup' || type === '2' || type === 'chat') return true
+  const chatId = String(event?.chatId ?? '')
+  // Provider-neutral shape guards: these are only a deny-side hint. A provider
+  // with an unknown shape remains subject to its explicit chatType metadata.
+  return chatId.startsWith('oc_') || chatId.startsWith('group_') || chatId.startsWith('grp_')
+}
+
 export function canAcceptCommand(policy, event, now = Date.now()) {
   if (policy === null || typeof policy !== 'object' || event === null || typeof event !== 'object') return { ok: false, reason: 'malformed' }
   if (isPolicyExpired(policy, now)) return { ok: false, reason: policy.revoked ? 'revoked' : 'expired' }
@@ -59,7 +69,8 @@ export function canAcceptCommand(policy, event, now = Date.now()) {
   }
   if (!COMMANDS.includes(event.command)) return { ok: false, reason: 'unknown_command' }
   const caps = policy.capabilities ?? {}
-  if (event.chatType === 'group' && caps.groupChatControl !== true) return { ok: false, reason: 'group_chat_disabled' }
+  if (isGroupChat(event) && caps.groupChatControl !== true) return { ok: false, reason: 'group_chat_disabled' }
+  if (event.command === 'stop' && caps.stop !== true) return { ok: false, reason: 'stop_disabled' }
   if (event.command === 'approval' && caps.approve !== true) return { ok: false, reason: 'approval_disabled' }
   if (event.command === 'question-answer' && caps.approve !== true) return { ok: false, reason: 'approval_disabled' }
   if ((event.command === 'steer' || event.command === 'ordinary-message') && caps.converse !== true) return { ok: false, reason: 'conversation_disabled' }

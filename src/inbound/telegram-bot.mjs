@@ -60,7 +60,7 @@ function clampTelegramText(text) {
  * @param {number} [options.errorBackoffMs=5000] - 轮询异常退避（测试可缩短）
  * @param {number} [options.callbackTtlMs] - 按钮短引用有效期（缺省 15min，略长于 token TTL）
  */
-export function createTelegramInbound({ config, bus, vault, store = null, logger = null, fetchImpl, errorBackoffMs, actions = null, callbackTtlMs, identity = null, questions = null } = {}) {
+export function createTelegramInbound({ config, bus, vault, store = null, logger = null, fetchImpl, errorBackoffMs, actions = null, callbackTtlMs, identity = null, questions = null, control = null } = {}) {
   const apiBase = (config.apiBase || DEFAULT_API_BASE).replace(/\/+$/, '')
   const botToken = String(config.botToken ?? '')
   const backoffMs = Math.max(0, Number(errorBackoffMs) || DEFAULT_ERROR_BACKOFF_MS)
@@ -154,7 +154,7 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
       if (parts[0] === 'ac' && actions !== null && parts.length >= 3) {
         const actionKey = parts.slice(1, -1).join(':')
         const token = parts[parts.length - 1]
-        const result = actions.dispatch({ actionKey, token, via: 'telegram:action', userId: query.from?.id, chatId: query.message?.chat?.id })
+        const result = actions.dispatch({ actionKey, token, via: 'telegram:action', userId: query.from?.id, chatId: query.message?.chat?.id, ...(query.message?.chat?.type !== undefined ? { chatType: query.message.chat.type } : {}) })
         const actionText = result?.ok === true
           ? result.message
           : (result?.message ?? '该操作已处理或已过期')
@@ -173,8 +173,10 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
         const qKey = parts.slice(1, -2).join(':')
         const optIdx = parts[parts.length - 2]
         const token = parts[parts.length - 1]
-        const verdict = questions.decide({ qKey, optIdx, token, via: 'telegram', userId: query.from?.id, chatId: query.message?.chat?.id })
-        const text = verdict?.message ?? '该提问已回答或已过期'
+        const verdict = control !== null
+          ? control.handle({ command: 'question-answer', qKey, optIdx, token, via: 'telegram', channel: 'telegram', userId: String(query.from?.id ?? ''), chatId: String(query.message?.chat?.id ?? ''), chatType: query.message?.chat?.type })
+          : questions.decide({ qKey, optIdx, token, via: 'telegram', userId: query.from?.id, chatId: query.message?.chat?.id })
+        const text = verdict?.message ?? (verdict?.status === 'accepted' ? '✅ 已作答' : '该提问已回答或已过期')
         await api('answerCallbackQuery', { callback_query_id: query.id, text: String(text).slice(0, 200) }).catch(() => {})
         if (query.message?.chat?.id !== undefined) {
           await api('editMessageText', {
@@ -192,7 +194,9 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
         const decision = parts[1]
         const approvalKey = parts.slice(2, -1).join(':')
         const token = parts[parts.length - 1]
-        const verdict = bus.decide({
+        const verdict = control !== null
+          ? control.handle({ command: 'approval', approvalKey, decision, token, via: 'telegram', channel: 'telegram', userId: String(query.from?.id ?? ''), chatId: String(query.message?.chat?.id ?? ''), chatType: query.message?.chat?.type })
+          : bus.decide({
           approvalKey,
           decision,
           token,
@@ -200,7 +204,7 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
           userId: query.from?.id,
           chatId: query.message?.chat?.id,
         })
-        const text = verdict.ok
+        const text = verdict.ok === true || verdict.status === 'accepted'
           ? (decision === 'allowed-once' ? '✅ 已批准（单次有效）' : '❌ 已拒绝')
           : '该审批已处理或已过期（token 单次核销）'
         await api('answerCallbackQuery', { callback_query_id: query.id, text }).catch(() => {})

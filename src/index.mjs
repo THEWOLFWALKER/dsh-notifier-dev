@@ -26,6 +26,7 @@ import { createQuestionBridge, registerAskUserTool } from './questions/router.mj
 import { registerConversationRouter } from './inbound/conversation.mjs'
 // v0.5：动作闭环（通知按钮 → 内置处置动作）
 import { createActionDispatcher } from './actions.mjs'
+import { createControlEntry } from './control/entry.mjs'
 // v0.6：开放事件源（ctx.notifier 服务注入 + dsh-notifier/sent 事件）
 import { createPublicFacade, composeOnSend, deepFreeze, redactAuditRecord } from './public.mjs'
 // v0.3.2：路由引擎（双向解析链 + 会话台账，src/routing/*.mjs）
@@ -466,6 +467,10 @@ export function apply(ctx, config = {}) {
     try { unlinkSync(BOOTSTRAP_CODE_FILE) } catch { /* 不存在即已达目的（幂等） */ }
   }
   const identity = createIdentity({ store, logger })
+  // Control Core：所有远程控制回调共用一个入口；personal 默认只允许已配对私聊，
+  // converse/group control 必须由显式 policy 开启。
+  const control = createControlEntry({ policy: inboundRaw.control ?? {}, identity, logger })
+  disposers.push(() => control.dispose())
   const pairing = createPairing({
     store,
     logger,
@@ -551,7 +556,7 @@ export function apply(ctx, config = {}) {
 
     // v0.5 动作分发器：vault/store 之后创建（无环），telegram/feishu 按钮回调消费。
     // 内置白名单仅 turn/cancel——权限面与 /stop 命令完全等价（永无任意代码执行）。
-    const actions = createActionDispatcher({ vault, store, logger })
+    const actions = createActionDispatcher({ vault, store, logger, control })
     actions.register('turn/cancel', ({ payload }) => {
       const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId : ''
       if (sessionId === '') return { ok: false, message: '无效会话' }
@@ -601,6 +606,7 @@ export function apply(ctx, config = {}) {
           identity, // v0.7 三级目标解析：绑定成员优先
           actions, // v0.5 动作按钮（ac: 回调 → turn/cancel）
           questions: questionsForChannels, // v0.8 提问作答按钮（aq: 回调 → questions.decide）
+          control,
         })
         instance.start()
         interactiveInstances.push(instance)
@@ -623,6 +629,7 @@ export function apply(ctx, config = {}) {
           logger,
           actions, // v0.5 动作按钮（ac: 回调 → turn/cancel）
           questions: questionsForChannels, // v0.8 提问作答按钮（aq: 回调 → questions.decide）
+          control,
         })
         instance.start()
         interactiveInstances.push(instance)
@@ -730,6 +737,7 @@ export function apply(ctx, config = {}) {
         vault,
         store,
         identity, // CRACK-003 编号回复归属校验：owner 才能代决非本人卡片
+        control,
         interactive: interactiveInstances,
         approvalConfig: approvalRaw,
         router, // v0.3.2 审批分流：request.agent 可解析时只发绑定通道（quiet 对审批不生效）
@@ -756,6 +764,7 @@ export function apply(ctx, config = {}) {
           store,
           notifier,
           identity, // CRACK-004 hint 兜底编号回复归属闸：仅该渠道 owner 可代答，缺失 fail-closed
+          control,
           interactive: () => interactiveRaw, // 惰性 getter：桥体每次裁决取最新实例表
           logger,
           config: resolved.questions,
@@ -792,6 +801,7 @@ export function apply(ctx, config = {}) {
         config: inboundRaw.conversation,
         router, // v0.3.2 入站解析链（bind > 通道默认 > 单 agent > 最近活跃）
         registry, // 会话台账（/agent 命令族数据源、活跃信号、入站对话挂钩）
+        control,
         channelTypes: () => resolved.channels.map((entry) => entry.type), // 全局渠道池快照（分流过滤白名单）
         logger,
       })

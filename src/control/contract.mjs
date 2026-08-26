@@ -21,6 +21,7 @@ export function normalizeControlEvent(input, now = Date.now()) {
       eventId: text(input.eventId), sessionId: text(input.sessionId), source: text(input.source),
       channel: text(input.channel), accountId: text(input.accountId), userId: text(input.userId),
       chatId: text(input.chatId), policyVersion: text(input.policyVersion), command: input.command,
+      ...(typeof input.chatType === 'string' && input.chatType !== '' ? { chatType: input.chatType } : {}),
       createdAt, expiresAt,
     }),
   }
