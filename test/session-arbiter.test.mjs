@@ -51,6 +51,16 @@ test('owner-only approval and revoke fail closed', () => {
   assert.equal(canAcceptCommand(revokePolicy(p, 'manual', 120), event(), 120).reason, 'revoked')
 })
 
+test('owner authorization fails closed when the policy conversation source is genuinely absent', () => {
+  // A policy that names an owner but binds no channel/accountId cannot prove the
+  // event is the true owner source: the owner userId alone must not settle, and an
+  // arbitrary whatever-account event must be denied, not granted by event-supplied values.
+  const p = normalizeSessionPolicy({ policyVersion: 'p1', sessionId: 's1', chatId: 'c1', owner: 'u1', approvalOwnerOnly: true }, 100)
+  assert.equal(canAcceptCommand(p, event({ command: 'approval', userId: 'u1', channel: 'telegram', accountId: 'a1' })).reason, 'owner_only')
+  assert.equal(canSettleApproval(p, event({ command: 'approval', userId: 'u1', channel: 'telegram', accountId: 'a1' })), false)
+  assert.equal(canSettleApproval(p, event({ command: 'approval', userId: 'u1', accountId: 'a9' })), false)
+})
+
 test('approvalMembers normalize safely: trim, drop malformed/wildcard, dedup, and cap at 64', () => {
   const p = normalizeSessionPolicy({
     mode: 'team', sessionId: 's1', chatId: 'c1', owner: 'u1',

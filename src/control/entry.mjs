@@ -112,21 +112,40 @@ export function createControlEntry({ policy = {}, identity = null, now = Date.no
     if (handled.has(event.eventId)) return makeReceipt('already_handled', event, 'duplicate_event')
     if (!paired(identity, event)) return makeReceipt('rejected', event, 'not_paired')
     try {
-      // Pending rows are the source-of-truth binding. A callback may not
-      // rewrite its chat/channel/user in the adapter envelope to manufacture
-      // a fresh policy that matches the wrong conversation.
-      for (const key of ['channel', 'accountId', 'chatId']) {
-        if (text(pending[key]) !== null && pending[key] !== event[key]) {
+      // The conversation source is the original policy/pending binding, never the
+      // event envelope. An adapter or attacker may rewrite channel/accountId/userId
+      // on the event; trusting it here would let the event manufacture the very
+      // owner source the arbiter later compares against. So authorization is bound
+      // to the true source (rowMeta -> pending top-level -> basePolicy) instead:
+      // the event must match whichever layer declares it, and when owner/member
+      // authorization is in play the absence of a genuine conversation source fails
+      // closed rather than accepting event-supplied values. Legacy non-authorizing
+      // paths (action `stop`, conversation steering) that genuinely carry no source
+      // metadata keep their existing adapter-envelope binding.
+      const rowMeta = pending.control ?? pending.controlMeta ?? {}
+      const sourceOf = (key) =>
+        text(rowMeta[key]) ??
+        text(pending[key]) ??
+        (key === 'sessionId' ? text(pending.agentId) : null) ??
+        text(basePolicy[key])
+      const trueSource = {
+        channel: sourceOf('channel'),
+        accountId: sourceOf('accountId'),
+        chatId: sourceOf('chatId'),
+        sessionId: sourceOf('sessionId'),
+        userId: sourceOf('userId'),
+      }
+      for (const key of ['channel', 'accountId', 'chatId', 'sessionId']) {
+        if (trueSource[key] !== null && trueSource[key] !== event[key]) {
           return makeReceipt('rejected', event, `source_mismatch_${key}`)
         }
       }
-      if (text(pending.userId) !== null && pending.userId !== event.userId && input.trusted !== true) {
+      if (trueSource.userId !== null && trueSource.userId !== event.userId && input.trusted !== true) {
         return makeReceipt('rejected', event, 'source_mismatch_userId')
       }
       if (typeof spec?.authorize === 'function' && spec.authorize(input, pending, event) !== true) {
         return makeReceipt('rejected', event, 'source_policy_rejected')
       }
-      const rowMeta = pending.control ?? pending.controlMeta ?? {}
       const mergedPolicy = normalizeSessionPolicy({
         ...basePolicy,
         ...rowMeta,
@@ -142,8 +161,17 @@ export function createControlEntry({ policy = {}, identity = null, now = Date.no
           basePolicy.expiresAt !== null && Number.isFinite(Number(basePolicy.expiresAt)) ? Number(basePolicy.expiresAt) : Infinity,
           event.expiresAt !== null && Number.isFinite(Number(event.expiresAt)) ? Number(event.expiresAt) : Infinity,
         ),
-        owner: rowMeta.owner ?? basePolicy.owner ?? event.userId,
+        owner: text(rowMeta.owner) ?? text(basePolicy.owner),
       }, now())
+      // Owner / team-member settlement is the only authorization that derives its
+      // conversation source from the policy; when that source genuinely does not
+      // exist it must fail closed instead of letting the event mint it.
+      const authInPlay = mergedPolicy.approvalOwnerOnly === true
+        || (mergedPolicy.mode === 'team' && mergedPolicy.approvalMembers.length > 0)
+      if ((event.command === 'approval' || event.command === 'question-answer')
+        && authInPlay && trueSource.channel === null && trueSource.accountId === null) {
+        return makeReceipt('rejected', event, 'source_mismatch_channel')
+      }
       const arbiter = createSessionArbiter({
         policy: mergedPolicy,
         now,

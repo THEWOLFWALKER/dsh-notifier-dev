@@ -174,6 +174,61 @@ test('team approvalMembers authorize only listed members and the owner through t
   assert.equal(settled.length, 2)
 })
 
+// The 2026 team-policy repaired source binding: even when a pending row omits
+// account/channel metadata (legacy rows), an owner-only / team owner event must
+// never manufacture the policy conversation source from the event envelope.
+function runOwnerControl(policy, row, event) {
+  let settled = 0
+  let seenPolicy = null
+  const control = createControlEntry({ policy, now: () => 150 })
+  const result = control.handle({
+    command: 'approval', pending: row, eventId: event.eventId, ...event,
+    settle: (input, pendingRow, ev, policySnapshot) => { settled++; seenPolicy = policySnapshot; return true },
+  })
+  return { result, settled, seenPolicy }
+}
+
+test('owner source binding fails closed when pending omits accountId (wrong account can never manufacture the source)', () => {
+  const policy = { mode: 'team', owner: 'owner-1', channel: 'telegram', accountId: 'tg-app', approvalOwnerOnly: true, capabilities: { approve: true } }
+  // Legacy pending row carries no explicit accountId; the owner callback then claims a different account.
+  const row = { sessionId: 'session-1', channel: 'telegram', chatId: 'tg-chat', userId: 'owner-1', createdAt: 100, expiresAt: 1000 }
+  const hit = runOwnerControl(policy, row, { channel: 'telegram', accountId: 'other', userId: 'owner-1', chatId: 'tg-chat', sessionId: 'session-1', policyVersion: '1', chatType: 'private' })
+  assert.equal(hit.result.status, 'rejected')
+  assert.equal(hit.result.reason, 'source_mismatch_accountId')
+  assert.equal(hit.settled, 0, 'a wrong-account owner callback must never settle')
+  // correctness guard: the snapshot the arbiter would authorize against carries the true original account source
+  const legit = runOwnerControl(policy, { ...row, accountId: 'tg-app' }, { channel: 'telegram', accountId: 'tg-app', userId: 'owner-1', chatId: 'tg-chat', sessionId: 'session-1', policyVersion: '1', chatType: 'private' })
+  assert.equal(legit.result.status, 'accepted')
+  assert.equal(legit.settled, 1)
+  assert.equal(legit.seenPolicy.accountId, 'tg-app')
+  assert.equal(legit.seenPolicy.owner, 'owner-1')
+})
+
+test('owner from wrong QQ channel (private chatType) fails closed when pending omits channel/accountId', () => {
+  const policy = { mode: 'team', owner: 'u1', channel: 'qq', accountId: 'QQ_APP', approvalOwnerOnly: true, capabilities: { approve: true } }
+  // Pending row omits both channel and accountId (only session/chat/user), so only the QQ-bot source id is authoritative.
+  const row = { sessionId: 'session-1', chatId: 'u1', userId: 'u1', createdAt: 100, expiresAt: 1000 }
+  const wrongSource = runOwnerControl(policy, row, { channel: 'qq', accountId: 'OTHER_APP', userId: 'u1', chatId: 'u1', sessionId: 'session-1', policyVersion: '1', chatType: 'private' })
+  assert.equal(wrongSource.result.status, 'rejected')
+  assert.equal(wrongSource.result.reason, 'source_mismatch_accountId')
+  assert.equal(wrongSource.settled, 0)
+  // the authoritative QQ-bot account still settles
+  const correct = runOwnerControl(policy, row, { channel: 'qq', accountId: 'QQ_APP', userId: 'u1', chatId: 'u1', sessionId: 'session-1', policyVersion: '1', chatType: 'private' })
+  assert.equal(correct.result.status, 'accepted')
+  assert.equal(correct.settled, 1)
+})
+
+test('owner-only authorization fails closed when no source metadata exists at all (legacy with no bindable source)', () => {
+  // No channel/accountId anywhere (neither policy nor pending row): owner-only cannot
+  // prove the event is the true owner source, so it must deny rather than trust the event.
+  const policy = { mode: 'team', owner: 'owner-1', approvalOwnerOnly: true, capabilities: { approve: true } }
+  const row = { sessionId: 'session-1', chatId: 'tg-chat', userId: 'owner-1', createdAt: 100, expiresAt: 1000 }
+  const hit = runOwnerControl(policy, row, { channel: 'telegram', accountId: 'tg-app', userId: 'owner-1', chatId: 'tg-chat', sessionId: 'session-1', policyVersion: '1', chatType: 'private' })
+  assert.equal(hit.result.status, 'rejected')
+  assert.equal(hit.result.reason, 'source_mismatch_channel')
+  assert.equal(hit.settled, 0)
+})
+
 test('team member authorization stays fail-closed on wrong chat and group chat, zero settlement', () => {
   const settled = []
   const control = makeTeamControl([{ channel: 'telegram', accountId: 'telegram', userId: 'member-2' }], 'owner-1', settled)
