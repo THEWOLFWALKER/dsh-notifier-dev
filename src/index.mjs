@@ -17,12 +17,8 @@ import { createTokenVault } from './inbound/tokens.mjs'
 import { createIdentity } from './inbound/identity.mjs'
 import { createPairing } from './inbound/pairing.mjs'
 import { createInboundBus } from './inbound/bus.mjs'
-import { createTelegramInbound } from './inbound/telegram-bot.mjs'
-import { createFeishuInbound } from './inbound/feishu-bot.mjs'
-import { createQqInbound } from './inbound/qq-gw.mjs'
-import { createWxpusherInbound } from './inbound/wxpusher-callback.mjs'
-import { createWechatIlinkInbound, resolveWechatInboundConfig, ACCOUNT_KEY } from './channels/wechat-ilink/index.mjs'
-import { createDingtalkInbound } from './inbound/dingtalk-stream.mjs'
+import { createInboundChannelRegistry } from './assembly/inbound-channels.mjs'
+import { disposeAll } from './assembly/lifecycle.mjs'
 import { registerApprovalHandler } from './approval/router.mjs'
 import { createQuestionBridge, registerAskUserTool } from './questions/router.mjs'
 import { registerConversationRouter } from './inbound/conversation.mjs'
@@ -464,156 +460,37 @@ export function apply(ctx, config = {}) {
     actionsRef = actions
     disposers.push(() => actions.dispose())
 
-    // v0.3.0 多通道装配：交互渠道实例（统一契约，approval 卡片推送用）与回执通道表。
-    // telegram 为 v0.2.0 旧形状（notifyChatIds），经 _contract.normalizeInbound 归一；
-    // 后续通道（feishu/qq/wxpusher/wechat）按统一契约逐个挂进这两个容器。
-    const interactiveInstances = []
-    const replyTargets = new Map()
-
-    // v0.6.1 逐通道装配隔离（真机事故复盘）：装配段此前的同步抛错会直接冒出 apply，
-    // 被 cordis 吃掉（web profile 下零可见）→ 出站正常（notifier 先建好）+ inbound
-    // 全死 + 无任何线索。现在每条通道独立守护：炸了点名 warn（warn 已双写 stderr）
-    // 并跳过该通道，其余通道与审批/会话路由照常装配——真正兑现「绝不弄崩宿主」。
-    const startInboundChannel = (name, boot) => {
-      try {
-        return boot()
-      } catch (error) {
-        warn(`inbound:${name} 装配失败，已跳过（其余通道不受影响）: ${error instanceof Error ? error.message : String(error)}`)
-        return null
-      }
-    }
-
-    let telegramInbound = null
-    if (inboundBotToken !== '') {
-      telegramInbound = startInboundChannel('telegram', () => {
-        const instance = createTelegramInbound({
-          config: { botToken: inboundBotToken, apiBase: tgRaw.apiBase, notifyChatIds },
-          bus,
-          vault,
-          store,
-          logger,
-          identity, // v0.7 三级目标解析：绑定成员优先
-          actions, // v0.5 动作按钮（ac: 回调 → turn/cancel）
-          questions: questionsForChannels, // v0.8 提问作答按钮（aq: 回调 → questions.decide）
-          control,
-        })
-        instance.start()
-        interactiveInstances.push(instance)
-        replyTargets.set('telegram', instance)
-        disposers.push(() => instance.stop())
-        warn(`inbound 已启动：telegram 长轮询（绑定 ${identity.size()} 人${guidedBoot ? '，引导态：等待 /pair 配对' : ''}；审批模式 ${approvalRaw.mode === 'answer' ? 'answer（远程可决）' : approvalWanted ? 'observe（只旁观）' : '未配置'}）`)
-        return instance
-      })
-    }
-
-    // 飞书 inbound：WS 长连接（免公网）。SDK 懒加载——未安装 optionalDependencies
-    // 时 start() 内部中文指引后静默不可用，不影响其他通道。
-    if (feishuOk) {
-      startInboundChannel('feishu', () => {
-        const instance = createFeishuInbound({
-          config: feishuResolved.config,
-          bus,
-          fallbackTargets: allowUsers,
-          identity, // v0.7 三级目标解析：绑定成员优先
-          logger,
-          actions, // v0.5 动作按钮（ac: 回调 → turn/cancel）
-          questions: questionsForChannels, // v0.8 提问作答按钮（aq: 回调 → questions.decide）
-          control,
-        })
-        instance.start()
-        interactiveInstances.push(instance)
-        replyTargets.set('feishu', instance)
-        disposers.push(() => instance.stop())
-        warn(`inbound 已启动：feishu WebSocket 长连接（卡片审批 + 命令回执）`)
-        return instance
-      })
-    }
-
-    // QQ 官方机器人 inbound：WS 网关 + REST 裸协议。单聊优先原生按钮卡片，
-    // 发送失败或群聊安全降级为「回复 1 批准 / 2 拒绝」。
-    if (qqOk) {
-      startInboundChannel('qq', () => {
-        const instance = createQqInbound({
-          config: qqResolved.config,
-          bus,
-          fallbackTargets: allowUsers,
-          identity, // v0.7 三级目标解析：绑定成员优先（群目标无条件保留）
-          logger,
-        })
-        instance.start()
-        interactiveInstances.push(instance)
-        replyTargets.set('qq', instance)
-        disposers.push(() => instance.stop())
-        warn(`inbound 已启动：qq WebSocket 网关（文本审批通知 + 编号回复裁决）`)
-        return instance
-      })
-    }
-
-    // WxPusher inbound：HTTP 回调（send_up_cmd 上行）+ appToken 定向推送回执。
-    if (wxOk) {
-      startInboundChannel('wxpusher', () => {
-        const instance = createWxpusherInbound({
-          config: wxResolved.config,
-          bus,
-          store,
-          fallbackTargets: allowUsers,
-          identity, // v0.7 三级目标解析：绑定成员优先
-          logger,
-        })
-        instance.start()
-        interactiveInstances.push(instance)
-        replyTargets.set('wxpusher', instance)
-        disposers.push(() => instance.stop())
-        warn(`inbound 已启动：wxpusher HTTP 回调（密径鉴权 + 编号回复裁决）`)
-        return instance
-      })
-    }
-    // 微信 iLink inbound：getupdates 长轮询 + sendmessage 回执（裸协议，零依赖）。
-    // 凭证缺省回落登录 CLI 落盘的 wechat:account；审批无按钮，靠编号回复裁决。
-    if (wechatWanted) {
-      const wechatResolved = resolveWechatInboundConfig(wechatRaw, { credentials: store.get(ACCOUNT_KEY) })
-      if (!wechatResolved.ok) {
-        warn(`inbound.wechat 跳过: ${wechatResolved.reason}`)
-      } else {
-        startInboundChannel('wechat', () => {
-          const instance = createWechatIlinkInbound({
-            config: wechatResolved.config,
-            bus,
-            store,
-            fallbackTargets: allowUsers,
-            identity, // v0.7 三级目标解析：绑定成员优先
-            logger,
-          })
-          instance.start()
-          interactiveInstances.push(instance)
-          replyTargets.set('wechat', instance)
-          disposers.push(() => instance.stop())
-          warn(`inbound 已启动：wechat iLink 长轮询（文本审批通知 + 编号回复裁决）`)
-          return instance
-        })
-      }
-    }
-
-    // 钉钉 Stream inbound（v0.3.1）：官方 Stream 长连接裸协议（免公网）。
-    // 审批无按钮卡片，靠「回复 1 批准 / 2 拒绝」降级（router 按 capabilities 分流文案）。
-    if (dingtalkOk) {
-      startInboundChannel('dingtalk', () => {
-        const instance = createDingtalkInbound({
-          config: dingtalkResolved.config,
-          bus,
-          store,
-          fallbackTargets: allowUsers,
-          identity, // v0.7 三级目标解析：绑定成员优先
-          logger,
-        })
-        instance.start()
-        interactiveInstances.push(instance)
-        replyTargets.set('dingtalk', instance)
-        disposers.push(() => instance.stop())
-        warn(`inbound 已启动：dingtalk Stream 长连接（文本审批通知 + 编号回复裁决）`)
-        return instance
-      })
-    }
+    // v0.3.0 多通道装配：registry 只负责 transport 实例、回执目标与停机；
+    // Control Core、审批、提问和会话语义仍由各自模块持有。
+    const channelRegistry = createInboundChannelRegistry({
+      inboundBotToken,
+      tgRaw,
+      notifyChatIds,
+      feishuOk,
+      feishuResolved,
+      qqOk,
+      qqResolved,
+      wxOk,
+      wxResolved,
+      wechatWanted,
+      wechatRaw,
+      dingtalkOk,
+      dingtalkResolved,
+      bus,
+      vault,
+      store,
+      identity,
+      actions,
+      questions: questionsForChannels,
+      control,
+      allowUsers,
+      guidedBoot,
+      telegramReadyMessage: () => `inbound 已启动：telegram 长轮询（绑定 ${identity.size()} 人${guidedBoot ? '，引导态：等待 /pair 配对' : ''}；审批模式 ${approvalRaw.mode === 'answer' ? 'answer（远程可决）' : approvalWanted ? 'observe（只旁观）' : '未配置'}）`,
+      logger,
+      warn,
+    })
+    const { interactiveInstances, replyTargets } = channelRegistry
+    disposers.push(() => channelRegistry.dispose())
 
     // v0.6.1：路由注册同样逐个守护——审批/会话路由炸了只丢对应能力，
     // 不能拖垮整块 inbound 栈（interactiveRaw 赋值移进 try 之前保持语义）。
@@ -774,16 +651,8 @@ export function apply(ctx, config = {}) {
   }
 
   ctx.effect(() => () => {
-    // 聚合可 await 的清理（事件监听的 flush 会等待在途推送完成），
-    // 让 cordis 在关闭窗口内等它们 settle（headless 一次性运行退出前送达）。
-    const cleanups = []
-    for (const dispose of disposers) {
-      try {
-        const result = dispose()
-        if (result instanceof Promise) cleanups.push(result)
-      } catch { /* 卸载失败不致命 */ }
-    }
-    return Promise.allSettled(cleanups).then(() => undefined)
+    // 聚合可 await 的清理（事件监听的 flush、通道和管理台 stop 都在此收敛）。
+    return disposeAll(disposers)
   })
 
   if (resolved.channels.length === 0) {
