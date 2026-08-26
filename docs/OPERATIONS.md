@@ -9,7 +9,7 @@ node scripts/gen-channel-matrix.mjs --check
 node --check src/index.mjs
 ```
 
-On Windows without the BurntToast PowerShell module, the full suite is expected to report four failures in `test/desktop.test.mjs`; treat this as a desktop capability gap and validate that adapter on a host with BurntToast installed. The remaining `898` tests must pass for the current `902`-test contract.
+The current development baseline is `1174` tests (`1173` pass + `1` skip). The published v0.8.6 contract remains `909`; do not change `package.json`'s release count on an unreleased maintenance line. Desktop/host and provider protocol behavior still require real-device validation where noted below.
 
 The project has no install step for runtime tests. Optional packages are needed only for the corresponding real inbound flows: Feishu SDK, QQ connector, or QR terminal rendering.
 
@@ -39,7 +39,9 @@ The full end-user flow is in `docs/guide.md`. The CLI-only upgrade and rollback 
 | Bootstrap code unavailable | Read the path printed at startup (`bootstrap-paircode.txt`); if the write failed the log says so — mint a code from the admin members page instead. Re-mint is throttled to once per 10 minutes per process |
 | Route seems ignored | `node scripts/route.mjs show`, then `route.mjs test <sessionId>`; check enabled channel filtering |
 | Admin unavailable | `admin.enabled`, loopback port, Bearer token, 1 MiB request limit, SSE connection cap |
-| Behavior differs on phone | Run protocol/real-device validation; mocks do not model provider payload limits or callback parsing |
+| Behavior differs on phone | Run protocol/real-device validation; mocks do not model provider payload limits, callback parsing, or QQ/WeChat iLink/DingTalk image payloads |
+
+QQ single-chat native buttons, QQ group text fallback, and QQ/WeChat iLink/DingTalk image handling are contract-tested only. The loopback Web/admin UI has no secure `ask_user` settlement entry; issue #16/#14 remain pending real-device/host validation.
 
 ## Release Smoke Test
 

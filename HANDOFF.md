@@ -2,11 +2,11 @@
 
 > 写给下一个 agent。本文档是完整的工作上下文快照：设计理念、军规约定、架构地图、
 > 版本脉络、审查记录、已知坑、待办清单。读完这一份即可无缝接手。
-> 交接时刻：2026-08-23，v0.8.6 候选。当前维护周期停止新增功能，优先清理技术债、排除 bug、补齐真实协议验证。测试契约为 909 个；2026-08-23 Linux 主机 909 全过；此前 Windows 主机 898 通过、4 个桌面通知用例因 BurntToast/PowerShell 能力缺失失败，非桌面用例通过。registry 发布状态待独立核验（本次候选已走完 release guard，待 npm 发布确认）。
+> 当前快照：2026-08-26，分支 `codex/issue16-host-events`，提交链至少包含 `e077dbe`、`7a70dd0`、`3f4f397`、`c24c22e`/`0be902d`。当前开发线 `npm test` = 1174（1173 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。QQ 单聊原生按钮、群聊控制拒绝/文本回退，以及 QQ/微信 iLink/钉钉图片代码已接线并通过契约测试；真实设备/宿主协议仍未验证，能力只能标记 declared/contract-tested。
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
 > 2026-08-23 接力合入公共镜像 v0.8.5 发布内容（issue #11 ask_user 编号回复修复 + PR #9 飞书扫码 SDK 适配），见「当前接力交代」。
 > 上一稳定发布位 v0.8.6 = `bf03a1c`（npm `dsh-notifier@0.8.6`，公共镜像 `db42908` 已清理 node_modules/package-lock）。
-> 快照刷新：2026-08-26，Task 04 首次配置 UX 已完成：本地管理台首屏显示四态进度，个人模式默认隐藏绑定/会话高级导航，通道空状态改为字段配置指引，测试成功/失败显示下一步与重试文案；仍保持 loopback/Bearer/零依赖边界。CC-1 补齐提问编号回复的 `(channel,userId,chatId)` 隔离，Task 02 契约 facade（`29ef031`）与 Task 03 session arbiter 已完成，但两者尚未接入具体 IM。`notifyAll().delivered` 仍只有渠道级证据，不能推导具体 chat 送达；未获逐目标 `sendText` 确认的编号兜底保持 fail-closed。PR #12 仅作参考，QQ 原生按钮、提问卡片与 `approval.parallel` 均等待后续批次重写，绝不整体 cherry-pick。公共仓库 issue 快照：#16/#15/#14/#13/#10 等仍开放；私有库是唯一开发基线，公共库不 push/merge/release。版本串停在已发布 v0.8.6 / 909，发版轮再统一提。
+> 快照刷新：2026-08-26，Task 04 首次配置 UX 已完成：本地管理台首屏显示四态进度，个人模式默认隐藏绑定/会话高级导航，通道空状态改为字段配置指引，测试成功/失败显示下一步与重试文案；仍保持 loopback/Bearer/零依赖边界。Control Core 已接入宿主事件与 inbound 回调，来源绑定按 `(channel,userId,chatId)` 隔离；能力矩阵/fallback 与 runtime assembly 已对齐。Web/admin 仍无安全的 `ask_user` settlement 入口。`notifyAll().delivered` 仍只有渠道级证据，不能推导具体 chat 送达；未获逐目标 `sendText` 确认的编号兜底保持 fail-closed。Issue #16/#14 只能标记代码/契约完成，待真实设备/宿主验证。公共仓库不动。
 > 批次 4（2026-08-26）微信 iLink provider slice 已接入 `src/channels/wechat-ilink/`：单账号 QR-first、bounded long-poll、账号命名空间 cursor/context、整批交付后推进游标、断线重连/stop、明确 QR 过期状态、文本/编号 fallback、连接状态和结构化图片 envelope。旧 `src/inbound/wechat-ilink.mjs` 保留兼容入口；图片收发仅有可选 media bridge，能力状态为 `declared`，没有真实协议/设备验证，不得标记正式支持。新 focused tests 位于 `test/channels/wechat-ilink.test.mjs`。
 > 批次 5（2026-08-26）飞书与 Telegram provider facade 已建立在 `src/channels/feishu/`、`src/channels/telegram/`：回调归一化强制 user/chat 来源字段，能力证据分别记录为 contract-tested/declared；既有 inbound transport 保持兼容，控制权限仍由 provider-neutral Control Core/session arbiter 负责。文件发送只通过显式 adapter seam，未做真实平台/设备验证，不能标记 `real-device-verified`。focused tests 位于 `test/channels/feishu.test.mjs`、`test/channels/telegram.test.mjs`。
 > 当前 PR #12 模块化重写：QQ 官方机器人已接入显式 `INTERACTION_CREATE` 审批/提问按钮负载，统一走 Control Core；旧客户端自动文本降级，群聊目标禁止可操作按钮以避免成员间泄漏。`approval.parallel` 仅显式 opt-in，默认关闭，等待 Promise reject 按超时 fail-closed。真实 QQ 协议/设备验证仍未完成，能力只能标记 contract-tested/declared。
@@ -48,7 +48,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 零运行时依赖（只用 fetch + node:crypto + 原生 WebSocket）。
 
 - 语言/运行时：Node.js ESM（.mjs），无 TypeScript，无构建步骤
-- 代码量：src+test+scripts ≈ 36,000 行；46 个测试文件，1111 测试（维护批 6-C；1110 pass + 1 win32 skip；已发布 v0.8.6 = 909）
+- 代码量：src+test+scripts ≈ 36,000 行；46 个测试文件，1174 测试（1173 pass + 1 skip；已发布 v0.8.6 = 909）
 - 文档：README.md / README.zh-CN.md / ADAPTER.md（渠道接入规范）/ PLUGINS.md（插件互操作）/ docs/v0.5-design.md / docs/v0.6-design.md / CHANGELOG.md（最详细的历史）
 
 ---
@@ -58,10 +58,10 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 项 | 状态 |
 |---|---|
 | 版本 | package.json = 0.8.6；CHANGELOG、admin UI、双语 README 和发布守卫已同步；npm 已发布 `dsh-notifier@0.8.6`；公共镜像 `main` 已清理 `node_modules/` 与 `package-lock.json` |
-| git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前分支 `codex/maintenance-architecture`（维护批已完成、未合 main、未发版；下一阶段从该提交另开工作流） |
-| 测试 | `npm test` 契约 = **909 tests**（v0.8.6 已发布契约；开发线 `codex/maintenance-architecture` 当前 1111，1110 pass + 1 win32 skip，见「快照刷新」） |
+| git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前分支 `codex/issue16-host-events`（开发线未发布） |
+| 测试 | `npm test` 已发布 v0.8.6 契约 = **909 tests**；当前开发线 = **1174**（1173 pass + 1 skip） |
 | 发布 | v0.8.6 已发布；下一位 agent 接手时无需再走发布 gate，除非版本再次 bump |
-| 真机验证 | v0.6.1 修过 TG 真机事故（见 §5）；v0.7 真机测试通过（2026-08-17，v0.7.0-realtest 包）；内部真机测试文档 TG-TEST.md（Telegram 提问链路）与 WECHAT-TEST.md（微信扫码即配对）随 code/ 保留 |
+| 真机验证 | 当前分支未完成真实设备/宿主协议验证；QQ/微信 iLink/钉钉图片与 QQ 按钮仅有 contract-tested/declared 证据。历史 v0.6.1/v0.7 验证记录保留在下文 |
 
 ### 1.5 仓库文件地图（发布文件 vs 工程文件，0.8.6 立）
 
@@ -78,7 +78,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 用户文档 | `docs/guide.md` · `docs/upgrade-guide.md` · `docs/upgrade-guide.en.md` | README 双语均链接 guide；升级/回滚是装包用户高频需求 |
 | 互操作契约 | `PLUGINS.md` | 其他插件作者消费 notifier 服务时的契约（README 链接） |
 | CLI | `scripts/`（channel-login · test-channel · route · gen-channel-matrix 等） | guide.md 教用户直接 `node scripts/...` |
-| 测试 | `test/` | 行为契约随包分发是项目惯例（已发布 v0.8.6 = 909 用例；开发线 HEAD 1111，装包即可 `npm test`） |
+| 测试 | `test/` | 行为契约随包分发是项目惯例（已发布 v0.8.6 = 909 用例；开发线 HEAD 1174，装包即可 `npm test`） |
 
 **仅工程仓库（不进 npm 包）**：
 
@@ -262,7 +262,7 @@ src/
 ## 8. 快速上手
 
 ```bash
-npm test                    # 909 测试（已发布 v0.8.6 契约；开发线 codex/maintenance-architecture HEAD 1104 / + Issue #15 回归 1108，发版轮再统一提到 v0.8.7）
+npm test                    # 当前开发线 1174（1173 pass + 1 skip）；已发布 v0.8.6 契约仍为 909
 npm run lint 2>/dev/null || node --check src/index.mjs   # 无 lint 配置的话用 node --check
 node scripts/route.mjs --help        # 路由 CLI
 node scripts/channel-login.mjs --help

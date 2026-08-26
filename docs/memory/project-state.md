@@ -1,19 +1,20 @@
 # Project State
 
-Snapshot date: 2026-08-26 (PR #12 modular batch completed on `codex/task-06-pr12-modular`).
+Snapshot date: 2026-08-26 (current development line `codex/issue16-host-events`).
 
 Planning decision (2026-08-25): after the current maintenance batch, the product direction is a personal-mode-first cross-IM control plane. The approved staged architecture and channel plan live in `docs/architecture-roadmap.md`; this does not mean those features are implemented or released.
 
 - Canonical development repository: private `https://github.com/THEWOLFWALKER/dsh-notifier-dev`.
 - Public release/source mirror: `https://github.com/THEWOLFWALKER/dsh-notifier`.
-- Branch topology (2026-08-26): private `main` = `52c467a` (post P1-3). Active line `codex/task-05-wechat-ilink` adds the WeChat iLink provider slice on top of the maintenance line: `src/channels/wechat-ilink/` owns protocol normalization and the app assembly enters through its compatibility facade; batch 4 focused contract is **1141** tests (1140 pass + 1 win32 skip). Media remains declared-only pending real protocol/device evidence. Prior maintenance batches 1..5 + 6-A/6-B/6-C remain in the parent line. Plan/workstream in `.agents/workstreams/task-05-wechat-ilink.md`.
-- PR #12 modular batch is implemented on `codex/task-06-pr12-modular`: QQ single-chat approval/question buttons use explicit key/token callbacks and shared Control Core; old clients and group targets use text fallback, `approval.parallel` is explicit opt-in and defaults off. QQ device/protocol verification is still pending.
+- Branch topology (2026-08-26): current HEAD `e077dbe` on `codex/issue16-host-events`; preceding commits include `c24c22e`, `0be902d`, `3f4f397`, and `7a70dd0`. Control Core is wired through host events and inbound callbacks; capability/fallback alignment and runtime assembly extraction are present.
+- Current test baseline: **1174** total (1173 pass + 1 skip). The published v0.8.6 contract remains **909**; package/version stays `0.8.6`, and this development line is unreleased.
+- QQ single-chat native buttons and QQ group control rejection/text fallback are contract-tested. QQ, WeChat iLink, and DingTalk image paths are wired and contract-tested; real provider/device and host protocol evidence is still absent. Web/admin has no secure `ask_user` settlement entry. Issue #16/#14 are code/contract complete but pending validation.
 - Earlier snapshot (2026-08-23, ox-alpha relay, second round):
 - Branch topology (post-merge 2026-08-23): private `main` = `52c467a`, the no-ff merge of `codex/p1-3-state-stress` (P1-3 crash-stale-lock recovery, contract 902 → 906). All prior relay lines (security-hardening, protocol-guards, error-visibility) and the P1-3 branch are contained in `main` and retired.
 - Active line: `main` (all relay work merged); new relay topics branch from `main` as `codex/<topic>`.
 - Security hardening commits `bb03f8a` and `ce68543` (A1/A2) are part of `main` history.
 - Canonical source commit: `3fc3f24` (`chore: import dsh-notifier v0.8.5 baseline`).
-- Test baseline: `909` total tests after relaying the public mirror's v0.8.5 content into the private line (+3 issue-#11 question-reply tests on top of the 906 contract; the P1-3 lock tests added +4 on top of 902). On `2026-08-23` the Linux relay host passed all `909`; the earlier Windows validation passed `898` (902-contract era) with 4 desktop adapter failures from the missing BurntToast/PowerShell capability.
+- Historical release baseline: published v0.8.6 retained `909` tests (the earlier v0.8.5 relay added issue-#11 coverage; prior Windows 898/902-era desktop gap remains historical evidence only).
 - Engineering archive: source authority. Attached npm archive: release artifact only.
 - Workspace policy: no `node_modules/`, `package-lock.json`, credentials, state files, or generated logs in Git.
 - Release status at this snapshot: private `main` has cut release candidate `v0.8.6` on branch `codex/release-v0.8.6`. It supersedes the public mirror's npm `v0.8.5` (issue #11 only) by also including PR #9 and the P1-1/P1-2/P1-3 private-line fixes. npm authentication, full validation, and `npm pack --dry-run` have been re-run; the candidate awaits explicit user confirmation before merging to `main` and `npm publish`. The public mirror's `main` has unrelated history; no public mainline migration is performed.
@@ -23,9 +24,9 @@ Planning decision (2026-08-25): after the current maintenance batch, the product
 
 ## Validation Evidence
 
-- `npm test` (Linux relay host, 2026-08-23): `909 pass`, `0 fail` — includes the 6 P1-1 protocol-shape tests, 5 P1-2 error-visibility tests, 4 P1-3 lock-recovery tests, and 3 issue-#11 question-reply tests.
+- `npm test` (current development line, 2026-08-26): `1174 total` = `1173 pass + 1 skip`.
 - `node scripts/verify-release.mjs`: passed with documented tests = `909`.
-- In-flight branch `codex/maintenance-architecture` (2026-08-25): `node --test test/*.test.mjs test/*.spec.mjs` reports **1111** tests (1110 pass + 1 win32 skip) at HEAD `9ae636b`. The documented release count stays at `909` until a version is cut on this line, so `verify-release.mjs` is checked against the released v0.8.6 contract, not the branch count. The earlier `crack-fix-batchA-v0.8.7` line (batch A+B+C, contract 1012) was superseded by this line; its commits are part of the maintenance-architecture branch history.
+- `node scripts/verify-release.mjs`, `node scripts/gen-channel-matrix.mjs --check`, and `node --check src/index.mjs` remain release/shape checks against the published v0.8.6 count of 909; the development count must not alter `package.json`.
 
 ## Current Maintenance Direction
 

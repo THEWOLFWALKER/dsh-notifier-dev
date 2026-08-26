@@ -7,7 +7,7 @@ This project has had version-split incidents before. The rule is now: one engine
 1. `package.json.version` is the semantic version authority.
 2. `CHANGELOG.md` must contain the matching `## [version]` entry.
 3. `src/admin/ui.mjs` must display the same version.
-4. README badges/body, `HANDOFF.md`, and `dshQuality.testCount` must agree on the documented test baseline.
+4. README badges/body, `HANDOFF.md`, and `dshQuality.testCount` must agree on the published release baseline; unreleased development counts are documented separately and must not change the release guard count.
 5. `package.json.files` defines the npm payload. The engineering archive is not the npm payload.
 
 `node scripts/verify-release.mjs` checks these invariants. A release is blocked when it fails.
@@ -50,6 +50,6 @@ The repository archive may include contributor-only files such as `HANDOFF.md`, 
 - Add a top CHANGELOG entry describing behavior, tests, and security/review identifiers when relevant.
 - Update the admin UI version string.
 - Run the full test suite and update `dshQuality.testCount` only from the actual runner summary.
-- Synchronize README badges/body and `HANDOFF.md` count references.
+- Synchronize README release badges/body and `HANDOFF.md` release count references; label any unreleased development baseline separately.
 - Run the release guard and channel matrix check.
 - Record the final commit, package version, npm registry version, and any real-device gap in `docs/memory/project-state.md`.
