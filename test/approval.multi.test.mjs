@@ -259,6 +259,24 @@ test('router 多通道：单渠道卡片失败降级——pushedTo 只剩成功�
   rig.dispose()
 })
 
+test('router：原生审批卡失败时直接文本 fallback 只登记成功 chat 证据，陌生用户仍拒绝', async () => {
+  const feishu = makeFake('feishu', { targets: [{ chatId: 'oc_chat001', userId: 'u1' }], failCards: true })
+  const rig = makeRig({ interactive: [feishu] })
+  const outcome = rig.handle()
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(feishu.state.cards.length, 0)
+  assert.equal(feishu.state.texts.length, 1, '卡片失败后应尝试同 chat 文本 fallback')
+  assert.match(feishu.state.texts[0].text, /回复 1 批准 \/ 2 拒绝/)
+
+  const stranger = rig.bus.accept({ channel: 'feishu', userId: 'u2', chatId: 'oc_other', messageId: 'm-stranger', text: '1' })
+  assert.equal(stranger.ok, true)
+  assert.equal(feishu.state.texts.at(-1).text, '此审批不是发给你的(无权裁决)')
+
+  rig.bus.accept({ channel: 'feishu', userId: 'u1', chatId: 'oc_chat001', messageId: 'm-owner', text: '1' })
+  assert.equal(await outcome, 'allowed-once')
+  rig.dispose()
+})
+
 test('router 多通道：editResolved 抛错被吞（回执尽力而为）', async () => {
   const qq = makeFake('qq', { targets: [{ chatId: 'opengrp01', userId: 'u2' }], failEdit: true })
   const rig = makeRig({ interactive: [qq] })

@@ -529,8 +529,8 @@ export function apply(ctx, config = {}) {
       })
     }
 
-    // QQ 官方机器人 inbound：WS 网关 + REST 裸协议。审批无按钮卡片，
-    // 靠「回复 1 批准 / 2 拒绝」降级（router 已按 capabilities 分流文案）。
+    // QQ 官方机器人 inbound：WS 网关 + REST 裸协议。单聊优先原生按钮卡片，
+    // 发送失败或群聊安全降级为「回复 1 批准 / 2 拒绝」。
     if (qqOk) {
       startInboundChannel('qq', () => {
         const instance = createQqInbound({

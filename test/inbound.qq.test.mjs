@@ -622,6 +622,21 @@ test('sendApprovalCard：按钮卡片优先（msg_type=2 + keyboard 回调按钮
   await rig.inbound.stop()
 })
 
+test('sendQuestionCard：群聊不发可操作按钮，单聊自定义回答也绑定原始用户', async () => {
+  const groupRig = makeRig({ config: { notifyGroups: ['g_group'] } })
+  assert.equal(await groupRig.inbound.sendQuestionCard({ chatId: 'g_group', title: 'q', content: 'c', qKey: 'aq:q', token: 'tk', options: ['A'] }), null)
+  await groupRig.inbound.stop()
+
+  const userRig = makeRig({ config: { notifyUsers: ['u_open'] } })
+  const card = await userRig.inbound.sendQuestionCard({ chatId: 'u_open', title: 'q', content: 'c', qKey: 'aq:q', token: 'tk', options: ['A'] })
+  assert.ok(card)
+  const messageCall = userRig.calls.find((entry) => entry.url === `${API}/v2/users/u_open/messages`)
+  assert.ok(messageCall)
+  const buttons = messageCall.body.keyboard.content.rows.map((row) => row.buttons[0])
+  assert.deepEqual(buttons.at(-1).action.permission.specify_user_ids, ['u_open'])
+  await userRig.inbound.stop()
+})
+
 test('目标类型学习：群事件后回执走 /v2/groups/；配置项 notifyGroups 也走群接口', async () => {
   const rig = makeRig({ config: { notifyGroups: ['g_cfg'] } })
   const ws = await driveReady(rig)

@@ -19,6 +19,8 @@ import {
 } from '../src/inbound/capability-matrix.mjs'
 import { CHANNEL_TYPES } from '../src/config.mjs'
 import { INBOUND_CHANNELS as API_INBOUND_CHANNELS } from '../src/admin/api.mjs'
+import { collectContractFactories } from './_helpers.mjs'
+import { normalizeInbound } from '../src/inbound/_contract.mjs'
 
 describe('capability-matrix: 入站通道全集', () => {
   it('与 admin/api.mjs INBOUND_CHANNELS 顺序和内容完全一致', () => {
@@ -176,14 +178,14 @@ describe('capability-matrix: 各通道能力符合已知事实', () => {
     assert.equal(fs.sourceChatCheck, true)
   })
 
-  it('qq: 当前无按钮能力（批 6 前），图片入站为 contract-tested', () => {
+  it('qq: 单聊原生按钮/审批/提问 + 来源校验，图片入站为 contract-tested', () => {
     const qq = capabilitiesOf('qq')
-    assert.equal(qq.buttons, false)
-    assert.equal(qq.approvalCard, false)
+    assert.equal(qq.buttons, true)
+    assert.equal(qq.approvalCard, true)
     assert.equal(qq.actionCard, false)
-    assert.equal(qq.questionCard, false)
+    assert.equal(qq.questionCard, true)
     assert.equal(qq.imageInbound, true)
-    assert.equal(qq.sourceChatCheck, false)
+    assert.equal(qq.sourceChatCheck, true)
   })
 
   it('wxpusher / wechat / dingtalk: 无按钮能力；后两者图片入站为 contract-tested', () => {
@@ -199,18 +201,38 @@ describe('capability-matrix: 各通道能力符合已知事实', () => {
 })
 
 describe('capability-matrix: channelsWith 能力查询', () => {
-  it('buttons 能力通道 = telegram + feishu', () => {
+  it('buttons 能力通道 = telegram + feishu + qq', () => {
     const withButtons = channelsWith('buttons')
-    assert.deepEqual([...withButtons].sort(), ['feishu', 'telegram'])
+    assert.deepEqual([...withButtons].sort(), ['feishu', 'qq', 'telegram'])
   })
 
-  it('questionCard 能力通道 = telegram + feishu', () => {
+  it('questionCard 能力通道 = telegram + feishu + qq', () => {
     const withQ = channelsWith('questionCard')
-    assert.deepEqual([...withQ].sort(), ['feishu', 'telegram'])
+    assert.deepEqual([...withQ].sort(), ['feishu', 'qq', 'telegram'])
+  })
+
+  it('approvalCard 能力通道 = telegram + feishu + qq', () => {
+    assert.deepEqual([...channelsWith('approvalCard')].sort(), ['feishu', 'qq', 'telegram'])
   })
 
   it('未知能力名返回空数组（防御式）', () => {
     assert.deepEqual(channelsWith('nonexistent-cap'), [])
+  })
+})
+
+describe('capability-matrix: registry 与实际 renderer 入口一致', () => {
+  it('六个 inbound 的按钮声明与 normalized contract 以及 renderer 方法一致', () => {
+    const factories = new Map(collectContractFactories().map((entry) => [entry.expectedChannel, entry]))
+    for (const channel of INBOUND_CHANNELS) {
+      const raw = factories.get(channel)?.raw()
+      const normalized = normalizeInbound(raw)
+      const caps = capabilitiesOf(channel)
+      assert.ok(raw && normalized, `${channel} 应能构造并归一`)
+      assert.equal(normalized.capabilities.buttons, caps.buttons, `${channel}: buttons 声明漂移`)
+      if (caps.approvalCard) assert.equal(typeof raw.sendApprovalCard === 'function', true, `${channel}: native approval renderer 缺失`)
+      if (caps.actionCard) assert.equal(typeof raw.sendActionCard === 'function', true, `${channel}: native action renderer 缺失`)
+      if (caps.questionCard) assert.equal(typeof raw.sendQuestionCard === 'function', true, `${channel}: native question renderer 缺失`)
+    }
   })
 })
 

@@ -119,6 +119,11 @@ export function registerApprovalHandler(deps) {
    * CRACK-003：返回值带 evidence（exact|onChannel|intended）——编号回复归属闸据此区分
    * 「卡片发本人」与「同渠道他人卡片/广播兜底」，后者仅 owner 可代决（fail-closed）。
    */
+  const deliveryTargets = (row) => [
+    ...(Array.isArray(row?.pushedTo) ? row.pushedTo : []),
+    ...(Array.isArray(row?.hintTargets) ? row.hintTargets : []),
+  ]
+
   const latestPendingFor = (channel, userId, accountId = undefined) => {
     let exact = null
     let onChannel = null
@@ -129,7 +134,7 @@ export function registerApprovalHandler(deps) {
       // 进程崩溃、重启或 ledger.resolve 写盘失败会留下 pending 僵尸行；跳过它们
       // 让后续真实待决审批仍有机会被裁决，也避免「已被处理」误导回执。
       if (!core.isPending(row) || !liveWaiters.has(key)) continue
-      const pushed = Array.isArray(row.pushedTo) ? row.pushedTo : []
+      const pushed = deliveryTargets(row)
       const accountMatches = (target) => target.accountId === undefined || String(target.accountId) === String(accountId ?? '')
       if (pushed.some((target) => target.channel === channel && accountMatches(target))) {
         if (onChannel === null || row.createdAt > onChannel.row.createdAt) onChannel = { key, row, evidence: 'onChannel' }
@@ -150,7 +155,10 @@ export function registerApprovalHandler(deps) {
       buildEvent: (input, row, policy, now) => {
         const channel = String(input.channel ?? String(input.via ?? '').split(':')[0] ?? '')
         const chatId = String(input.chatId ?? '')
-        const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).find((target) => String(target.channel) === channel && String(target.chatId) === chatId && (target.accountId === undefined || String(target.accountId) === String(input.accountId ?? '')))
+        const candidates = String(input.via ?? '').endsWith(':button')
+          ? (Array.isArray(row.pushedTo) ? row.pushedTo : [])
+          : deliveryTargets(row)
+        const exact = candidates.find((target) => String(target.channel) === channel && String(target.chatId) === chatId && (target.accountId === undefined || String(target.accountId) === String(input.accountId ?? '')))
         return {
           eventId: input.eventId,
           sessionId: String(row.agentId ?? input.approvalKey ?? input.key), source: 'mobile', channel,
@@ -161,7 +169,10 @@ export function registerApprovalHandler(deps) {
         }
       },
       authorize: (input, row, event) => {
-        const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).some((target) => (
+        const candidates = String(input.via ?? '').endsWith(':button')
+          ? (Array.isArray(row.pushedTo) ? row.pushedTo : [])
+          : deliveryTargets(row)
+        const exact = candidates.some((target) => (
           String(target.channel) === event.channel
           && String(target.chatId) === event.chatId
           && (target.accountId === undefined || String(target.accountId) === event.accountId)
@@ -231,6 +242,7 @@ export function registerApprovalHandler(deps) {
     const title = `需要批准：${request.toolName}`
     const content = `${request.reason ?? 'agent 请求执行一个需要授权的操作'}\n\n批准将仅对本次调用生效（token 单次核销）。`
     const pushedTo = []
+    const hintTargets = []
     const buttonChannels = []
     const textChannels = []
     // 交互渠道：带按钮卡片（逐通道逐目标推送；单渠道失败降级为纯通知）。
@@ -241,9 +253,10 @@ export function registerApprovalHandler(deps) {
     const persistPushed = () => {
       try {
         const row = ledger.get(key)
-        if (row !== undefined) store.set(key, { ...row, pushedTo: [...pushedTo] })
+        if (row !== undefined) store.set(key, { ...row, pushedTo: [...pushedTo], hintTargets: [...hintTargets] })
       } catch { /* 增量落账失败不致命，末尾还有一次整体落账兜底 */ }
     }
+    const fallbackText = `${title}\n${content}\n\n回复 1 批准 / 2 拒绝`
     for (const [channel, kept] of targetsByChannel) {
       const inbound = interactiveByChannel.get(channel)
       if (inbound === undefined) continue
@@ -260,6 +273,11 @@ export function registerApprovalHandler(deps) {
           anySuccess = true
           pushedTo.push({ channel, ...(inbound.accountId === undefined ? {} : { accountId: String(inbound.accountId ?? '') }), chatId: target.chatId, userId: target.userId, messageId: card.messageId })
           persistPushed()
+        } else if (await inbound.sendText(target.chatId, fallbackText)) {
+          // Native renderer failure gets a direct per-chat text fallback. This target is
+          // authorization evidence; channel-level notifier broadcasts are never evidence.
+          hintTargets.push({ channel, ...(inbound.accountId === undefined ? {} : { accountId: String(inbound.accountId ?? '') }), chatId: target.chatId, userId: target.userId })
+          persistPushed()
         }
       }
       if (anySuccess) {
@@ -268,7 +286,8 @@ export function registerApprovalHandler(deps) {
         else textChannels.push(name)
       }
     }
-    // 全渠道通知（含单向渠道；无按钮渠道靠编号回复降级）
+    // 全渠道通知（含单向渠道；无按钮渠道靠编号回复降级）。原生卡失败时已先尝试
+    // 直接 sendText 到同一 chat，并将成功目标写入 hintTargets；广播本身不提供授权证据。
     // 按钮渠道提示可点；无按钮渠道提示编号回复——单向广播渠道（bark 等）同样
     // 依赖「回复 1 批准 / 2 拒绝」兜底，因此按钮场景也保留该提示（v0.2.0 文案契约）。
     const channelNotes = []
@@ -282,7 +301,7 @@ export function registerApprovalHandler(deps) {
         const alias = INTERACTIVE_ALIASES[String(type)]
         return alias === undefined || !carded.has(alias)
       }).filter((type) => outbound.size === 0 || outbound.has(type))
-    if (broadcastTypes !== null && broadcastTypes.length === 0) return pushedTo
+    if (broadcastTypes !== null && broadcastTypes.length === 0) return { pushedTo, hintTargets }
     await notifier.notifyAll({
       title,
       content: channelNotes.length > 0
@@ -290,7 +309,7 @@ export function registerApprovalHandler(deps) {
         : `${content}\n\n（本渠道无按钮：回复 1 批准 / 2 拒绝）`,
       level: 'timeSensitive',
     }, broadcastTypes !== null ? { channelTypes: broadcastTypes } : {}).catch(() => {})
-    return pushedTo
+    return { pushedTo, hintTargets }
   }
 
   async function markRemoteResolved(pushedTo, text) {
@@ -325,7 +344,7 @@ export function registerApprovalHandler(deps) {
       reply('该审批已被处理或已失效，此次点击无效')
       return true
     }
-    const targets = Array.isArray(row.pushedTo) ? row.pushedTo.filter((target) => String(target.channel) === String(envelope.channel) && (target.accountId === undefined || String(target.accountId) === String(envelope.accountId ?? ''))) : []
+    const targets = (Array.isArray(row.pushedTo) ? row.pushedTo : []).filter((target) => String(target.channel) === String(envelope.channel) && (target.accountId === undefined || String(target.accountId) === String(envelope.accountId ?? '')))
     if (targets.length > 0 && !targets.some((target) => String(target.userId) === String(envelope.userId))) {
       reply('仅审批接收人可点击裁决')
       return true
@@ -451,10 +470,11 @@ export function registerApprovalHandler(deps) {
           () => { liveWaiters.delete(key) },
         )
       }
-      const pushedTo = await pushApproval(key, token, request, channelTypes, targetsByChannel)
+      const delivery = await pushApproval(key, token, request, channelTypes, targetsByChannel)
+      const pushedTo = delivery.pushedTo
       const row = ledger.get(key)
       if (row !== undefined && row.status === 'pending') {
-        store.set(key, { ...row, pushedTo })
+        store.set(key, { ...row, pushedTo, hintTargets: delivery.hintTargets })
       }
       if (ledger.get(key)?.decision === 'terminated') {
         await markRemoteResolved(pushedTo, '⏹ 已终止：agent 会话已结束，审批取消')

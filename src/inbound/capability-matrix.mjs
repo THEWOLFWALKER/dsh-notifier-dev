@@ -149,13 +149,13 @@ const CHANNEL_CAPABILITIES = Object.freeze({
     sourceChatCheck: true, // srcChat vs context.open_chat_id 比对
   },
   qq: {
-    buttons: false,      // 当前无按钮化能力（批 5 只引入了图片解析接口，未接线）
-    approvalCard: false, // 当前 sendApprovalCard 走纯文本（实际是发送含编号指引的消息）
+    buttons: true,       // v0.8.4：官方机器人 markdown+keyboard 回调按钮
+    approvalCard: true,  // 单聊原生审批键盘；群聊按安全策略降级文本
     actionCard: false,
-    questionCard: false,
+    questionCard: true,  // 单聊原生选项键盘；失败/群聊由 router 走编号文本
     imageInbound: true,  // contract-tested: QQ C2C `extra` 图片段
     fileInbound: false,  // 无证据
-    sourceChatCheck: false, // 无按钮，N/A
+    sourceChatCheck: true, // 回调携带 user/chat，Control Core 绑定原始目标
   },
   wxpusher: {
     buttons: false,

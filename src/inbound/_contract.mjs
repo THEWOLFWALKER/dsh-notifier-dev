@@ -1,4 +1,5 @@
 // dsh-notifier inbound/_contract.mjs
+import { capabilitiesOf } from './capability-matrix.mjs'
 // 入站通道公共契约（v0.3.0 阶段 0）：让 approval router / conversation router
 // 不感知具体通道——所有 inbound 实例经 normalizeInbound() 归一为同一形状。
 // telegram 是 v0.2.0 旧形状（notifyChatIds + editResolved(chatId, messageId, text)），
@@ -105,8 +106,8 @@ export function parseQuestionAction(data) {
  * 判定规则（确定性，不做 arity 探测）：有 notifyTargets = 新契约；只有 notifyChatIds =
  * telegram 旧契约。两个形状都保证：sendApprovalCard 异常归一为 null、editTarget /
  * sendText 异常吞掉（回执尽力而为，绝不向上抛）。
- * capabilities.buttons（默认 true）：该通道审批卡片是否带可点按钮。无按钮通道
- * （如 QQ 官方机器人）靠「回复 1 批准 / 2 拒绝」降级，广播文案据此区分。
+ * capabilities.buttons：该通道审批卡片是否带可点按钮。缺省时从 capability-matrix
+ * 的渠道事实表推导，未知渠道 fail-closed；显式 raw.capabilities.buttons 可收窄能力。
  * @param {object} raw - inbound 实例（新旧契约均可）
  * @param {string} [fallbackChannel] - 实例未自带 channel 字段时的兜底名
  * @returns {null | {
@@ -124,7 +125,10 @@ export function normalizeInbound(raw, fallbackChannel = '') {
   const channel = typeof raw.channel === 'string' && raw.channel !== ''
     ? raw.channel
     : (legacy ? 'telegram' : fallbackChannel)
-  const buttons = raw.capabilities?.buttons !== false
+  const matrixCaps = capabilitiesOf(channel)
+  const buttons = typeof raw.capabilities?.buttons === 'boolean'
+    ? raw.capabilities.buttons
+    : matrixCaps.buttons
   return {
     channel,
     ...(raw.accountId === undefined ? {} : { accountId: typeof raw.accountId === 'string' ? raw.accountId : String(raw.accountId ?? '') }),

@@ -569,7 +569,7 @@ export function createQqInbound(options = {}) {
           action: { type: 1, click_limit: 1, data: buildQuestionAction(qKey, String(index), token),
             ...(isUserTarget ? { permission: { type: 2, specify_user_ids: [String(chatId)] } } : {}) },
         }))
-        buttons.push({ id: 'q_custom', render_data: { label: '✍️ 自定义回答', visited_label: '已选择', style: 0 }, action: { type: 1, click_limit: 1, data: buildQuestionAction(qKey, 'c', token) } })
+        buttons.push({ id: 'q_custom', render_data: { label: '✍️ 自定义回答', visited_label: '已选择', style: 0 }, action: { type: 1, click_limit: 1, data: buildQuestionAction(qKey, 'c', token), permission: { type: 2, specify_user_ids: [String(chatId)] } } })
         const messageId = await postMarkdownWithKeyboard(chatId, `${title}\n${content}`, { content: { rows: buttons.map((button) => ({ buttons: [button] })) } })
         return messageId === null ? null : { messageId }
       } catch (error) {
