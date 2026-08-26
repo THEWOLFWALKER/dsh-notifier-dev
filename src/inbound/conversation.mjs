@@ -525,9 +525,10 @@ export function registerConversationRouter(deps) {
     const target = resolveTarget(envelope)
     if (target.sessionId === null) return routeUnsafe(envelope, text)
     const receipt = control.handle({
+      eventId: String(envelope.messageId ?? ''),
       command,
       channel: envelope.channel,
-      accountId: envelope.channel,
+      accountId: String(envelope.accountId ?? envelope.channel ?? ''),
       userId: String(envelope.userId ?? ''),
       chatId: String(envelope.chatId ?? ''),
       chatType: envelope.chatType,

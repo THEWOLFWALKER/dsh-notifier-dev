@@ -95,7 +95,7 @@ export function createQuestionBridge(deps) {
    * 归属闸据此放行当事人级命中、对 hint 要求 owner。onChannel 证据在 chatId 提供时
    * 表示「同用户错误 chat」→ handleNumberedReply 消费消息但不裁决。
    */
-  const latestPendingFor = (channel, userId, chatId) => {
+  const latestPendingFor = (channel, userId, chatId, accountId = undefined) => {
     let exact = null
     let onChannel = null
     let hint = null
@@ -109,9 +109,10 @@ export function createQuestionBridge(deps) {
 
       if (hasChatId) {
         // Control Core Step 1：chat 级匹配
-        const userMatch = pushed.some((target) => target.channel === channel && String(target.userId) === String(userId))
+        const accountMatches = (target) => target.accountId === undefined || String(target.accountId) === String(accountId ?? '')
+        const userMatch = pushed.some((target) => target.channel === channel && accountMatches(target) && String(target.userId) === String(userId))
         if (userMatch) {
-          const chatMatch = pushed.some((target) => target.channel === channel && String(target.userId) === String(userId) && String(target.chatId) === String(chatId))
+          const chatMatch = pushed.some((target) => target.channel === channel && accountMatches(target) && String(target.userId) === String(userId) && String(target.chatId) === String(chatId))
           if (chatMatch) {
             const candidate = { key, row, evidence: 'exact' }
             if (newer(exact, candidate)) exact = candidate
@@ -121,19 +122,19 @@ export function createQuestionBridge(deps) {
           }
         }
         // hintTargets：per-chat 编号话术证据（旧 hintChannels 字符串数组不匹配——fail-closed）
-        if (isHintedTarget(row, channel, userId, chatId)) {
+        if (isHintedTarget(row, channel, userId, chatId, accountId)) {
           const candidate = { key, row, evidence: 'hint' }
           if (newer(hint, candidate)) hint = candidate
         }
         // hintTargets 渠道匹配但 chatId 不匹配 → 错误 chat（用 onChannel 证据触发回原会话提示）
         const hinted = Array.isArray(row.hintTargets) ? row.hintTargets : []
-        if (hinted.some((t) => t.channel === channel && String(t.userId) === String(userId) && String(t.chatId) !== String(chatId))) {
+        if (hinted.some((t) => t.channel === channel && (t.accountId === undefined || String(t.accountId) === String(accountId ?? '')) && String(t.userId) === String(userId) && String(t.chatId) !== String(chatId))) {
           const candidate = { key, row, evidence: 'onChannel' }
           if (newer(onChannel, candidate)) onChannel = candidate
         }
       } else {
         // 无 chatId：仅按 (channel,userId) 识别待决行，绝不使用旧渠道级 hintChannels。
-        if (pushed.some((target) => target.channel === channel && String(target.userId) === String(userId))) {
+        if (pushed.some((target) => target.channel === channel && (target.accountId === undefined || String(target.accountId) === String(accountId ?? '')) && String(target.userId) === String(userId))) {
           const candidate = { key, row, evidence: 'exact' }
           if (newer(exact, candidate)) exact = candidate
           const channelCandidate = { key, row, evidence: 'onChannel' }
@@ -141,7 +142,7 @@ export function createQuestionBridge(deps) {
         }
         // 缺 chatId 仍可消费已绑定用户收到过的 target-scoped 提示，但绝不裁决。
         // 仅按 (channel,userId) 识别待决行；旧 hintChannels 渠道级证据不再使用。
-        if (Array.isArray(row.hintTargets) && row.hintTargets.some((t) => t.channel === channel && String(t.userId) === String(userId))) {
+        if (Array.isArray(row.hintTargets) && row.hintTargets.some((t) => t.channel === channel && (t.accountId === undefined || String(t.accountId) === String(accountId ?? '')) && String(t.userId) === String(userId))) {
           const candidate = { key, row, evidence: 'hint' }
           if (newer(hint, candidate)) hint = candidate
         }
@@ -156,9 +157,9 @@ export function createQuestionBridge(deps) {
   const ledger = { ...core, latestPendingFor }
 
   /** Control Core Step 1：per-chat hint 证据匹配（=aq 行 hintTargets）。无该字段的旧行不匹配（fail-closed）。 */
-  function isHintedTarget(row, channel, userId, chatId) {
+  function isHintedTarget(row, channel, userId, chatId, accountId = undefined) {
     if (Array.isArray(row.hintTargets)) {
-      return row.hintTargets.some((t) => t.channel === channel && String(t.userId) === String(userId) && String(t.chatId) === String(chatId))
+      return row.hintTargets.some((t) => t.channel === channel && (t.accountId === undefined || String(t.accountId) === String(accountId ?? '')) && String(t.userId) === String(userId) && String(t.chatId) === String(chatId))
     }
     return false
   }
@@ -173,10 +174,10 @@ export function createQuestionBridge(deps) {
       buildEvent: (input, row, policy, now) => {
         const channel = String(input.channel ?? String(input.via ?? '').split(':')[0] ?? '')
         const chatId = String(input.chatId ?? '')
-        const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).find((target) => String(target.channel) === channel && String(target.chatId) === chatId)
+        const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).find((target) => String(target.channel) === channel && String(target.chatId) === chatId && (target.accountId === undefined || String(target.accountId) === String(input.accountId ?? '')))
         return {
           eventId: input.eventId, sessionId: String(row.agentId ?? input.qKey ?? input.key), source: 'mobile', channel,
-          accountId: channel, userId: String(exact?.userId ?? input.userId ?? ''), chatId,
+          accountId: String(exact?.accountId ?? input.accountId ?? channel), userId: String(exact?.userId ?? input.userId ?? ''), chatId,
           policyVersion: String(row.policyVersion ?? policy.policyVersion ?? '1'), command: 'question-answer',
           chatType: input.chatType, createdAt: Number(row.createdAt ?? now - 1),
           expiresAt: Number(row.expiresAt ?? now + defaultTimeoutMs),
@@ -186,6 +187,7 @@ export function createQuestionBridge(deps) {
         const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).some((target) => (
           String(target.channel) === event.channel
           && String(target.chatId) === event.chatId
+          && (target.accountId === undefined || String(target.accountId) === event.accountId)
           && (target.userId === undefined || String(target.userId) === event.userId)
         ))
         if (input.trusted !== true) return exact
@@ -246,7 +248,7 @@ export function createQuestionBridge(deps) {
           multiSelect: isMulti,
         })
         if (card !== null) {
-          pushedTo.push({ channel: inbound.channel, chatId: target.chatId, userId: target.userId, messageId: card.messageId, kind: 'aq' })
+          pushedTo.push({ channel: inbound.channel, ...(inbound.accountId === undefined ? {} : { accountId: String(inbound.accountId ?? '') }), chatId: target.chatId, userId: target.userId, messageId: card.messageId, kind: 'aq' })
           const targetKey = `${inbound.channel}\u0000${target.chatId}\u0000${target.userId}`
           if (!escalationTargetKeys.has(targetKey)) {
             escalationTargetKeys.add(targetKey)
@@ -313,7 +315,7 @@ export function createQuestionBridge(deps) {
         // 只记录 sendText 成功的目标（per-chat 送达证据，Control Core Step 1）
         for (let i = 0; i < entry.targets.length; i++) {
           if (outcomes[i] === true) {
-            hintedTargets.push({ channel: entry.channel, chatId: entry.targets[i].chatId, userId: entry.targets[i].userId })
+            hintedTargets.push({ channel: entry.channel, ...(entry.inbound.accountId === undefined ? {} : { accountId: String(entry.inbound.accountId ?? '') }), chatId: entry.targets[i].chatId, userId: entry.targets[i].userId })
           }
         }
       }
@@ -413,9 +415,11 @@ export function createQuestionBridge(deps) {
     const sourceRow = ledger.get(qKey)
     const sourceChat = envelope.chatId !== undefined && envelope.chatId !== null && String(envelope.chatId) !== '' ? String(envelope.chatId) : null
     if (sourceRow === undefined || sourceChat === null) { feedback('请到原会话操作'); return true }
-    const sourceTargets = Array.isArray(sourceRow.pushedTo) ? sourceRow.pushedTo.filter((target) => String(target.channel) === String(envelope.channel) && String(target.chatId) === sourceChat) : []
+    const sourceTargets = Array.isArray(sourceRow.pushedTo) ? sourceRow.pushedTo.filter((target) => String(target.channel) === String(envelope.channel) && String(target.chatId) === sourceChat && (target.accountId === undefined || String(target.accountId) === String(envelope.accountId ?? ''))) : []
     if (sourceTargets.length === 0 || !sourceTargets.some((target) => String(target.userId) === String(envelope.userId))) { feedback('请到原会话操作'); return true }
-    const verdict = decide({ qKey, optIdx, token: String(action.token ?? ''), via: `${envelope.channel}:button`, userId: envelope.userId, chatId: envelope.chatId })
+    const verdict = deps.control !== null && deps.control !== undefined
+      ? deps.control.handle({ eventId: String(envelope.messageId ?? ''), command: 'question-answer', qKey, optIdx, token: String(action.token ?? ''), via: `${envelope.channel}:button`, channel: envelope.channel, accountId: String(envelope.accountId ?? envelope.channel ?? ''), userId: envelope.userId, chatId: envelope.chatId, chatType: envelope.chatType })
+      : decide({ qKey, optIdx, token: String(action.token ?? ''), via: `${envelope.channel}:button`, userId: envelope.userId, chatId: envelope.chatId })
     feedback(verdict.message ?? '该提问已回答或已过期')
     return true
   }
@@ -480,7 +484,7 @@ export function createQuestionBridge(deps) {
       return true
     }
 
-    const pending = ledger.latestPendingFor(envelope.channel, envelope.userId, chatId)
+    const pending = ledger.latestPendingFor(envelope.channel, envelope.userId, chatId, envelope.accountId)
     if (pending === null) return false
 
     const row = pending.row
@@ -512,7 +516,7 @@ export function createQuestionBridge(deps) {
       return true // 发错了可以再发：问题保持待决，上面的选项已重发
     }
     const verdict = deps.control !== null && deps.control !== undefined
-      ? deps.control.handle({ command: 'question-answer', qKey: pending.key, channel: envelope.channel, chatId: envelope.chatId, chatType: envelope.chatType, userId: envelope.userId, via: `${envelope.channel}:reply`, optIdxes, trusted: true })
+      ? deps.control.handle({ eventId: String(envelope.messageId ?? ''), command: 'question-answer', qKey: pending.key, channel: envelope.channel, accountId: String(envelope.accountId ?? envelope.channel ?? ''), chatId: envelope.chatId, chatType: envelope.chatType, userId: envelope.userId, via: `${envelope.channel}:reply`, optIdxes, trusted: true })
       : decideTrusted({ qKey: pending.key, optIdxes, via: `${envelope.channel}:reply`, userId: envelope.userId })
     if (verdict.ok === true || verdict.status === 'accepted') {
       sendFeedback(`✅ 已作答：${(verdict.answers ?? []).join('、')}`)

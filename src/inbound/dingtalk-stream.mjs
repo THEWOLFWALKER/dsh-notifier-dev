@@ -285,6 +285,7 @@ export function createDingtalkInbound(options = {}) {
     // accept 返回值消费——拒绝/命令回执不再已读不回
     const result = bus.accept({
       channel: 'dingtalk',
+      accountId: String(config?.appKey ?? ''),
       userId,
       chatId,
       chatType: String(msg.conversationType ?? ''),
@@ -440,6 +441,7 @@ export function createDingtalkInbound(options = {}) {
 
   return {
     channel: 'dingtalk',
+    accountId: String(config?.appKey ?? ''),
     capabilities: { buttons: false },
 
     /** 启动 Stream 连接（幂等；失败中文 warn 后允许再次 start 重试）。 */

@@ -19,9 +19,9 @@
 //     async editResolved(target, text),                   // target = 账本 pushedTo 行
 //     async sendText(chatId, text) -> boolean,            // 命令回执
 //   }
-// 入站方向统一走 bus.accept(envelope)；按钮回调统一走 bus.decide({ approvalKey,
-// decision, token, via, userId })，回调负载格式用本文件的 buildApprovalAction 生成、
-// parseApprovalAction 解析（与 telegram callback_data 完全同构，复用同一套 token 核销）。
+// 入站方向统一走 bus.accept(envelope)；按钮回调由 approval/questions router 送入
+// Control Core（无 Control Core 的旧装配才回落 bus.decide），回调负载格式用本文件的
+// buildApprovalAction 生成、parseApprovalAction 解析（与 telegram callback_data 同构）。
 // text/image/file 统一消息结构见 message.mjs：文字信封（{text}）原样兼容，结构化
 // 附件（kind/image/file）由协议证据确认后的适配器产出——当前无证据不接线（批 5）。
 // parseApprovalAction 解析（与 telegram callback_data 完全同构，复用同一套 token 核销）。
@@ -127,6 +127,7 @@ export function normalizeInbound(raw, fallbackChannel = '') {
   const buttons = raw.capabilities?.buttons !== false
   return {
     channel,
+    ...(raw.accountId === undefined ? {} : { accountId: typeof raw.accountId === 'string' ? raw.accountId : String(raw.accountId ?? '') }),
     raw,
     capabilities: { buttons },
     notifyTargets() {

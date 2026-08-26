@@ -214,6 +214,7 @@ test('轮询入站：msgs → bus envelope；游标持久化并随请求回传',
   await tick(10)
   assert.equal(accepted.length, 1)
   assert.equal(accepted[0].channel, 'wechat')
+  assert.equal(accepted[0].accountId, 'BOT_ACC')
   assert.equal(accepted[0].userId, 'WX_USER_1')
   assert.equal(accepted[0].chatId, 'WX_USER_1')
   assert.equal(accepted[0].messageId, 'wx:M_1')

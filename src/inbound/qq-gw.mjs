@@ -254,7 +254,7 @@ export function createQqInbound(options = {}) {
         // msg_id 必带（R5 审查 R5-3-P2-3：C2C 不带 msg_id 走主动消息额度，真机大概率被
         // 平台 4xx 拒掉——mock fetch 不校验被动回复权限，单测测不出；带 msg_id 走被动回复）
         const envelope = {
-          channel: 'qq', userId, chatId: userId, messageId,
+          channel: 'qq', accountId: String(config?.appId ?? ''), userId, chatId: userId, messageId,
           text: text || '[图片消息]',
           ...(image === null ? {} : { image: image.image, ...(text === '' ? { kind: 'image' } : {}) }),
         }
@@ -274,7 +274,7 @@ export function createQqInbound(options = {}) {
         if (messageId === '' || userId === '' || chatId === '' || text === '') return
         setBounded(targetKinds, chatId, 'group', CHAT_STATE_MAX, onEvict)
         // v0.7：群聊拒绝回执发回群（含「请私聊发送 /pair」引导）
-        const result = bus.accept({ channel: 'qq', userId, chatId, messageId, text })
+        const result = bus.accept({ channel: 'qq', accountId: String(config?.appId ?? ''), userId, chatId, messageId, text })
         if (result?.reply !== undefined) {
           postMessage(chatId, String(result.reply), messageId).catch((error) => {
             warn(`回执发送失败: ${error instanceof Error ? error.message : String(error)}`) // 回执失败不致命
@@ -300,7 +300,7 @@ export function createQqInbound(options = {}) {
         const parsed = parseApprovalAction(buttonData)
         const question = parseQuestionAction(buttonData)
         if (question !== null) {
-          const result = bus.accept({ channel: 'qq', userId, chatId, messageId: interactionId,
+          const result = bus.accept({ channel: 'qq', accountId: String(config?.appId ?? ''), userId, chatId, messageId: interactionId,
             text: `[提问按钮:${question.optIdx}] ${question.qKey}`,
             questionAction: question })
           if (result?.reply !== undefined) postMessage(chatId, String(result.reply), interactionId).catch(() => {})
@@ -309,6 +309,7 @@ export function createQqInbound(options = {}) {
         if (parsed === null) return
         const result = bus.accept({
           channel: 'qq',
+          accountId: String(config?.appId ?? ''),
           userId,
           chatId,
           messageId: interactionId,
@@ -466,6 +467,7 @@ export function createQqInbound(options = {}) {
 
   return {
     channel: 'qq',
+    accountId: String(config?.appId ?? ''),
     // v0.8.4：按钮化落地（发送失败自动降级文本，capabilities 仅影响文案分流）
     capabilities: { buttons: true },
 

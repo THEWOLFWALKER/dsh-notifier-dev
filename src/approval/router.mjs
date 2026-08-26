@@ -119,7 +119,7 @@ export function registerApprovalHandler(deps) {
    * CRACK-003：返回值带 evidence（exact|onChannel|intended）——编号回复归属闸据此区分
    * 「卡片发本人」与「同渠道他人卡片/广播兜底」，后者仅 owner 可代决（fail-closed）。
    */
-  const latestPendingFor = (channel, userId) => {
+  const latestPendingFor = (channel, userId, accountId = undefined) => {
     let exact = null
     let onChannel = null
     let intended = null
@@ -130,9 +130,10 @@ export function registerApprovalHandler(deps) {
       // 让后续真实待决审批仍有机会被裁决，也避免「已被处理」误导回执。
       if (!core.isPending(row) || !liveWaiters.has(key)) continue
       const pushed = Array.isArray(row.pushedTo) ? row.pushedTo : []
-      if (pushed.some((target) => target.channel === channel)) {
+      const accountMatches = (target) => target.accountId === undefined || String(target.accountId) === String(accountId ?? '')
+      if (pushed.some((target) => target.channel === channel && accountMatches(target))) {
         if (onChannel === null || row.createdAt > onChannel.row.createdAt) onChannel = { key, row, evidence: 'onChannel' }
-        if (pushed.some((target) => target.channel === channel && String(target.userId) === String(userId))) {
+        if (pushed.some((target) => target.channel === channel && accountMatches(target) && String(target.userId) === String(userId))) {
           if (exact === null || row.createdAt > exact.row.createdAt) exact = { key, row, evidence: 'exact' }
         }
       }
@@ -149,11 +150,11 @@ export function registerApprovalHandler(deps) {
       buildEvent: (input, row, policy, now) => {
         const channel = String(input.channel ?? String(input.via ?? '').split(':')[0] ?? '')
         const chatId = String(input.chatId ?? '')
-        const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).find((target) => String(target.channel) === channel && String(target.chatId) === chatId)
+        const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).find((target) => String(target.channel) === channel && String(target.chatId) === chatId && (target.accountId === undefined || String(target.accountId) === String(input.accountId ?? '')))
         return {
           eventId: input.eventId,
           sessionId: String(row.agentId ?? input.approvalKey ?? input.key), source: 'mobile', channel,
-          accountId: channel, userId: String(exact?.userId ?? input.userId ?? ''), chatId,
+          accountId: String(exact?.accountId ?? input.accountId ?? channel), userId: String(exact?.userId ?? input.userId ?? ''), chatId,
           policyVersion: String(row.policyVersion ?? policy.policyVersion ?? '1'), command: 'approval',
           chatType: input.chatType, createdAt: Number(row.createdAt ?? now - 1),
           expiresAt: Number(row.expiresAt ?? now + timeoutMs),
@@ -163,6 +164,7 @@ export function registerApprovalHandler(deps) {
         const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).some((target) => (
           String(target.channel) === event.channel
           && String(target.chatId) === event.chatId
+          && (target.accountId === undefined || String(target.accountId) === event.accountId)
           && (target.userId === undefined || String(target.userId) === event.userId)
         ))
         if (input.trusted !== true) return exact
@@ -256,7 +258,7 @@ export function registerApprovalHandler(deps) {
         })
         if (card !== null) {
           anySuccess = true
-          pushedTo.push({ channel, chatId: target.chatId, userId: target.userId, messageId: card.messageId })
+          pushedTo.push({ channel, ...(inbound.accountId === undefined ? {} : { accountId: String(inbound.accountId ?? '') }), chatId: target.chatId, userId: target.userId, messageId: card.messageId })
           persistPushed()
         }
       }
@@ -323,12 +325,20 @@ export function registerApprovalHandler(deps) {
       reply('该审批已被处理或已失效，此次点击无效')
       return true
     }
-    const targets = Array.isArray(row.pushedTo) ? row.pushedTo.filter((target) => String(target.channel) === String(envelope.channel)) : []
+    const targets = Array.isArray(row.pushedTo) ? row.pushedTo.filter((target) => String(target.channel) === String(envelope.channel) && (target.accountId === undefined || String(target.accountId) === String(envelope.accountId ?? ''))) : []
     if (targets.length > 0 && !targets.some((target) => String(target.userId) === String(envelope.userId))) {
       reply('仅审批接收人可点击裁决')
       return true
     }
-    const verdict = bus.decide({
+    const verdict = deps.control !== null && deps.control !== undefined
+      ? deps.control.handle({
+        eventId: String(envelope.messageId ?? ''), command: 'approval', approvalKey: key, decision,
+        token: typeof action.token === 'string' ? action.token : undefined,
+        via: `${envelope.channel}:button`, channel: envelope.channel,
+        accountId: String(envelope.accountId ?? envelope.channel ?? ''), userId: envelope.userId,
+        chatId: envelope.chatId, chatType: envelope.chatType,
+      })
+      : bus.decide({
       approvalKey: key,
       decision,
       token: typeof action.token === 'string' ? action.token : undefined,
@@ -336,7 +346,7 @@ export function registerApprovalHandler(deps) {
       userId: envelope.userId,
       chatId: envelope.chatId,
     })
-    if (!verdict.ok) reply(verdict.message ?? '该审批已被处理或已失效，此次点击无效')
+    if (!(verdict.ok === true || verdict.status === 'accepted')) reply(verdict.message ?? '该审批已被处理或已失效，此次点击无效')
     return true
   }
 
@@ -349,7 +359,7 @@ export function registerApprovalHandler(deps) {
     if (approvalConfig.numberedReply === false) return false
     const choice = String(envelope.text ?? '').trim()
     if (choice !== '1' && choice !== '2') return false
-    const pending = ledger.latestPendingFor(envelope.channel, envelope.userId)
+    const pending = ledger.latestPendingFor(envelope.channel, envelope.userId, envelope.accountId)
     if (pending === null) return false
     // CRACK-003 归属闸：exact（卡片发本人）直接放行；onChannel/intended 属他人卡片或
     // 广播兜底——仅 owner 可代决。identity 缺失/异常一律 fail-closed 拒绝。
@@ -364,7 +374,7 @@ export function registerApprovalHandler(deps) {
     }
     const decision = choice === '1' ? OUTCOME_ALLOWED : OUTCOME_REJECTED
     const verdict = deps.control !== null && deps.control !== undefined
-      ? deps.control.handle({ command: 'approval', approvalKey: pending.key, channel: envelope.channel, chatId: envelope.chatId, chatType: envelope.chatType, userId: envelope.userId, via: `${envelope.channel}:reply`, decision, trusted: true })
+      ? deps.control.handle({ eventId: String(envelope.messageId ?? ''), command: 'approval', approvalKey: pending.key, channel: envelope.channel, accountId: String(envelope.accountId ?? envelope.channel ?? ''), chatId: envelope.chatId, chatType: envelope.chatType, userId: envelope.userId, via: `${envelope.channel}:reply`, decision, trusted: true })
       : bus.decideTrusted({ approvalKey: pending.key, decision, via: `${envelope.channel}:reply`, userId: envelope.userId })
     if (verdict.ok === true || verdict.status === 'accepted') {
       warn(`编号回复裁决 ${pending.key} → ${decision}（user ${envelope.userId}）`)

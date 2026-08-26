@@ -561,6 +561,25 @@ test('GROUP_AT_MESSAGE_CREATE：群 @ 消息剥离提及占位；chatId=group_op
   await rig.inbound.stop()
 })
 
+test('INTERACTION_CREATE：QQ 按钮回调保留显式 approvalAction/questionAction 与 accountId/chat 绑定元数据', async () => {
+  const rig = makeRig()
+  const accepted = []
+  rig.bus.onMessage((envelope) => { accepted.push(envelope); return true })
+  const ws = await driveReady(rig)
+  ws.serverSend({
+    op: 0, t: 'INTERACTION_CREATE', s: 5,
+    d: {
+      id: 'interaction_1', type: 11, user_openid: 'u_open',
+      data: { resolved: { button_data: 'ap:allowed-once:ap:demo:1:tok' } },
+    },
+  })
+  assert.equal(accepted.length, 1)
+  assert.equal(accepted[0].accountId, 'APP_ID')
+  assert.equal(accepted[0].chatId, 'u_open')
+  assert.deepEqual(accepted[0].approvalAction, { decision: 'allowed-once', approvalKey: 'ap:demo:1', token: 'tok' })
+  await rig.inbound.stop()
+})
+
 test('白名单外/空文本：不入站不抛异常', async () => {
   const rig = makeRig({ allowUsers: ['u_other'] })
   let seen = 0

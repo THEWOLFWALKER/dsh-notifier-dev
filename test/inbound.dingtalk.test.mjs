@@ -271,6 +271,7 @@ test('入站消息：data 二次 parse → bus.accept 形状（channel/userId/ch
   assert.equal(accepted.length, 1)
   assert.deepEqual(accepted[0], {
     channel: 'dingtalk',
+    accountId: 'APP_KEY',
     userId: 'staff_1',
     chatId: 'cid_1',
     chatType: '1',

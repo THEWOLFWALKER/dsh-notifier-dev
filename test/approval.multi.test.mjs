@@ -12,6 +12,7 @@ import { createInboundBus } from '../src/inbound/bus.mjs'
 import { createTokenVault } from '../src/inbound/tokens.mjs'
 import { createStore } from '../src/inbound/store.mjs'
 import { createIdentity } from '../src/inbound/identity.mjs'
+import { createControlEntry } from '../src/control/entry.mjs'
 import {
   normalizeInbound,
   buildApprovalAction,
@@ -80,10 +81,11 @@ test('_contract：normalizeInbound(null) 返回 null', () => {
 // ---------------------------------------------------------------- router 多通道
 
 /** 新契约假通道（记录 cards/edits/texts；可注入失败）。 */
-function makeFake(channel, { targets = [], failCards = false, failEdit = false } = {}) {
+function makeFake(channel, { targets = [], failCards = false, failEdit = false, accountId = undefined } = {}) {
   const state = { cards: [], edits: [], texts: [] }
   return {
     channel,
+    ...(accountId === undefined ? {} : { accountId }),
     state,
     notifyTargets() { return targets },
     async sendApprovalCard(payload) {
@@ -100,7 +102,7 @@ function makeFake(channel, { targets = [], failCards = false, failEdit = false }
 }
 
 /** 组装 rig：真实 bus/vault/store + 假 ctx/notifier + 传入的交互通道列表。 */
-function makeRig({ interactive = [], telegram = null, approvalConfig = {}, router = null, channels = undefined, identity = null } = {}) {
+function makeRig({ interactive = [], telegram = null, approvalConfig = {}, router = null, channels = undefined, identity = null, control = null } = {}) {
   const store = createStore(tempPath())
   const vault = createTokenVault({ secret: 'multi-secret' })
   const bus = createInboundBus({ allowUsers: ['u1', 'u2', 'u3', '10001'], store, vault })
@@ -119,6 +121,7 @@ function makeRig({ interactive = [], telegram = null, approvalConfig = {}, route
   const dispose = registerApprovalHandler({
     ctx, notifier, bus, vault, store, router,
     ...(identity !== null ? { identity } : {}),
+    ...(control !== null ? { control } : {}),
     ...(telegram !== null ? { telegram } : { interactive }),
     approvalConfig: { mode: 'answer', timeoutMs: 400, ...approvalConfig },
   })
@@ -126,6 +129,50 @@ function makeRig({ interactive = [], telegram = null, approvalConfig = {}, route
     handlers['approval/request'](request, () => 'desktop')
   return { store, vault, bus, handlers, broadcasts, dispose, handle }
 }
+
+test('Control Core：QQ 按钮回调统一裁决；错误 account/chat、群聊与重放 fail-closed，钉钉文本 fallback 仍走同一入口', async () => {
+  const qq = makeFake('qq', { accountId: 'QQ_APP', targets: [{ chatId: 'qq-chat-01', userId: 'u1' }] })
+  const dingtalk = makeFake('dingtalk', { accountId: 'DT_APP', targets: [{ chatId: 'dt-chat', userId: 'u2' }] })
+  const control = createControlEntry()
+  const rig = makeRig({ interactive: [qq, dingtalk], control })
+  const outcome = rig.handle()
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  const card = qq.state.cards[0]
+  const action = buildApprovalAction('allowed-once', card.approvalKey, card.token)
+  const accepted = rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', userId: 'u1', chatId: 'qq-chat-01', messageId: 'qq-click-1', text: `[审批按钮:allowed-once] ${card.approvalKey}`, approvalAction: parseApprovalAction(action) })
+  assert.equal(accepted.ok, true)
+  assert.equal(await outcome, 'allowed-once')
+
+  // Same explicit callback again is a replay: the interaction ledger is already settled.
+  const replay = rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', userId: 'u1', chatId: 'qq-chat-01', messageId: 'qq-click-2', text: 'replay', approvalAction: parseApprovalAction(action) })
+  assert.equal(replay.ok, true)
+  assert.match(qq.state.texts.at(-1).text, /已处理|失效/)
+
+  // A second pending approval proves the source tuple includes accountId and chatId.
+  const second = rig.handle({ callId: 'call-2', toolName: 'bash-2' })
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  const card2 = qq.state.cards.at(-1)
+  const wrongAccount = rig.bus.accept({ channel: 'qq', accountId: 'OTHER_APP', userId: 'u1', chatId: 'qq-chat-01', messageId: 'qq-wrong-account', text: 'x', approvalAction: parseApprovalAction(buildApprovalAction('allowed-once', card2.approvalKey, card2.token)) })
+  assert.equal(wrongAccount.ok, true)
+  assert.match(qq.state.texts.at(-1).text, /处理|失效|接收人/)
+  assert.equal(rig.store.get(card2.approvalKey).status, 'pending')
+  const wrongChat = rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', userId: 'u1', chatId: 'qq-chat-02', messageId: 'qq-wrong-chat', text: 'x', approvalAction: parseApprovalAction(buildApprovalAction('allowed-once', card2.approvalKey, card2.token)) })
+  assert.equal(wrongChat.ok, true)
+  assert.equal(rig.store.get(card2.approvalKey).status, 'pending')
+  const wrongUser = rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', userId: 'u2', chatId: 'qq-chat-01', messageId: 'qq-wrong-user', text: 'x', approvalAction: parseApprovalAction(buildApprovalAction('allowed-once', card2.approvalKey, card2.token)) })
+  assert.equal(wrongUser.ok, true)
+  assert.equal(rig.store.get(card2.approvalKey).status, 'pending')
+  const group = rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', userId: 'u1', chatId: 'qq-chat-01', chatType: 'group', messageId: 'qq-group', text: 'x', approvalAction: parseApprovalAction(buildApprovalAction('allowed-once', card2.approvalKey, card2.token)) })
+  assert.equal(group.ok, true)
+  assert.equal(rig.store.get(card2.approvalKey).status, 'pending')
+
+  // DingTalk has no confirmed native callback: numbered text remains the safe fallback.
+  const dtAccepted = rig.bus.accept({ channel: 'dingtalk', accountId: 'DT_APP', userId: 'u2', chatId: 'dt-chat', messageId: 'dt-reply-1', text: '2', chatType: '1' })
+  assert.equal(dtAccepted.ok, true)
+  await second
+  assert.equal(rig.store.get(card2.approvalKey).status, 'resolved')
+  rig.dispose()
+})
 
 test('router 多通道：飞书+QQ 各收到卡片；广播文案含两渠道显示名', async () => {
   const feishu = makeFake('feishu', { targets: [{ chatId: 'oc_chat001', userId: 'u1' }] })

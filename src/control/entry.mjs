@@ -115,7 +115,7 @@ export function createControlEntry({ policy = {}, identity = null, now = Date.no
       // Pending rows are the source-of-truth binding. A callback may not
       // rewrite its chat/channel/user in the adapter envelope to manufacture
       // a fresh policy that matches the wrong conversation.
-      for (const key of ['channel', 'chatId']) {
+      for (const key of ['channel', 'accountId', 'chatId']) {
         if (text(pending[key]) !== null && pending[key] !== event[key]) {
           return makeReceipt('rejected', event, `source_mismatch_${key}`)
         }

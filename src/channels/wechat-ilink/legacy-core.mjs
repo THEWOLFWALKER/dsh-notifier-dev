@@ -256,7 +256,7 @@ export function createWechatIlinkInbound(options = {}) {
     const messageId = String(normalized.messageId ?? '') || `wx:${from}:${hash6(text)}`
     // v0.7：accept 返回值消费——拒绝/命令回执不再已读不回
     // context_token is transport state, never a Control Core/audit field.
-    const envelope = { ...normalized, channel: 'wechat', userId: from, chatId: from, messageId, text }
+    const envelope = { ...normalized, channel: 'wechat', accountId: String(config?.accountId ?? ''), userId: from, chatId: from, messageId, text }
     delete envelope.contextToken
     delete envelope.contextTokenRejected
     const result = bus.accept(envelope)
@@ -381,6 +381,7 @@ export function createWechatIlinkInbound(options = {}) {
 
   return {
     channel: 'wechat',
+    accountId: String(config?.accountId ?? ''),
     capabilities: { buttons: false },
 
     /** 连接状态供本地管理台/上层 registry 展示；不包含 token 或 context。 */
