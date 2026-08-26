@@ -2,11 +2,11 @@
 
 > 写给下一个 agent。本文档是完整的工作上下文快照：设计理念、军规约定、架构地图、
 > 版本脉络、审查记录、已知坑、待办清单。读完这一份即可无缝接手。
-> 当前快照：2026-08-26，当前开发线包含 `73154cd` 及其后续文档同步提交（含 `c4fef26`）。当前开发线 `npm test` = 1194（1193 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。QQ C2C 单聊原生按钮、GROUP 文本回退，以及 QQ/微信 iLink/钉钉图片代码已接线并通过契约测试；缺失 `chatType` 或未知来源控制 fail-closed，`conversation` 的 `routeUnsafe` 旁路已堵。Web/admin 已具备阶段 2A 本地管理台的远程提问裁决入口（见下方快照），desktop 端仍无 settlement 入口，双端共享未宣称；真实设备/宿主协议仍未验证，能力只能标记 declared/contract-tested。
+> 当前快照：2026-08-26，当前开发线 HEAD 为 `ce46edc`（阶段 2A 管理台远程提问裁决入口）。当前开发线 `npm test` = 1194（1193 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。QQ C2C 单聊原生按钮、GROUP 文本回退，以及 QQ/微信 iLink/钉钉图片代码已接线并通过契约测试；缺失 `chatType` 或未知来源控制 fail-closed，`conversation` 的 `routeUnsafe` 旁路已堵。Web/admin 已具备阶段 2A 本地管理台的远程提问裁决入口（见下方快照），desktop 端仍无 settlement 入口，双端共享未宣称；真实设备/宿主协议仍未验证，能力只能标记 declared/contract-tested。
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
 > 2026-08-23 接力合入公共镜像 v0.8.5 发布内容（issue #11 ask_user 编号回复修复 + PR #9 飞书扫码 SDK 适配），见「当前接力交代」。
 > 上一稳定发布位 v0.8.6 = `bf03a1c`（npm `dsh-notifier@0.8.6`，公共镜像 `db42908` 已清理 node_modules/package-lock）。
-> 快照刷新：2026-08-26，Task 04 首次配置 UX 已完成：本地管理台首屏显示四态进度，个人模式默认隐藏绑定/会话高级导航，通道空状态改为字段配置指引，测试成功/失败显示下一步与重试文案；仍保持 loopback/Bearer/零依赖边界。Control Core 已接入宿主事件与 inbound 回调，来源绑定按 `(channel,userId,chatId)` 隔离；能力矩阵/fallback 与 runtime assembly 已对齐。Web/admin 已具备阶段 2A 本地管理台的远程提问裁决入口（choose/reject，见下方快照）；destktop 端仍无 settlement 入口。`notifyAll().delivered` 仍只有渠道级证据，不能推导具体 chat 送达；未获逐目标 `sendText` 确认的编号兜底保持 fail-closed。Issue #16/#14 只能标记代码/契约完成，待真实设备/宿主验证。公共仓库不动。
+> 快照刷新：2026-08-26，Task 04 首次配置 UX 已完成：本地管理台首屏显示四态进度，个人模式默认隐藏绑定/会话高级导航，通道空状态改为字段配置指引，测试成功/失败显示下一步与重试文案；仍保持 loopback/Bearer/零依赖边界。Control Core 已接入宿主事件与 inbound 回调，来源绑定按 `(channel,userId,chatId)` 隔离；能力矩阵/fallback 与 runtime assembly 已对齐。Web/admin 已具备阶段 2A 本地管理台的远程提问裁决入口（choose/reject，见下方快照）；desktop 端仍无 settlement 入口。`notifyAll().delivered` 仍只有渠道级证据，不能推导具体 chat 送达；未获逐目标 `sendText` 确认的编号兜底保持 fail-closed。Issue #16/#14 只能标记代码/契约完成，待真实设备/宿主验证。公共仓库不动。
 > 批次 4（2026-08-26）微信 iLink provider slice 已接入 `src/channels/wechat-ilink/`：单账号 QR-first、bounded long-poll、账号命名空间 cursor/context、整批交付后推进游标、断线重连/stop、明确 QR 过期状态、文本/编号 fallback、连接状态和结构化图片 envelope。旧 `src/inbound/wechat-ilink.mjs` 保留兼容入口；图片收发仅有可选 media bridge，能力状态为 `declared`，没有真实协议/设备验证，不得标记正式支持。新 focused tests 位于 `test/channels/wechat-ilink.test.mjs`。
 > 批次 5（2026-08-26）飞书与 Telegram provider facade 已建立在 `src/channels/feishu/`、`src/channels/telegram/`：回调归一化强制 user/chat 来源字段，能力证据分别记录为 contract-tested/declared；既有 inbound transport 保持兼容，控制权限仍由 provider-neutral Control Core/session arbiter 负责。文件发送只通过显式 adapter seam，未做真实平台/设备验证，不能标记 `real-device-verified`。focused tests 位于 `test/channels/feishu.test.mjs`、`test/channels/telegram.test.mjs`。
 > 路线图阶段 2A（2026-08-26）：本地管理台远程提问裁决入口已建立于「问题桥 facade + Control Core」之上。`GET /api/questions` 仅返回脱敏只读快照（不可逆 12 位 sha256 ref、掩码 agent/chat/user、选项文本、时间），零 token/凭证/完整标识/答案隐私；`POST /api/questions/:ref/settle`（choose/reject）一律经 Control Core 的 `question-answer` spec 走既有授权与单次结算（首达采纳）语义，本端点不复制 ledger 结算、不留直通后门，Control Core 未接线时 fail-closed `not_available`。竞态双端互斥、驳回复用 `aq-skip` 交还桌面、选项封闭集 fail-closed。前端 `ui.mjs` 面板纯字符串逐字段 `esc()` 转义，token 绝不进 DOM。focused tests：`test/admin-questions.test.mjs`、`test/questions-admin-settlement.test.mjs`、`test/admin-ui-behavior.test.mjs`。真实宿主/设备验证不做，标记 code/contract-tested，Issue #16 不关闭。
@@ -79,7 +79,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 用户文档 | `docs/guide.md` · `docs/upgrade-guide.md` · `docs/upgrade-guide.en.md` | README 双语均链接 guide；升级/回滚是装包用户高频需求 |
 | 互操作契约 | `PLUGINS.md` | 其他插件作者消费 notifier 服务时的契约（README 链接） |
 | CLI | `scripts/`（channel-login · test-channel · route · gen-channel-matrix 等） | guide.md 教用户直接 `node scripts/...` |
-| 测试 | `test/` | 行为契约随包分发是项目惯例（已发布 v0.8.6 = 909 用例；开发线 HEAD 1177，装包即可 `npm test`） |
+| 测试 | `test/` | 行为契约随包分发是项目惯例（已发布 v0.8.6 = 909 用例；开发线 HEAD 1194，装包即可 `npm test`） |
 
 **仅工程仓库（不进 npm 包）**：
 

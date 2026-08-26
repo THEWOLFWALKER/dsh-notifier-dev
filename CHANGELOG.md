@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- 2026-08-26 maintenance sync: development line includes `c4fef26` (QQ C2C/GROUP source guard and conversation `routeUnsafe` bypass closure). Validation is `1177` tests (`1176` pass + `1` skip); package/version remains the published `0.8.6` (`909` release contract), with no new release or real-device/host-protocol verification. QQ C2C buttons and GROUP text fallback are contract-tested; missing `chatType` or unknown source metadata fail closed. Web/admin and desktop have no safe reusable `ask_user` settlement entry, so dual-end sharing is not claimed.
+- 2026-08-26 maintenance sync: development line is at `ce46edc` (QQ C2C/GROUP source guard, conversation `routeUnsafe` bypass closure, and Web/admin `ask_user` settlement entry). Validation is `1194` tests (`1193` pass + `1` skip); package/version remains the published `0.8.6` (`909` release contract), with no new release or real-device/host-protocol verification. QQ C2C buttons, GROUP text fallback, and the admin choose/reject path are contract-tested; missing `chatType` or unknown source metadata fail closed. Desktop still has no settlement entry, so dual-end sharing is not claimed.
 - PR #12 modular rework: QQ interaction callbacks now use the shared approval/question Control Core with explicit source binding and text fallback. QQ group targets remain non-actionable to avoid cross-member disclosure. `approval.parallel` remains disabled by default and is explicit opt-in only; wait rejection is fail-closed. Real QQ protocol/device verification is still pending.
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 SemVer。

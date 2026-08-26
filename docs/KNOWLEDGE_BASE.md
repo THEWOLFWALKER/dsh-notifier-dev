@@ -4,12 +4,12 @@ This is the navigation page for humans and agents. It deliberately points to one
 
 ## Current Baseline
 
-- Canonical engineering baseline: private development line after `c4fef26` (QQ group/unknown-source control fail-closed and conversation `routeUnsafe` bypass blocked); package version `0.8.6` (published, current maintenance/control-contract line unreleased).
+- Canonical engineering baseline: private development line at `ce46edc` (QQ group/unknown-source control fail-closed, conversation `routeUnsafe` bypass blocked, and Web/admin `ask_user` settlement entry); package version `0.8.6` (published, current control-contract line unreleased).
 - Canonical collaboration repository: private `dsh-notifier-dev` (GitHub owner `THEWOLFWALKER`). The public repository `https://github.com/THEWOLFWALKER/dsh-notifier` is the release/source mirror, not the day-to-day relay workspace.
 - The public repository's `main` history is unrelated to the current hardening line; do not merge or force-push it implicitly. Public synchronization is a deliberate release operation.
 - Public issue snapshot (2026-08-25): #16/#15/#14/#13/#10/#7/#6/#5/#4/#3/#2/#1 open; #11/#8 closed. PR #12 is open reference material only; PR #9 is merged in the public mirror. These statuses are not claims that the private tree fixes every open issue.
 - Runtime: Node.js ESM, Node `>=22`, no build step, no production dependencies.
-- Test baseline: `1177` total on the current development line (1176 pass + 1 skip). The published v0.8.6 release retains `909` as its documented test count until a release cycle updates version and count together.
+- Test baseline: `1194` total on the current development line (1193 pass + 1 skip). The published v0.8.6 release retains `909` as its documented test count until a release cycle updates version and count together.
 - The attached npm archive is a release artifact. The engineering archive is the source authority.
 
 ## Read Order

@@ -22,7 +22,7 @@
 ![silence](https://img.shields.io/badge/silence%20never-approves-9C27B0?style=flat-square)
 ![push](https://img.shields.io/badge/push%20it-real%20good-FF4081?style=flat-square)
 
-The published `dsh-notifier@0.8.6` contract is 909 tests. The current development line is 1177 tests (1176 pass + 1 skip); it is unreleased and has not had real-device or host-protocol validation.
+The published `dsh-notifier@0.8.6` contract is 909 tests. The current development line is 1194 tests (1193 pass + 1 skip); it is unreleased and has not had real-device or host-protocol validation.
 
 Unified notification push plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) — one minimal `notify()` API in front, 27 channels behind.
 
@@ -204,7 +204,7 @@ src/
   ledger.mjs          JSONL ledger + daily digest
   rules.mjs           anti-disturb gates (event / keyword / grace)
 scripts/              channel-login.mjs · test-channel.mjs · route.mjs · gen-channel-matrix.mjs
-test/                 909 tests in the published v0.8.6 package; current development line: 1177 (1176 pass + 1 skip)
+test/                 909 tests in the published v0.8.6 package; current development line: 1194 (1193 pass + 1 skip)
 ```
 
 Design rules: pure ESM (`.mjs`), zero runtime dependencies, a declarative spec engine for the bulk of channels, thin honest adapters, no build step.
@@ -212,7 +212,7 @@ Design rules: pure ESM (`.mjs`), zero runtime dependencies, a declarative spec e
 ## Development
 
 ```bash
-npm test          # published v0.8.6 contract: 909 tests; current development line: 1177 (1176 pass + 1 skip)
+npm test          # published v0.8.6 contract: 909 tests; current development line: 1194 (1193 pass + 1 skip)
 ```
 
 To add a channel: implement the adapter interface (`resolve(cfg)` + `send(msg)`) in `src/adapters/` and register it in `src/config.mjs`; the channel matrix above self-regenerates via `node scripts/gen-channel-matrix.mjs`.
