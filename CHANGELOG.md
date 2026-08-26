@@ -10,6 +10,22 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 新增：宿主事件根上下文订阅与可观测性（Issue #16，2026-08-26）
+
+- 新增 `src/host-events.mjs`：DSH/Cordis 宿主事件订阅的兼容边界。宿主按注册上下文限定事件监听作用域，插件挂在 scoped 子上下文时，宿主事件订阅会经功能探测回落到文档化的 Cordis 根上下文（`ctx.root`，自引用校验；非 Cordis 的 root 服务一律拒绝）。
+- 回落是订阅局部的，不使用 `global: true`，不改变宿主过滤语义；会话/agent 生命周期、错误与 dispose 订阅已切换到该边界。
+- 载荷归一仅接受文档化元组 `(session, event)` 与显式 envelope 兜底，agent 生命周期载荷按 `{ agent }` 归一、legacy 直传作为兼容；畸形载荷 fail-closed 拒绝。
+- 注册与处理均逐订阅 try/catch 闭环，诊断为有界快照（仅事件计数与 context/scope 状态，不含会话内容、标识符或凭证）；`ask_user` 仍由 `questions.enabled` 独立注册，本批不改变 interaction/desktop/provider 行为。
+- 新增 focused host/event/index 测试。DSH 0.1.1-rc.2 运行态仍须真实宿主/协议验证，Issue #16 只能标记 code/contract hardened，不关闭、不提 real-device 证据。
+
+### 新增：入站图片信封归一与有界下载（Issue #14，2026-08-26）
+
+- `src/inbound/message.mjs` 定义 text/image/file 统一入站模型；未知结构 fail-closed 返回 `null`，绝不把「非文本」伪装成 text 漏进会话路由。
+- `normalizeImageUrl` 仅接受显式 HTTP(S)、剔除凭证段、URL 长度有界；`normalizeImageAttachment` 只保留 url/width/height 已知字段，超限或畸形返回 `null`。
+- `downloadInboundImage` 为可选图片下载原语：AbortSignal 超时、`redirect: 'error'`、content-length 与实读字节上界 5 MiB、content-type 限 `image/*`，从不落盘二进制，失败 fail-closed 返回 `null`；结果不持久化。
+- QQ C2C `extra`（字符串化/已解析媒体段）、iLink item_list、钉钉 picture/image URL 已接线到归一模型并契约测试；图片下载失败不阻断文字/控制路径。
+- QQ C2C 图片解析 `parseQQImageMessage` 按 fixture 契约接线，真实字段形状仍无真机样本核验，能力状态 contract-tested/declared，不标记 `real-device-verified` 或正式支持。
+
 ### 新增：飞书与 Telegram provider facades（批次 5，2026-08-26）
 
 - 新增 `src/channels/feishu/` 与 `src/channels/telegram/` 独立 provider 入口；旧 inbound 模块继续作为兼容实现，控制语义仍统一复用 Control Core / session arbiter。
