@@ -22,7 +22,7 @@
 ![沉默](https://img.shields.io/badge/%E6%B2%89%E9%BB%98-%E6%B0%B8%E4%B8%8D%E6%89%B9%E5%87%86-9C27B0?style=flat-square)
 ![推送](https://img.shields.io/badge/push%20it-real%20good-FF4081?style=flat-square)
 
-已发布的 `dsh-notifier@0.8.6` 契约为 909 个测试；当前开发线为 1194 个（1193 通过 + 1 个跳过），尚未发布，也未做真实设备/宿主协议验证。
+已发布的 `dsh-notifier@0.8.6` 契约为 909 个测试；当前开发线为 1200 个（1199 通过 + 1 个跳过），尚未发布，也未做真实设备/宿主协议验证。
 
 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的统一通知推送插件 —— 前端一个极简 `notify()` API，背后 27 个渠道。
 
@@ -204,7 +204,7 @@ src/
   ledger.mjs          JSONL 账本 + 每日摘要
   rules.mjs           防打扰闸门（事件 / 关键词 / 宽限窗）
 scripts/              channel-login.mjs · test-channel.mjs · route.mjs · gen-channel-matrix.mjs
-test/                 909 个测试（已发布 v0.8.6 包）；当前开发线 1194 个测试（1193 通过 + 1 个跳过）
+test/                 909 个测试（已发布 v0.8.6 包）；当前开发线 1200 个测试（1199 通过 + 1 个跳过）
 ```
 
 设计准则：纯 ESM（`.mjs`）、零运行时依赖、绝大多数渠道走声明式 spec 引擎、适配器薄而诚实、无构建步骤。
@@ -212,7 +212,7 @@ test/                 909 个测试（已发布 v0.8.6 包）；当前开发线 
 ## 开发
 
 ```bash
-npm test          # 已发布 v0.8.6 契约：909 个用例；当前开发线 1194（1193 通过 + 1 个跳过）
+npm test          # 已发布 v0.8.6 契约：909 个用例；当前开发线 1200（1199 通过 + 1 个跳过）
 ```
 
 新增渠道：在 `src/adapters/` 实现适配器接口（`resolve(cfg)` + `send(msg)`），并在 `src/config.mjs` 注册；上方渠道矩阵由 `node scripts/gen-channel-matrix.mjs` 自动重生成。

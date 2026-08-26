@@ -50,7 +50,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 零运行时依赖（只用 fetch + node:crypto + 原生 WebSocket）。
 
 - 语言/运行时：Node.js ESM（.mjs），无 TypeScript，无构建步骤
-- 代码量：src+test+scripts ≈ 36,000 行；46 个测试文件，1194 测试（1193 pass + 1 skip；已发布 v0.8.6 = 909）
+- 代码量：src+test+scripts ≈ 36,000 行；46 个测试文件，1200 测试（1199 pass + 1 skip；已发布 v0.8.6 = 909）
 - 文档：README.md / README.zh-CN.md / ADAPTER.md（渠道接入规范）/ PLUGINS.md（插件互操作）/ docs/v0.5-design.md / docs/v0.6-design.md / CHANGELOG.md（最详细的历史）
 
 ---
@@ -61,7 +61,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 |---|---|
 | 版本 | package.json = 0.8.6；CHANGELOG、admin UI、双语 README 和发布守卫已同步；npm 已发布 `dsh-notifier@0.8.6`；公共镜像 `main` 已清理 `node_modules/` 与 `package-lock.json` |
 | git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前开发线包含 `73154cd` 及后续文档同步提交（含 `c4fef26`，文档同步分支未发布） |
-| 测试 | `npm test` 已发布 v0.8.6 契约 = **909 tests**；当前开发线 = **1194**（1193 pass + 1 skip；含阶段 2A 的 API/settlement/UI 新用例） |
+| 测试 | `npm test` 已发布 v0.8.6 契约 = **909 tests**；当前开发线 = **1200**（1199 pass + 1 skip；含团队批准成员契约、阶段 2A 的 API/settlement/UI 新用例） |
 | 发布 | v0.8.6 已发布；下一位 agent 接手时无需再走发布 gate，除非版本再次 bump |
 | 真机验证 | 当前分支未完成真实设备/宿主协议验证；QQ/微信 iLink/钉钉图片与 QQ 按钮仅有 contract-tested/declared 证据。历史 v0.6.1/v0.7 验证记录保留在下文 |
 
@@ -80,7 +80,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 用户文档 | `docs/guide.md` · `docs/upgrade-guide.md` · `docs/upgrade-guide.en.md` | README 双语均链接 guide；升级/回滚是装包用户高频需求 |
 | 互操作契约 | `PLUGINS.md` | 其他插件作者消费 notifier 服务时的契约（README 链接） |
 | CLI | `scripts/`（channel-login · test-channel · route · gen-channel-matrix 等） | guide.md 教用户直接 `node scripts/...` |
-| 测试 | `test/` | 行为契约随包分发是项目惯例（已发布 v0.8.6 = 909 用例；开发线 HEAD 1194，装包即可 `npm test`） |
+| 测试 | `test/` | 行为契约随包分发是项目惯例（已发布 v0.8.6 = 909 用例；开发线 HEAD 1200，装包即可 `npm test`） |
 
 **仅工程仓库（不进 npm 包）**：
 
@@ -264,7 +264,7 @@ src/
 ## 8. 快速上手
 
 ```bash
-npm test                    # 当前开发线 1194（1193 pass + 1 skip）；已发布 v0.8.6 契约仍为 909
+npm test                    # 当前开发线 1200（1199 pass + 1 skip）；已发布 v0.8.6 契约仍为 909
 npm run lint 2>/dev/null || node --check src/index.mjs   # 无 lint 配置的话用 node --check
 node scripts/route.mjs --help        # 路由 CLI
 node scripts/channel-login.mjs --help
