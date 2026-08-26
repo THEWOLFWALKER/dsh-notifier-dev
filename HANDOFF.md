@@ -2,7 +2,7 @@
 
 > 写给下一个 agent。本文档是完整的工作上下文快照：设计理念、军规约定、架构地图、
 > 版本脉络、审查记录、已知坑、待办清单。读完这一份即可无缝接手。
-> 当前快照：2026-08-26，当前开发线 HEAD 为 `5c6b4fc`（Stage 4 会话策略控制覆盖层持久化的对抗评审修复：分写 `route:sessions` 的 lifecycle 抹写/跨会话 clobber 已修——session-registry `persist()` 改为记录级再读合并（以盘上当前表为基底 + 回收墓碑，router 独占的 `.control` 子键与非跨会话记录原样保留，损坏/来源字段 `.control` 生命周期写前归一丢弃），router 才建档、registry 内存态未见过的会话不再被丢；持久化写失败的静默吞并已修——`store.save()/set()` 返回 durable 布尔、`router.safeSet` 把显式 `false` 当失败、admin `PATCH /api/sessions/:id/control` 因此真实落盘失败报 500 而非谎报 200；registry 公共记录返回改深拷贝（copy-on-read），杜绝改动 `control.approvalMembers` 污染内部态。已评审的 `owner`/`approvalOwnerOnly`/`approvalMembers` 经 session registry + loopback admin API 持久化为 `route:sessions[<id>].control` 有界覆盖层，单一纯 `normalizeControlOverlay` 是唯一规范（只收 mode/owner/approvalOwnerOnly/approvalMembers，读时丢弃来源字段，admin 载荷绝不铸造 channel/account/user/chat）。**持久化/API-only 切片**，覆盖层**尚未**接入 `createControlEntry` 授权（精确 next hook 见 `task-07` workstream）。当前开发线 `npm test` = 1230（1229 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。
+> 当前快照：2026-08-26，阶段 5 question P1 安全收口 + session 并发写入修复：(1) `src/questions/router.mjs` admin settle 路径 `accountId` 不再用 `channel` 兜底（`String(target.accountId ?? '')` 替代 `String(target.accountId ?? target.channel ?? '')`），违反硬性要求"不得把 channel 当作 accountId 的兜底值"；(2) `src/routing/agent-router.mjs` `setSessionOutbound`/`setSessionControl` 现在在写回前 re-read 最新整表，将 diff 合并到最新记录上写回，防止多个 session 并发更新时最后写入者覆盖 sibling 字段；(3) `test/questions-admin-settlement.test.mjs`、`test/admin-questions.test.mjs` 测试 rig 补充 `accountId` 以匹配生产适配器行为；(4) `test/agent-router.test.mjs` 新增 3 个并发回归测试。当前开发线 `npm test` = 1269（1268 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。
 > 上一快照位：开发线 HEAD 为 `69ad33f`（Stage 4 会话策略控制覆盖层持久化原始实现，见下方快照段）。当前开发线 `npm test` = 1223（1222 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
 > 2026-08-23 接力合入公共镜像 v0.8.5 发布内容（issue #11 ask_user 编号回复修复 + PR #9 飞书扫码 SDK 适配），见「当前接力交代」。
@@ -56,7 +56,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 零运行时依赖（只用 fetch + node:crypto + 原生 WebSocket）。
 
 - 语言/运行时：Node.js ESM（.mjs），无 TypeScript，无构建步骤
-- 代码量：src+test+scripts ≈ 36,000 行；47 个测试文件，1230 测试（1229 pass + 1 skip；已发布 v0.8.6 = 909）
+- 代码量：src+test+scripts ≈ 36,000 行；47 个测试文件，1269 测试（1268 pass + 1 skip；已发布 v0.8.6 = 909）
 - 文档：README.md / README.zh-CN.md / ADAPTER.md（渠道接入规范）/ PLUGINS.md（插件互操作）/ docs/v0.5-design.md / docs/v0.6-design.md / CHANGELOG.md（最详细的历史）
 
 ---
@@ -67,7 +67,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 |---|---|
 | 版本 | package.json = 0.8.6；CHANGELOG、admin UI、双语 README 和发布守卫已同步；npm 已发布 `dsh-notifier@0.8.6`；公共镜像 `main` 已清理 `node_modules/` 与 `package-lock.json` |
 | git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前开发线包含 `73154cd` 及后续文档同步提交（含 `c4fef26`，文档同步分支未发布） |
-| 测试 | `npm test` 已发布 v0.8.6 契约 = **909 tests**；当前开发线 = **1230**（1229 pass + 1 skip；含团队批准成员契约、阶段 2A 的 API/settlement/UI 新用例、Stage 4 对抗评审的分写/durable 回归） |
+| 测试 | `npm test` 已发布 v0.8.6 契约 = **909 tests**；当前开发线 = **1269**（1268 pass + 1 skip；含 P1 问题安全收口、session 并发写入修复、团队批准成员契约、阶段 2A 的 API/settlement/UI 新用例、Stage 4 对抗评审的分写/durable 回归） |
 | 发布 | v0.8.6 已发布；下一位 agent 接手时无需再走发布 gate，除非版本再次 bump |
 | 真机验证 | 当前分支未完成真实设备/宿主协议验证；QQ/微信 iLink/钉钉图片与 QQ 按钮仅有 contract-tested/declared 证据。历史 v0.6.1/v0.7 验证记录保留在下文 |
 
@@ -270,7 +270,7 @@ src/
 ## 8. 快速上手
 
 ```bash
-npm test                    # 当前开发线 1230（1229 pass + 1 skip）；已发布 v0.8.6 契约仍为 909
+npm test                    # 当前开发线 1269（1268 pass + 1 skip）；已发布 v0.8.6 契约仍为 909
 npm run lint 2>/dev/null || node --check src/index.mjs   # 无 lint 配置的话用 node --check
 node scripts/route.mjs --help        # 路由 CLI
 node scripts/channel-login.mjs --help

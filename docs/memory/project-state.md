@@ -1,13 +1,13 @@
 # Project State
 
-Snapshot date: 2026-08-26 (current development line after `36aca9f`).
+Snapshot date: 2026-08-26 (current development line after stage5 question P1 + session concurrency fix).
 
 Planning decision (2026-08-25): after the current maintenance batch, the product direction is a personal-mode-first cross-IM control plane. The approved staged architecture and channel plan live in `docs/architecture-roadmap.md`; this does not mean those features are implemented or released.
 
 - Canonical development repository: private `https://github.com/THEWOLFWALKER/dsh-notifier-dev`.
 - Public release/source mirror: `https://github.com/THEWOLFWALKER/dsh-notifier`.
-- Branch topology (2026-08-26): current development line includes `36aca9f` (bounded team-mode `approvalMembers` + `canSettleApproval` on the Control Core path, after the QQ C2C/GROUP source guard and Web/admin `ask_user` settlement entry); Control Core is wired through host events and inbound callbacks; capability/fallback alignment and runtime assembly extraction are present.
-- Current test baseline: **1200** total (1199 pass + 1 skip). The published v0.8.6 contract remains **909**; package/version stays `0.8.6`, and this development line is unreleased.
+- Branch topology (2026-08-26): current development line `codex/stage5-wechat-ilink-hardening` includes question P1 security hardening (custom answer + skip via Control Core with account-bound source binding, adminSettle channel-as-accountId fallback fix) and session concurrent write fix (re-read-before-write merge in `setSessionOutbound`/`setSessionControl`).
+- Current test baseline: **1269** total (1268 pass + 1 skip). The published v0.8.6 contract remains **909**; package/version stays `0.8.6`, and this development line is unreleased.
 - QQ C2C single-chat native buttons and QQ GROUP text fallback are contract-tested. Missing `chatType` or unknown source metadata fail closed, and the conversation `routeUnsafe` bypass is blocked. QQ, WeChat iLink, and DingTalk image paths are wired and contract-tested; real provider/device and host protocol evidence is still absent. Web/admin now has a safe reusable `ask_user` settlement entry through Control Core; desktop still has none, so dual-end sharing is not claimed.
 - Earlier snapshot (2026-08-23, ox-alpha relay, second round):
 - Branch topology (post-merge 2026-08-23): private `main` = `52c467a`, the no-ff merge of `codex/p1-3-state-stress` (P1-3 crash-stale-lock recovery, contract 902 → 906). All prior relay lines (security-hardening, protocol-guards, error-visibility) and the P1-3 branch are contained in `main` and retired.
@@ -24,7 +24,7 @@ Planning decision (2026-08-25): after the current maintenance batch, the product
 
 ## Validation Evidence
 
-- `npm test` (current development line, 2026-08-26): `1200 total` = `1199 pass + 1 skip`.
+- `npm test` (current development line, 2026-08-26): `1269 total` = `1268 pass + 1 skip`.
 - `node scripts/verify-release.mjs`: passed with documented tests = `909`.
 - `node scripts/verify-release.mjs`, `node scripts/gen-channel-matrix.mjs --check`, and `node --check src/index.mjs` remain release/shape checks against the published v0.8.6 count of 909; the development count must not alter `package.json`.
 
