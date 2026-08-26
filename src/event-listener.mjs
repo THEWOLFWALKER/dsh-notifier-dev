@@ -5,6 +5,7 @@
 
 import { basename } from 'node:path'
 import { createKeywordFilter, createGraceQueue } from './rules.mjs'
+import { createHostEventRegistrar, normalizeSessionEventArgs } from './host-events.mjs'
 // v0.5 状态上报 + 动作闭环
 import { createTurnTracker } from './status/turn-tracker.mjs'
 import { normalizeInbound, buildActionPayload } from './inbound/_contract.mjs'
@@ -444,16 +445,19 @@ export function createEventListener(ctx, notifier, resolvedConfig, wiring = {}) 
     push(intentOfAgentError(payload), agent?.session)
   }
 
-  const disposeSession = ctx.on('session/event', sessionListener)
+  const hostEvents = createHostEventRegistrar(ctx, warn)
+  const disposeSession = hostEvents.on('session/event', (...args) => {
+    const normalized = normalizeSessionEventArgs(args)
+    if (normalized === undefined) {
+      warn('宿主 session/event 载荷已拒绝（仅接受 (session, event) 或 { session, event }）')
+      return
+    }
+    sessionListener(normalized.session, normalized.event)
+  })
   let disposeError = null
   const extraDisposers = []
-  try {
-    disposeError = ctx.on('agent/error', errorListener)
-  } catch {
-    // 某些宿主不提供 agent/error 总线：静默降级，session/event 触发线不受影响
-  }
-  try {
-    const disposeAgentDisposed = ctx.on('agent/disposed', (payload) => {
+  disposeError = hostEvents.on('agent/error', errorListener)
+  const disposeAgentDisposed = hostEvents.on('agent/disposed', (payload) => {
       const agent = payload?.agent ?? payload
       tracker.observeAgentDisposed(agent)
       const bus = busFn !== null ? (() => { try { return busFn() } catch { return null } })() : null
@@ -462,9 +466,7 @@ export function createEventListener(ctx, notifier, resolvedConfig, wiring = {}) 
         try { bus.abandonByAgent(agentId) } catch { }
       }
     })
-    if (typeof disposeAgentDisposed === 'function') extraDisposers.push(disposeAgentDisposed)
-  } catch {
-  }
+  if (typeof disposeAgentDisposed === 'function') extraDisposers.push(disposeAgentDisposed)
 
   // 返回可被 cordis await 的清理：flush 未到期的 turn/end 防抖与宽限窗任务，并等待所有在途推送完成。
   // headless 一次性运行在 appExit 前会 dispose 整个树（5s 宽限），Pending 通知因此能送达。
@@ -472,10 +474,11 @@ export function createEventListener(ctx, notifier, resolvedConfig, wiring = {}) 
     const triggered = [...debounce.flush(), ...grace.flush()]
     tracker.dispose() // v0.5：清心跳/卡住定时器
     disposeSession?.()
-    if (disposeError != null) disposeError()
+    disposeError?.()
     for (const dispose of extraDisposers) {
       try { dispose() } catch { /* 反注册失败不致命 */ }
     }
+    hostEvents.reportZeroEvents()
     return Promise.allSettled([...triggered, notifier.flush()]).then(() => undefined)
   }
 }

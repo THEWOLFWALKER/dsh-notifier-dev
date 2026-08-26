@@ -126,6 +126,26 @@ test('事件接线：agent/created 建档、agent/disposed 标记（容忍 { ses
   registry.dispose()
 })
 
+test('事件接线：DSH documented { agent } 生命周期载荷在 root fallback 上建档和标记', () => {
+  const handlers = new Map()
+  const root = {
+    on(event, listener) {
+      if (!handlers.has(event)) handlers.set(event, [])
+      handlers.get(event).push(listener)
+      return () => { handlers.set(event, handlers.get(event).filter((entry) => entry !== listener)) }
+    },
+  }
+  root.root = root
+  const ctx = { root, on() { throw new Error('scoped child must not receive host subscription') } }
+  const { registry, raw } = makeRegistry({ ctx })
+  const agent = agentOf('s-root', '/work/root-project')
+  handlers.get('agent/created')[0]({ agent })
+  assert.equal(raw()['s-root'].workspace, 'root-project')
+  handlers.get('agent/disposed')[0]({ agent })
+  assert.equal(raw()['s-root'].disposedAt, 1_000_000)
+  registry.dispose()
+})
+
 // ---- touch（摊销写盘）----
 
 test('touch：摊销窗口 0 时每次都真写 store', () => {

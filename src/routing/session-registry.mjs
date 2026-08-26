@@ -15,6 +15,7 @@
 // 存储失败退化为内存态，任何输入形状异常都不抛（上游是对话线与宿主总线，绝不能弄崩宿主）。
 
 import { basename } from 'node:path'
+import { createHostEventRegistrar, normalizeAgentLifecyclePayload } from '../host-events.mjs'
 
 /** state.json 会话表键（与既有 bind:* / *:account 同域，§2）。 */
 const SESSIONS_KEY = 'route:sessions'
@@ -466,6 +467,7 @@ export function createSessionRegistry(options = {}) {
       for (const disposer of disposers.splice(0)) {
         try { disposer() } catch { /* 反注册失败不致命 */ }
       }
+      hostEvents.reportZeroEvents()
       for (const timer of sweepTimers) clearTimeout(timer)
       sweepTimers.clear()
     },
@@ -473,13 +475,16 @@ export function createSessionRegistry(options = {}) {
 
   // ---- 宿主事件接线（全防御：注册失败降级为惰性建档模式，绝不抛，§4）----
   const disposers = []
+  const hostEvents = createHostEventRegistrar(ctx, warn)
   const listen = (event, handler) => {
-    let disposer = null
-    try {
-      disposer = ctx?.on?.(event, (payload) => {
-        try { handler(payload) } catch (error) { warn(`${event} 处理失败: ${error instanceof Error ? error.message : String(error)}`) }
-      })
-    } catch { /* 宿主无此事件：降级为惰性建档模式 */ }
+    const disposer = hostEvents.on(event, (payload) => {
+      const agent = normalizeAgentLifecyclePayload(payload)
+      if (agent === undefined) {
+        warn(`${event} 载荷已拒绝（仅接受 { agent } 或直接 agent）`)
+        return
+      }
+      try { handler(agent) } catch (error) { warn(`${event} 处理失败: ${error instanceof Error ? error.message : String(error)}`) }
+    })
     if (typeof disposer === 'function') disposers.push(disposer)
   }
   listen('agent/created', (agent) => { registry.ensureSession(agent) })

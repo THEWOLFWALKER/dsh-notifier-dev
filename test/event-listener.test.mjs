@@ -172,6 +172,41 @@ test('createEventListener: dedup 防止同一 seq 重放', async () => {
   dispose()
 })
 
+test('createEventListener: root-context fallback accepts envelope and preserves duplicate delivery dedup', () => {
+  const listeners = {}
+  const root = {
+    on(event, listener) {
+      ;(listeners[event] ??= []).push(listener)
+      return () => {}
+    },
+  }
+  root.root = root
+  const ctx = {
+    root,
+    logger: { warn() {} },
+    on() { throw new Error('scoped context must not receive host subscription') },
+  }
+  const pushes = []
+  const notifier = { notifyAll: async (message) => { pushes.push(message); return { ok: true } }, flush: async () => {} }
+  const dispose = createEventListener(ctx, notifier, { enabled: true, debounceMs: 10, summaryMaxChars: 100, titlePrefix: '' })
+  const envelope = { session: makeSession('s1'), event: { type: 'approval/asked', seq: 7, data: {} } }
+  listeners['session/event'][0](envelope)
+  listeners['session/event'][0](envelope)
+  assert.equal(pushes.length, 1)
+  dispose()
+})
+
+test('createEventListener: malformed session/event does not notify or throw', () => {
+  const warnings = []
+  const listeners = {}
+  const ctx = { logger: { warn: (...args) => warnings.push(args.join(' ')) }, on(event, listener) { ;(listeners[event] ??= []).push(listener); return () => {} } }
+  const notifier = { notifyAll: async () => { throw new Error('must not notify') }, flush: async () => {} }
+  const dispose = createEventListener(ctx, notifier, { enabled: true, debounceMs: 10, summaryMaxChars: 100, titlePrefix: '' })
+  listeners['session/event'][0]({ session: { id: 's1' }, event: { type: 3 } })
+  assert.ok(warnings.some((line) => /session\/event 载荷已拒绝/.test(line)))
+  dispose()
+})
+
 test('createEventListener: agent/error 总线即时推送且按 turn:step 去重', async () => {
   const { ctx, listeners } = fakeCtx()
   let pushes = []
