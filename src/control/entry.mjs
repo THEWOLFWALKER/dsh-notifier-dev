@@ -123,17 +123,37 @@ export function createControlEntry({ policy = {}, identity = null, now = Date.no
       // paths (action `stop`, conversation steering) that genuinely carry no source
       // metadata keep their existing adapter-envelope binding.
       const rowMeta = pending.control ?? pending.controlMeta ?? {}
-      const sourceOf = (key) =>
-        text(rowMeta[key]) ??
-        text(pending[key]) ??
-        (key === 'sessionId' ? text(pending.agentId) : null) ??
-        text(basePolicy[key])
+      const metaSources = [pending.control, pending.controlMeta]
+        .filter((meta) => meta !== null && typeof meta === 'object' && !Array.isArray(meta))
+      const sourceValues = (key) => [
+        text(basePolicy[key]),
+        ...metaSources.map((meta) => text(meta[key])),
+        text(pending[key]),
+        key === 'sessionId' ? text(pending.agentId) : null,
+      ].filter((value) => value !== null)
+      const sourceOf = (key) => sourceValues(key)[0] ?? null
+      const authorizationCommand = event.command === 'approval' || event.command === 'question-answer'
       const trueSource = {
         channel: sourceOf('channel'),
         accountId: sourceOf('accountId'),
         chatId: sourceOf('chatId'),
         sessionId: sourceOf('sessionId'),
         userId: sourceOf('userId'),
+      }
+      if (authorizationCommand) {
+        // Authorization cannot choose one metadata layer over another. A stale or
+        // tampered rowMeta/controlMeta must not override a bound base policy, and
+        // duplicate metadata fields must agree before the arbiter sees the event.
+        for (const key of ['channel', 'accountId', 'chatId', 'sessionId']) {
+          const declared = sourceValues(key)
+          if (declared.some((value) => value !== declared[0])) {
+            return makeReceipt('rejected', event, `source_mismatch_${key}`)
+          }
+        }
+        const declaredUsers = sourceValues('userId')
+        if (declaredUsers.some((value) => value !== declaredUsers[0]) && input.trusted !== true) {
+          return makeReceipt('rejected', event, 'source_mismatch_userId')
+        }
       }
       for (const key of ['channel', 'accountId', 'chatId', 'sessionId']) {
         if (trueSource[key] !== null && trueSource[key] !== event[key]) {
@@ -143,19 +163,26 @@ export function createControlEntry({ policy = {}, identity = null, now = Date.no
       if (trueSource.userId !== null && trueSource.userId !== event.userId && input.trusted !== true) {
         return makeReceipt('rejected', event, 'source_mismatch_userId')
       }
-      if (typeof spec?.authorize === 'function' && spec.authorize(input, pending, event) !== true) {
-        return makeReceipt('rejected', event, 'source_policy_rejected')
+      let specAuthorized = false
+      if (typeof spec?.authorize === 'function') {
+        specAuthorized = spec.authorize(input, pending, event) === true
+        if (!specAuthorized) return makeReceipt('rejected', event, 'source_policy_rejected')
       }
+      // Adapter-specific authorization (for example a pushedTo target match) is
+      // itself a canonical source proof. Legacy question/approval rows often omit
+      // top-level source fields, so only an authorized spec may retain the event's
+      // proven source; generic/direct authorization remains fail-closed on null.
+      const policySource = (key) => authorizationCommand && !specAuthorized ? sourceOf(key) : event[key]
       const mergedPolicy = normalizeSessionPolicy({
         ...basePolicy,
         ...rowMeta,
         mode: rowMeta.mode ?? basePolicy.mode,
         capabilities: { ...basePolicy.capabilities, ...(rowMeta.capabilities ?? {}) },
-        sessionId: event.sessionId,
-        channel: event.channel,
-        accountId: event.accountId,
-        userId: event.userId,
-        chatId: event.chatId,
+        sessionId: policySource('sessionId'),
+        channel: policySource('channel'),
+        accountId: policySource('accountId'),
+        userId: policySource('userId'),
+        chatId: policySource('chatId'),
         policyVersion: event.policyVersion,
         expiresAt: Math.min(
           basePolicy.expiresAt !== null && Number.isFinite(Number(basePolicy.expiresAt)) ? Number(basePolicy.expiresAt) : Infinity,

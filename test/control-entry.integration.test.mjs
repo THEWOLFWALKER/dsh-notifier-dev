@@ -177,12 +177,12 @@ test('team approvalMembers authorize only listed members and the owner through t
 // The 2026 team-policy repaired source binding: even when a pending row omits
 // account/channel metadata (legacy rows), an owner-only / team owner event must
 // never manufacture the policy conversation source from the event envelope.
-function runOwnerControl(policy, row, event) {
+function runOwnerControl(policy, row, event, command = 'approval') {
   let settled = 0
   let seenPolicy = null
   const control = createControlEntry({ policy, now: () => 150 })
   const result = control.handle({
-    command: 'approval', pending: row, eventId: event.eventId, ...event,
+    command, pending: row, eventId: event.eventId, ...event,
     settle: (input, pendingRow, ev, policySnapshot) => { settled++; seenPolicy = policySnapshot; return true },
   })
   return { result, settled, seenPolicy }
@@ -227,6 +227,34 @@ test('owner-only authorization fails closed when no source metadata exists at al
   assert.equal(hit.result.status, 'rejected')
   assert.equal(hit.result.reason, 'source_mismatch_channel')
   assert.equal(hit.settled, 0)
+})
+
+test('owner authorization rejects conflicting base, pending, and nested control metadata sources', () => {
+  const policy = { mode: 'team', owner: 'owner-1', channel: 'telegram', accountId: 'tg-app', approvalOwnerOnly: true, capabilities: { approve: true } }
+  const baseRow = { sessionId: 'session-1', chatId: 'tg-chat', userId: 'owner-1', createdAt: 100, expiresAt: 1000 }
+  const event = { channel: 'feishu', accountId: 'fs-app', userId: 'owner-1', chatId: 'tg-chat', sessionId: 'session-1', policyVersion: '1', chatType: 'private' }
+  for (const row of [
+    { ...baseRow, channel: 'feishu', accountId: 'fs-app' },
+    { ...baseRow, control: { channel: 'feishu', accountId: 'fs-app' } },
+    { ...baseRow, controlMeta: { channel: 'feishu', accountId: 'fs-app' } },
+    { ...baseRow, control: { channel: 'telegram', accountId: 'tg-app' }, controlMeta: { channel: 'feishu', accountId: 'fs-app' } },
+  ]) {
+    const hit = runOwnerControl(policy, row, event)
+    assert.equal(hit.result.status, 'rejected')
+    assert.match(hit.result.reason, /^source_mismatch_(channel|accountId)$/)
+    assert.equal(hit.settled, 0)
+  }
+  const aligned = runOwnerControl(policy, { ...baseRow, controlMeta: { channel: 'telegram', accountId: 'tg-app' } }, {
+    ...event, channel: 'telegram', accountId: 'tg-app',
+  })
+  assert.equal(aligned.result.status, 'accepted')
+  assert.equal(aligned.settled, 1)
+  const question = runOwnerControl(policy, { ...baseRow, controlMeta: { channel: 'telegram', accountId: 'tg-app' } }, {
+    ...event, eventId: 'question-answer', channel: 'feishu', accountId: 'fs-app',
+  }, 'question-answer')
+  assert.equal(question.result.status, 'rejected')
+  assert.equal(question.result.reason, 'source_mismatch_channel')
+  assert.equal(question.settled, 0)
 })
 
 test('team member authorization stays fail-closed on wrong chat and group chat, zero settlement', () => {
