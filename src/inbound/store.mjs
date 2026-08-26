@@ -225,6 +225,12 @@ export function createStore(filePath) {
 
   const save = () => {
     const release = acquireLock()
+    // v0.8.7（对抗评审 Stage-4 P1-2）：save 原先在裸 catch 里吞掉一切磁盘失败并**不返回可辨识信号**，
+    // 调用方（store.set → agent-router.safeSet → admin PATCH control）据此把「没写上去」误判为「成功」
+    // 返回 200，而状态重启即丢。改为返回持久化是否真正到达磁盘的布尔：只有 write+rename 全部完成才算
+    // durable=true；磁盘异常 catch 与「损坏转存失败中止」两条路径保持 durable=false，向上显式传播失败。
+    // 既有调用方只看副作用、忽略返回值；唯一新消费方是 router.safeSet（把 false 当写失败）。行为不破坏。
+    let durable = false
     try {
       mkdirSync(dirname(filePath), { recursive: true })
       let disk = tryLoad()
@@ -239,12 +245,13 @@ export function createStore(filePath) {
           renameSync(filePath, backup)
           console.error('[dsh-notifier/store]', `state 文件损坏，已转存现场为 ${backup} 并以内存态重建（副本可手工排查恢复）`)
         } catch (renameError) {
-          // 转存失败（如备份不可写）：退回 v0.6.4 中止语义，保留 dirty 待外部修复
+          // 转存失败（如备份不可写）：退回 v0.6.4 中止语义，保留 dirty 待外部修复。
+          // 未写入磁盘 → durable 保持 false。
           if (!warnedCorrupt) {
             warnedCorrupt = true
             try { console.error('[dsh-notifier/store]', `state 文件损坏且转存失败（${renameError instanceof Error ? renameError.message : String(renameError)}），暂停写盘保留现场: ${filePath}`) } catch { /* 控制台不可用不致命 */ }
           }
-          return
+          return durable
         }
         // 现场已转存：磁盘不可读，最大可用快照就是本实例内存全量（boot 载入 + 此后更新；
         // 他进程 boot 后的写入本就读不出来——副本里留了取证）。绝不能从 {} 起步：
@@ -266,8 +273,10 @@ export function createStore(filePath) {
       dirty.clear()
       lastKnownMtimeMs = mtimeOf()
       lastRefreshCheckMs = Date.now()
+      durable = true
     } catch {
-      // 磁盘失败不致命：内存态继续工作（重启后丢失）；dirty 保留下次再试
+      // 磁盘失败不致命：内存态继续工作（重启后丢失）；dirty 保留下次再试。
+      // durable 保持 false —— 写没有真正到达盘上，向上显式传播失败。
       if (!warnedSaveError) {
         warnedSaveError = true
         try { console.error('[dsh-notifier/store]', `state 写盘失败（内存态继续，重启后丢失）: ${filePath}`) } catch { /* 控制台不可用不致命 */ }
@@ -275,6 +284,7 @@ export function createStore(filePath) {
     } finally {
       release()
     }
+    return durable
   }
 
   return {
@@ -286,7 +296,9 @@ export function createStore(filePath) {
     set(key, value) {
       state[key] = value
       dirty.add(key)
-      save()
+      // v0.8.7（对抗评审 Stage-4 P1-2）：向上传播持久化成功与否（save 的 durable 布尔），
+      // router.safeSet 据此把「写盘失败」与「写盘成功」区分开。忽略返回值的既有调用方不受影响。
+      return save()
     },
     delete(key) {
       const existed = key in state

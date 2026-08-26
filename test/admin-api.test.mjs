@@ -15,6 +15,7 @@ import { join } from 'node:path'
 
 import { createAdminApi, ApiError, INBOUND_CHANNELS } from '../src/admin/api.mjs'
 import { createAgentRouter } from '../src/routing/agent-router.mjs'
+import { createStore } from '../src/inbound/store.mjs'
 import { CHANNEL_TYPES } from '../src/config.mjs'
 
 /** 审计文件名（契约：<stateDir>/admin-audit.jsonl）。 */
@@ -509,6 +510,24 @@ test('patchSessionControl：从未建档会话 → 404；registry 有记录 → 
     storeOverrides: { set: () => { throw new Error('disk full') } },
   })
   assert.throws(() => api3.patchSessionControl('s-1', { owner: 'u1' }), apiErrorOf(500))
+})
+
+test('patchSessionControl：真实 createStore 落盘失败 → 500（真实写路径，非假 setter 抛错）', () => {
+  // 对抗评审 P1-2：不能只测「假 setter 抛错」——真实 createStore 过去会把磁盘失败吞掉并
+  // 当成功返回 200。这里用真实 createStore + 真实 router：父路径被常规文件占用 → durable 写
+  // 失败显式返回 false → router.safeSet 视为失败 → admin 报 500，重启即丢不再被谎报为成功。
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-admin-fail-'))
+  const blocker = join(dir, 'blocker')
+  writeFileSync(blocker, 'i am a regular file')
+  const store = createStore(join(blocker, 'state.json')) // 父级普通文件 → 落盘必然失败
+  const router = createAgentRouter({ store, agentsList: () => [] })
+  const registry = makeRegistry({ records: { 's-1': { workspace: 'p' } } }) // registry 建档 → 不 404
+  const stateDir = mkdtempSync(join(tmpdir(), 'dsh-admin-audit-'))
+  const api = createAdminApi({
+    router, registry, store, stateDir,
+    channelsEnabled: () => [], outboundConfigs: undefined,
+  })
+  assert.throws(() => api.patchSessionControl('s-1', { owner: 'u1' }), apiErrorOf(500))
 })
 
 // ———————— getChannels / putChannel ————————

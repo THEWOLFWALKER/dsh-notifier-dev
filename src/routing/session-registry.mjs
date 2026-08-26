@@ -41,6 +41,26 @@ function deepCopyPlain(value) {
   try { return JSON.parse(JSON.stringify(value ?? null)) } catch { return value }
 }
 
+/** 取「普通对象」：null / 数组 / 标量一律视为无条目（手工编辑或损坏数据防御）。 */
+function plainObjectOf(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  return value
+}
+
+/**
+ * 会话记录的对外**深拷贝**（recordCopy）：顶层浅拷 + 嵌套子键（control/outbound/inbound）深拷。
+ * 外部拿到的副本改 `control.approvalMembers` / `outbound.quiet` / `inbound[0].userId` 等嵌套值
+ * 绝不污染注册表内部 `sessions[id]` 记录（copy-on-read；Stage-4 P2 低风险修复）。
+ */
+function recordCopy(record) {
+  if (record === undefined || record === null) return record
+  const copy = { ...record }
+  if (copy.control !== undefined) copy.control = deepCopyPlain(copy.control)
+  if (copy.outbound !== undefined) copy.outbound = deepCopyPlain(copy.outbound)
+  if (copy.inbound !== undefined) copy.inbound = deepCopyPlain(copy.inbound)
+  return copy
+}
+
 /**
  * 从 agent / session 对象防御性取工作区名（纯导出函数，无状态）。
  * 取值顺序：agentLike.header?.cwd → agentLike.session?.header?.cwd → agentLike.cwd，
@@ -114,9 +134,40 @@ export function createSessionRegistry(options = {}) {
   const sessions = loadSessions()
   let lastWriteMs = now() // 构造即视为刚同步过（内存态来自盘上），touch 摊销的基准点
   let lastSweepMs = -Infinity // 首次内联 prune 即真扫一次（清掉停机期间过期的记录）
+  /** 回收删除待落盘的会话 id：写盘失败时保留、下次 persist 再删（对齐 dirty 保留语义）。 */
+  const removedIds = new Set()
+  /**
+   * 把注册表内存态写入 store（route:sessions 一个键）。
+   *
+   * v0.8.7（对抗评审 Stage-4 P1-1）：此前的实现把整个内存 `sessions` 原样覆写，而 agent-router 的
+   * `setSessionControl`/`setSessionOutbound` 直写同一 `route:sessions` 键、admin 也经 router 落盘——
+   * 注册表整表覆写会抹掉 router/admin 刚写入的覆盖层（registry 内存态不包含它们），也可抹掉与
+   * 本次生命周期写无关的跨会话更新。这里改为**记录级再读合并**：
+   *  1. 以盘上当前 `route:sessions` 为基底（store 读收敛 = 含 router/admin 直写的最新值）——未在
+   *     注册表内存态里的盘上记录/覆盖层（如 router 建的 `.control`）原样保留；
+   *  2. 删除回收墓碑（removedIds，由 sweep 落击杀），再把内存态逐记录并入对应盘上记录（浅合并——
+   *     注册表不拥有的子键如 `.control` 因内存态没有该键而得以保留；跨会话无关记录不受影响）；
+   *  3. 每次生命周期写都对 `.control` 子键做归一/丢弃（normalizeControlOverlay，损坏/越界/来源字段
+   *     绝不停留——也是 Stage-4 P2 的「生命周期写前规范化」）；
+   *  4. 仍只写一个 `route:sessions` 键，store 的跨进程锁/键级合并语义完全不变。
+   * 写盘失败（store.set 抛）按既有防御壳降级内存态继续工作，removedIds 保留下次再删。
+   */
   const persist = () => {
     lastWriteMs = now()
-    try { store?.set?.(SESSIONS_KEY, sessions) } catch { /* 写盘失败：内存态继续工作 */ }
+    try {
+      const base = plainObjectOf(store?.get?.(SESSIONS_KEY)) ?? {}
+      const next = { ...base }
+      for (const id of removedIds) delete next[id]
+      for (const [id, record] of Object.entries(sessions)) {
+        const merged = { ...base[id], ...record }
+        const control = normalizeControlOverlay(merged.control)
+        if (control === null) delete merged.control
+        else merged.control = deepCopyPlain(control)
+        next[id] = merged
+      }
+      store?.set?.(SESSIONS_KEY, next)
+      removedIds.clear()
+    } catch { /* 写盘失败：内存态继续工作 */ }
   }
 
   /** 记录读取（形状异常当不存在，返回 undefined）。 */
@@ -147,7 +198,10 @@ export function createSessionRegistry(options = {}) {
       if (nowMs - Number(disposedAt) > ttlMs) removed.push(id)
     }
     if (removed.length > 0) {
-      for (const id of removed) delete sessions[id]
+      for (const id of removed) {
+        delete sessions[id]
+        removedIds.add(id) // 回收墓碑：persist 记录级合并时从盘上基底删除（防盘上旧记录被基底复活）
+      }
       persist()
     }
     return removed
@@ -212,7 +266,7 @@ export function createSessionRegistry(options = {}) {
         record = { inherit: workspace, workspace, createdAt: nowMs, lastActiveAt: nowMs }
         sessions[id] = record
         persist()
-        return { ...record }
+        return recordCopy(record)
       }
       record.lastActiveAt = nowMs
       if (record.disposedAt !== undefined) delete record.disposedAt // 同 id 重建 = resume
@@ -221,7 +275,7 @@ export function createSessionRegistry(options = {}) {
         if (record.inherit === undefined || record.inherit === '') record.inherit = workspace
       }
       persist()
-      return { ...record }
+      return recordCopy(record)
     },
 
     /**
@@ -237,7 +291,7 @@ export function createSessionRegistry(options = {}) {
       const nowMs = now()
       record.lastActiveAt = nowMs
       if (nowMs - lastWriteMs >= touchWriteMs) persist()
-      return { ...record }
+      return recordCopy(record)
     },
 
     /**
@@ -257,7 +311,7 @@ export function createSessionRegistry(options = {}) {
         persist()
       }
       prune()
-      return { ...record }
+      return recordCopy(record)
     },
 
     /**
@@ -275,7 +329,7 @@ export function createSessionRegistry(options = {}) {
         record.lastActiveAt = now()
         persist()
       }
-      return { ...record }
+      return recordCopy(record)
     },
 
     /**
@@ -335,7 +389,7 @@ export function createSessionRegistry(options = {}) {
       const activeOf = (id) => (live !== null ? live.includes(id) : recordOf(id)?.disposedAt === undefined)
       return Object.keys(sessions)
         .filter((id) => recordOf(id)?.workspace === target)
-        .map((id) => ({ ...recordOf(id), id, active: activeOf(id) }))
+        .map((id) => ({ ...recordCopy(recordOf(id)), id, active: activeOf(id) }))
         .sort((a, b) => (a.active === b.active ? b.lastActiveAt - a.lastActiveAt : (a.active ? -1 : 1)))
     },
 
@@ -368,7 +422,7 @@ export function createSessionRegistry(options = {}) {
     getSession(sessionId) {
       prune()
       const record = recordOf(sessionId)
-      return record === undefined ? undefined : { ...record }
+      return record === undefined ? undefined : recordCopy(record)
     },
 
     /**
@@ -394,7 +448,7 @@ export function createSessionRegistry(options = {}) {
       if (Object.keys(merged).length > 0) record.outbound = merged
       else delete record.outbound
       persist()
-      return { ...record }
+      return recordCopy(record)
     },
 
     /**
@@ -440,7 +494,7 @@ export function createSessionRegistry(options = {}) {
       if (normalized === null) delete record.control
       else record.control = deepCopyPlain(normalized)
       persist()
-      return { ...record }
+      return recordCopy(record)
     },
 
     /** 清空会话控制覆盖层（幂等；记录/覆盖层不存在时安全无操作）。 */
@@ -451,7 +505,7 @@ export function createSessionRegistry(options = {}) {
         delete record.control
         persist()
       }
-      return { ...record }
+      return recordCopy(record)
     },
 
     /**
@@ -469,7 +523,7 @@ export function createSessionRegistry(options = {}) {
       const userId = binding?.userId
       if (channel === undefined || channel === null || userId === undefined || userId === null) {
         const existing = recordOf(id)
-        return existing === undefined ? undefined : { ...existing }
+        return existing === undefined ? undefined : recordCopy(existing)
       }
       const record = ensureRecord(id)
       const list = Array.isArray(record.inbound) ? record.inbound.filter((item) => item != null) : []
@@ -477,7 +531,7 @@ export function createSessionRegistry(options = {}) {
         record.inbound = [...list, { channel, userId }]
         persist()
       }
-      return { ...record }
+      return recordCopy(record)
     },
 
     /**
@@ -499,7 +553,7 @@ export function createSessionRegistry(options = {}) {
         else record.inbound = next
         persist()
       }
-      return { ...record }
+      return recordCopy(record)
     },
 
     /**

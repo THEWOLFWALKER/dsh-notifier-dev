@@ -111,8 +111,10 @@ export function createAgentRouter({ store, agentsList } = {}) {
   const safeSet = (key, value) => {
     try {
       if (typeof store?.set !== 'function') return false
-      store.set(key, value)
-      return true
+      // v0.8.7（对抗评审 Stage-4 P1-2）：真实 createStore.set 现在把「写盘是否真正落盘」作为布尔返回
+      // （磁盘失败不再被吞掉）。这里把显式 false 视为写失败；遗留 mock store 的 set 返回 undefined
+      // 没有失败信号，维持旧的「非抛即成功」语义——向后兼容。
+      return store.set(key, value) !== false
     } catch {
       return false
     }
