@@ -555,6 +555,57 @@ test('跨组件：router 设的 control，registry.touch 生命周期写不抹�
   assert.equal(store.state['route:sessions'].s1.inherit, 'w') // 生命周期字段仍在
 })
 
+test('跨组件收敛：router 后写 outbound/control 覆盖层，registry 生命周期写保留最新值', () => {
+  const { store, registry, router, clock } = crossRig()
+  registry.ensureSession(agentOf('s1', '/w'))
+  registry.setOutbound('s1', { channels: ['bark'], quiet: false })
+  router.setSessionOutbound('s1', { channels: ['telegram'], quiet: true })
+  router.setSessionControl('s1', { owner: 'router' })
+  clock.t += 1
+  registry.touch('s1')
+  assert.deepEqual(store.state['route:sessions'].s1.outbound, { channels: ['telegram'], quiet: true })
+  assert.equal(store.state['route:sessions'].s1.control.owner, 'router')
+})
+
+test('跨组件收敛：router 先写 outbound，registry 后写其他字段不回退 router 渠道', () => {
+  const { store, registry, router } = crossRig()
+  router.setSessionOutbound('s1', { channels: ['telegram'] })
+  registry.setOutbound('s1', { quiet: true })
+  assert.deepEqual(store.state['route:sessions'].s1.outbound, { channels: ['telegram'], quiet: true })
+})
+
+test('registry 读取收敛：router 写入后 getSession/getOutbound/getControl 立即可见且深拷贝隔离', () => {
+  const { store, registry, router } = crossRig()
+  router.setSessionOutbound('s1', { channels: ['telegram'], quiet: true })
+  router.setSessionControl('s1', { owner: 'u1', approvalMembers: [{ channel: 'telegram', accountId: 'a1', userId: 'u2' }] })
+  const session = registry.getSession('s1')
+  assert.deepEqual(session.outbound, { channels: ['telegram'], quiet: true })
+  assert.deepEqual(registry.getOutbound('s1'), { channels: ['telegram'], quiet: true })
+  assert.equal(registry.getControl('s1').owner, 'u1')
+  session.outbound.channels.push('evil')
+  const outbound = registry.getOutbound('s1')
+  outbound.channels.push('evil')
+  assert.deepEqual(registry.getOutbound('s1'), { channels: ['telegram'], quiet: true })
+  assert.equal(registry.getControl('s1').approvalMembers[0].userId, 'u2')
+  assert.equal(store.state['route:sessions'].s1.control.owner, 'u1')
+})
+
+test('生命周期写前规范化：未缓存会话的损坏 control 也会被清洗并保留兄弟字段', () => {
+  const store = makeStore({
+    'route:sessions': {
+      uncached: {
+        workspace: 'w',
+        control: { owner: '*', channel: 'evil', approvalMembers: [{ channel: 'all', userId: 'u' }] },
+        inbound: [{ channel: 'telegram', userId: 'u9' }],
+      },
+    },
+  })
+  const { registry } = makeRegistry({ store, touchWriteMs: 0, sweepEveryMs: Number.MAX_SAFE_INTEGER })
+  registry.ensureSession(agentOf('new', '/new'))
+  assert.equal(store.state['route:sessions'].uncached.control, undefined)
+  assert.deepEqual(store.state['route:sessions'].uncached.inbound, [{ channel: 'telegram', userId: 'u9' }])
+})
+
 test('跨组件：router 才建档的会话，registry.ensureSession 的 persist 不删它、不碰其 control（P1-1）', () => {
   const { store, registry, router } = crossRig()
   registry.ensureSession(agentOf('s2', '/w'))     // registry 内存态只有 s2
@@ -686,5 +737,32 @@ test('墓碑持久化：store.set 返回 undefined 的既有 store 兼容——�
   assert.deepEqual(registry.sweep(), ['old'])
   assert.equal(seeded.state['route:sessions'].old, undefined) // 墓碑照删落盘
   assert.equal(seeded.state['route:sessions'].keep.workspace, 'w') // 无关会话保留
+  registry.dispose()
+})
+
+test('墓碑持久化：sweep 的 store.set 抛错后，后续成功生命周期写不复活过期会话', () => {
+  const t = 1_000_000
+  const disk = makeDurableStore({
+    'route:sessions': {
+      old: { workspace: 'w', disposedAt: t - 400_000 },
+      keep: { workspace: 'w', lastActiveAt: t - 10 },
+    },
+  })
+  const clock = { t }
+  const registry = createSessionRegistry({
+    ctx: makeCtx({ withAgents: true }).ctx,
+    store: disk,
+    now: () => clock.t,
+    ttlHours: 0.01,
+    touchWriteMs: 0,
+    sweepEveryMs: Number.MAX_SAFE_INTEGER,
+  })
+  disk.setWriteOk(() => { throw new Error('disk unavailable') })
+  assert.deepEqual(registry.sweep(), ['old'])
+  assert.equal(disk.disk['route:sessions'].old.workspace, 'w')
+  disk.setWriteOk(() => true)
+  registry.touch('keep')
+  assert.equal(disk.disk['route:sessions'].old, undefined)
+  assert.equal(disk.disk['route:sessions'].keep.workspace, 'w')
   registry.dispose()
 })

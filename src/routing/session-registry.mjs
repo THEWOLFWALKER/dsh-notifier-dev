@@ -126,7 +126,7 @@ export function createSessionRegistry(options = {}) {
   const loadSessions = () => {
     try {
       const value = store?.get?.(SESSIONS_KEY)
-      if (value !== null && typeof value === 'object' && !Array.isArray(value)) return value
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) return deepCopyPlain(value)
     } catch { /* 损坏/无 store：内存态起步 */ }
     return {}
   }
@@ -136,6 +136,53 @@ export function createSessionRegistry(options = {}) {
   let lastSweepMs = -Infinity // 首次内联 prune 即真扫一次（清掉停机期间过期的记录）
   /** 回收删除待落盘的会话 id：写盘失败时保留、下次 persist 再删（对齐 dirty 保留语义）。 */
   const removedIds = new Set()
+  /** Fields changed by this registry instance since the last durable write.  Keeping this
+   * per-record/per-field lets router writes to the same route:sessions key converge without
+   * allowing an old cached outbound/control snapshot to overwrite newer store data. */
+  const dirtyFields = new Map()
+  const markDirty = (id, ...fields) => {
+    const key = String(id)
+    let dirty = dirtyFields.get(key)
+    if (dirty === undefined) {
+      dirty = new Set()
+      dirtyFields.set(key, dirty)
+    }
+    for (const field of fields) dirty.add(field)
+  }
+  const markRecordDirty = (id, record) => {
+    markDirty(id, '*')
+    for (const key of Object.keys(record ?? {})) markDirty(id, key)
+  }
+  /** Refresh the in-process cache from the shared store while retaining unsaved local fields. */
+  const refreshSessions = () => {
+    let disk
+    try { disk = plainObjectOf(store?.get?.(SESSIONS_KEY)) } catch { return }
+    if (disk === null) return
+    const ids = new Set([...Object.keys(sessions), ...Object.keys(disk)])
+    for (const id of ids) {
+      if (removedIds.has(id)) {
+        delete sessions[id]
+        continue
+      }
+      const diskRecord = plainObjectOf(disk[id])
+      const dirty = dirtyFields.get(id)
+      if (dirty === undefined || dirty.size === 0) {
+        if (diskRecord === null) delete sessions[id]
+        else sessions[id] = deepCopyPlain(diskRecord)
+        continue
+      }
+      const local = plainObjectOf(sessions[id]) ?? {}
+      const merged = { ...(diskRecord ?? {}) }
+      if (dirty.has('*')) Object.assign(merged, local)
+      else {
+        for (const field of dirty) {
+          if (Object.prototype.hasOwnProperty.call(local, field)) merged[field] = deepCopyPlain(local[field])
+          else delete merged[field]
+        }
+      }
+      sessions[id] = merged
+    }
+  }
   /**
    * 把注册表内存态写入 store（route:sessions 一个键）。
    *
@@ -156,14 +203,30 @@ export function createSessionRegistry(options = {}) {
     lastWriteMs = now()
     try {
       const base = plainObjectOf(store?.get?.(SESSIONS_KEY)) ?? {}
-      const next = { ...base }
+      const next = {}
+      for (const [id, value] of Object.entries(base)) next[id] = deepCopyPlain(value)
       for (const id of removedIds) delete next[id]
       for (const [id, record] of Object.entries(sessions)) {
-        const merged = { ...base[id], ...record }
-        const control = normalizeControlOverlay(merged.control)
-        if (control === null) delete merged.control
-        else merged.control = deepCopyPlain(control)
+        const dirty = dirtyFields.get(id)
+        if (dirty === undefined || dirty.size === 0) continue
+        const merged = { ...plainObjectOf(base[id]) }
+        if (dirty.has('*')) Object.assign(merged, record)
+        else {
+          for (const field of dirty) {
+            if (Object.prototype.hasOwnProperty.call(record, field)) merged[field] = deepCopyPlain(record[field])
+            else delete merged[field]
+          }
+        }
         next[id] = merged
+      }
+      // Sanitize every base record, including sessions unknown to this registry cache.
+      for (const [id, value] of Object.entries(next)) {
+        const record = plainObjectOf(value)
+        if (record === null) continue
+        const control = normalizeControlOverlay(record.control)
+        if (control === null) delete record.control
+        else record.control = deepCopyPlain(control)
+        next[id] = record
       }
       const writeResult = store?.set?.(SESSIONS_KEY, next)
       // Stage-4 P1 收官（墓碑持久化收官）：只有持久化真到达盘上才清回收墓碑。
@@ -172,7 +235,10 @@ export function createSessionRegistry(options = {}) {
       // 基底复活——下次 persist 从 store.get 读到未删的盘上旧记录、又没了墓碑可删，过期 id 在盘上
       // 卷土重来（重启即重现）。故只在 durable 成功（返回非 false）时清；返回 undefined 的既有
       // store 保持兼容（undefined !== false 仍清）。set 抛错的路径本来就在外层 catch，不复删。
-      if (writeResult !== false) removedIds.clear()
+      if (writeResult !== false) {
+        removedIds.clear()
+        for (const id of Object.keys(sessions)) dirtyFields.delete(id)
+      }
     } catch { /* 写盘失败（set 抛）：内存态继续工作，removedIds 留待下次再删 */ }
   }
 
@@ -188,6 +254,7 @@ export function createSessionRegistry(options = {}) {
       const nowMs = now()
       record = { inherit: '', workspace: '', createdAt: nowMs, lastActiveAt: nowMs }
       sessions[id] = record
+      markRecordDirty(id, record)
     }
     return record
   }
@@ -195,6 +262,7 @@ export function createSessionRegistry(options = {}) {
   // ---- 回收（§4：disposed + ttl 到期才删；bind:* 不清——同 id resume 绑定仍有效）----
   /** 真扫：删除 disposedAt 距 now 超过 ttl 的记录，返回被删的 sessionId 数组。 */
   const sweepAll = () => {
+    refreshSessions()
     lastSweepMs = now()
     const nowMs = lastSweepMs
     const removed = []
@@ -206,6 +274,7 @@ export function createSessionRegistry(options = {}) {
     if (removed.length > 0) {
       for (const id of removed) {
         delete sessions[id]
+        dirtyFields.delete(id)
         removedIds.add(id) // 回收墓碑：persist 记录级合并时从盘上基底删除（防盘上旧记录被基底复活）
       }
       persist()
@@ -214,6 +283,7 @@ export function createSessionRegistry(options = {}) {
   }
   /** 内联摊销回收：挂在常规调用入口，距上次真扫超过 sweepEveryMs 才真扫。 */
   const prune = () => {
+    refreshSessions()
     if (now() - lastSweepMs >= sweepEveryMs) {
       try { sweepAll() } catch (error) { warn(`惰性回收失败: ${error instanceof Error ? error.message : String(error)}`) }
     }
@@ -271,14 +341,23 @@ export function createSessionRegistry(options = {}) {
       if (record === undefined) {
         record = { inherit: workspace, workspace, createdAt: nowMs, lastActiveAt: nowMs }
         sessions[id] = record
+        markRecordDirty(id, record)
         persist()
         return recordCopy(record)
       }
       record.lastActiveAt = nowMs
-      if (record.disposedAt !== undefined) delete record.disposedAt // 同 id 重建 = resume
+      markDirty(id, 'lastActiveAt')
+      if (record.disposedAt !== undefined) {
+        delete record.disposedAt // 同 id 重建 = resume
+        markDirty(id, 'disposedAt')
+      }
       if ((record.workspace === undefined || record.workspace === '') && workspace !== '') {
         record.workspace = workspace
-        if (record.inherit === undefined || record.inherit === '') record.inherit = workspace
+        markDirty(id, 'workspace')
+        if (record.inherit === undefined || record.inherit === '') {
+          record.inherit = workspace
+          markDirty(id, 'inherit')
+        }
       }
       persist()
       return recordCopy(record)
@@ -296,6 +375,7 @@ export function createSessionRegistry(options = {}) {
       if (record === undefined) return undefined
       const nowMs = now()
       record.lastActiveAt = nowMs
+      markDirty(sessionId, 'lastActiveAt')
       if (nowMs - lastWriteMs >= touchWriteMs) persist()
       return recordCopy(record)
     },
@@ -313,6 +393,7 @@ export function createSessionRegistry(options = {}) {
       const record = ensureRecord(id)
       if (record.disposedAt === undefined) {
         record.disposedAt = now()
+        markDirty(id, 'disposedAt')
         scheduleSweepTimer(record.disposedAt)
         persist()
       }
@@ -333,6 +414,7 @@ export function createSessionRegistry(options = {}) {
       if (record.disposedAt !== undefined) {
         delete record.disposedAt
         record.lastActiveAt = now()
+        markDirty(sessionId, 'disposedAt', 'lastActiveAt')
         persist()
       }
       return recordCopy(record)
@@ -453,6 +535,7 @@ export function createSessionRegistry(options = {}) {
       }
       if (Object.keys(merged).length > 0) record.outbound = merged
       else delete record.outbound
+      markDirty(id, 'outbound')
       persist()
       return recordCopy(record)
     },
@@ -466,10 +549,25 @@ export function createSessionRegistry(options = {}) {
      * @returns {object|undefined} 规范覆盖层深拷贝；记录不存在或覆盖层为空/损坏时 undefined
      */
     getControl(sessionId) {
+      prune()
       const record = recordOf(String(sessionId ?? ''))
       if (record === undefined) return undefined
       const normalized = normalizeControlOverlay(record.control)
       return normalized === null ? undefined : deepCopyPlain(normalized)
+    },
+
+    /**
+     * Read a session outbound overlay as a defensive deep copy.  The shared store is
+     * refreshed on every read so router/admin writes made after registry construction
+     * become visible without requiring a restart.
+     * @param {string} sessionId
+     * @returns {object|undefined} outbound diff copy
+     */
+    getOutbound(sessionId) {
+      prune()
+      const record = recordOf(String(sessionId ?? ''))
+      const outbound = plainObjectOf(record?.outbound)
+      return outbound === null ? undefined : deepCopyPlain(outbound)
     },
 
     /**
@@ -484,6 +582,7 @@ export function createSessionRegistry(options = {}) {
      * @returns {object|undefined} 写后记录副本（含新覆盖层）；sessionId 空时 undefined
      */
     setControl(sessionId, diff) {
+      refreshSessions()
       const id = String(sessionId ?? '')
       if (id === '') return undefined
       const record = ensureRecord(id)
@@ -499,16 +598,19 @@ export function createSessionRegistry(options = {}) {
       const normalized = normalizeControlOverlay(merged)
       if (normalized === null) delete record.control
       else record.control = deepCopyPlain(normalized)
+      markDirty(id, 'control')
       persist()
       return recordCopy(record)
     },
 
     /** 清空会话控制覆盖层（幂等；记录/覆盖层不存在时安全无操作）。 */
     clearControl(sessionId) {
+      refreshSessions()
       const record = recordOf(String(sessionId ?? ''))
       if (record === undefined) return undefined
       if (record.control !== undefined) {
         delete record.control
+        markDirty(sessionId, 'control')
         persist()
       }
       return recordCopy(record)
@@ -535,6 +637,7 @@ export function createSessionRegistry(options = {}) {
       const list = Array.isArray(record.inbound) ? record.inbound.filter((item) => item != null) : []
       if (!list.some((item) => item.channel === channel && item.userId === userId)) {
         record.inbound = [...list, { channel, userId }]
+        markDirty(id, 'inbound')
         persist()
       }
       return recordCopy(record)
@@ -557,6 +660,7 @@ export function createSessionRegistry(options = {}) {
       if (next.length !== list.length) {
         if (next.length === 0) delete record.inbound
         else record.inbound = next
+        markDirty(sessionId, 'inbound')
         persist()
       }
       return recordCopy(record)
@@ -579,6 +683,7 @@ export function createSessionRegistry(options = {}) {
         if (typeof value !== 'string' || value === '') continue
         if (recordOf(value) !== undefined) continue
         sessions[value] = { inherit: '', workspace: '', createdAt: nowMs, lastActiveAt: nowMs }
+        markRecordDirty(value, sessions[value])
         migrated += 1
       }
       if (migrated > 0) persist()
