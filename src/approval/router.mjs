@@ -143,6 +143,37 @@ export function registerApprovalHandler(deps) {
   // 核心账本 + 审批专用归属启发式合成同一 ledger 面（其余调用点零改动）。
   const ledger = { ...core, latestPendingFor }
 
+  if (deps.control !== null && deps.control !== undefined) {
+    deps.control.register('approval', {
+      getPending: (input) => ledger.get(input.approvalKey ?? input.key),
+      buildEvent: (input, row, policy, now) => {
+        const channel = String(input.channel ?? String(input.via ?? '').split(':')[0] ?? '')
+        const chatId = String(input.chatId ?? '')
+        const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).find((target) => String(target.channel) === channel && String(target.chatId) === chatId)
+        return {
+          eventId: input.eventId,
+          sessionId: String(row.agentId ?? input.approvalKey ?? input.key), source: 'mobile', channel,
+          accountId: channel, userId: String(exact?.userId ?? input.userId ?? ''), chatId,
+          policyVersion: String(row.policyVersion ?? policy.policyVersion ?? '1'), command: 'approval',
+          chatType: input.chatType, createdAt: Number(row.createdAt ?? now - 1),
+          expiresAt: Number(row.expiresAt ?? now + timeoutMs),
+        }
+      },
+      authorize: (input, row, event) => {
+        const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).some((target) => (
+          String(target.channel) === event.channel
+          && String(target.chatId) === event.chatId
+          && (target.userId === undefined || String(target.userId) === event.userId)
+        ))
+        if (input.trusted !== true) return exact
+        return exact || isAuthorizedDecider(identity, event.channel, event.userId)
+      },
+      settle: (input) => input.trusted === true
+        ? bus.decideTrusted({ approvalKey: input.approvalKey ?? input.key, decision: input.decision, via: input.via, userId: input.userId })
+        : bus.decide({ approvalKey: input.approvalKey ?? input.key, decision: input.decision, token: input.token, via: input.via, userId: input.userId, chatId: input.chatId }),
+    })
+  }
+
   /** v0.6.4：row 的意图渠道判定——intended 数组含该渠道，或 null（全局广播）时任意交互渠道。 */
   function isIntendedChannel(row, channel) {
     if (Array.isArray(row.intendedChannels)) return row.intendedChannels.includes(channel)
@@ -332,13 +363,10 @@ export function registerApprovalHandler(deps) {
       return true
     }
     const decision = choice === '1' ? OUTCOME_ALLOWED : OUTCOME_REJECTED
-    const verdict = bus.decideTrusted({
-      approvalKey: pending.key,
-      decision,
-      via: `${envelope.channel}:reply`,
-      userId: envelope.userId,
-    })
-    if (verdict.ok) {
+    const verdict = deps.control !== null && deps.control !== undefined
+      ? deps.control.handle({ command: 'approval', approvalKey: pending.key, channel: envelope.channel, chatId: envelope.chatId, chatType: envelope.chatType, userId: envelope.userId, via: `${envelope.channel}:reply`, decision, trusted: true })
+      : bus.decideTrusted({ approvalKey: pending.key, decision, via: `${envelope.channel}:reply`, userId: envelope.userId })
+    if (verdict.ok === true || verdict.status === 'accepted') {
       warn(`编号回复裁决 ${pending.key} → ${decision}（user ${envelope.userId}）`)
       return true
     }
@@ -382,6 +410,7 @@ export function registerApprovalHandler(deps) {
         // v0.6.4（审查 R1-P2-1）：意图渠道入账——null = 全局广播（= 全部交互渠道），
         // 数组 = 分流结果。编号回复 intended 兜底据此判定「广播教了回复 1 但卡片没送达」。
         intendedChannels: channelTypes,
+        expiresAt: Date.now() + timeoutMs,
       })
       // v0.6.3 waiter 预注册（审查 R2 P1-1）：原实现先 await pushApproval（逐通道逐目标
       // 发卡 + 广播，限速门下数秒级）再 bus.wait——窗口内用户点按钮/回复 1/2 会命中

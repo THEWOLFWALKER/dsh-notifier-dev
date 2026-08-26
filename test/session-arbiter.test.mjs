@@ -7,7 +7,7 @@ const event = (extra = {}) => ({ eventId: 'e1', sessionId: 's1', channel: 'teleg
 
 test('personal defaults are safe and group/conversation are off', () => {
   const p = normalizeSessionPolicy({}, 100)
-  assert.deepEqual(p.capabilities, { observe: true, approve: true, converse: false, groupChatControl: false })
+  assert.deepEqual(p.capabilities, { observe: true, approve: true, stop: true, converse: false, groupChatControl: false })
   assert.equal(p.mode, 'personal')
   assert.equal(canAcceptCommand(p, event()).reason, 'stale_policy')
 })

@@ -198,7 +198,7 @@ function buildActionCard({ title, content, actions: buttons = [], chatId }) {
  * @param {object} [options.questions]
  *   - v0.8 提问桥裁决入口（可空：缺省时 aq: 回调回「未知操作」，行为与 v0.7 一致）
  */
-export function createFeishuInbound({ config, bus, fallbackTargets = [], logger = null, sdkLoader, actions = null, identity = null, questions = null } = {}) {
+export function createFeishuInbound({ config, bus, fallbackTargets = [], logger = null, sdkLoader, actions = null, identity = null, questions = null, control = null } = {}) {
   const domain = (config.domain || DEFAULT_DOMAIN).replace(/\/+$/, '')
   const allowUsers = Array.isArray(config.allowUsers) ? config.allowUsers.map(String) : []
   const warn = (message) => {
@@ -346,6 +346,7 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
           via: 'feishu:action',
           userId: String(data?.operator?.open_id ?? '(unknown)'),
           chatId: clickedChatOf(data),
+          chatType: data?.context?.open_chat_type ?? data?.chat_type,
         })
         const text = result?.message ?? '该操作已处理或已过期'
         patchResolvedCard(data, buildActionResolvedCard(`${text}（来源：飞书用户 ${data?.operator?.open_id ?? '?'}）`))
@@ -358,7 +359,14 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
         if (!sourceChatAllowed(value, data)) {
           return { toast: { type: 'info', content: '请到原会话操作' } }
         }
-        const verdict = questions.decide({
+        const verdict = control !== null
+          ? control.handle({
+            command: 'question-answer', qKey: questionAction.qKey, optIdx: questionAction.optIdx,
+            token: questionAction.token, via: 'feishu:button', channel: 'feishu',
+            userId: String(data?.operator?.open_id ?? ''), chatId: clickedChatOf(data),
+            chatType: data?.context?.open_chat_type ?? data?.chat_type,
+          })
+          : questions.decide({
           qKey: questionAction.qKey,
           optIdx: questionAction.optIdx,
           token: questionAction.token,
@@ -366,16 +374,23 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
           userId: String(data?.operator?.open_id ?? '(unknown)'),
           chatId: clickedChatOf(data),
         })
-        const text = verdict?.message ?? '该提问已回答或已过期'
+        const text = verdict?.message ?? (verdict?.status === 'accepted' ? '✅ 已作答' : '该提问已回答或已过期')
         patchResolvedCard(data, buildQuestionResolvedCard(`${text}（来源：飞书用户 ${data?.operator?.open_id ?? '?'}）`))
-        return { toast: { type: verdict?.ok === true ? 'success' : 'info', content: text } }
+        return { toast: { type: verdict?.ok === true || verdict?.status === 'accepted' ? 'success' : 'info', content: text } }
       }
       const approvalAction = parseApprovalAction(raw)
       if (approvalAction === null) return { toast: { type: 'info', content: '未知操作' } }
       if (!sourceChatAllowed(value, data)) {
         return { toast: { type: 'info', content: '请到原会话操作' } }
       }
-      const verdict = bus.decide({
+      const verdict = control !== null
+        ? control.handle({
+          command: 'approval', approvalKey: approvalAction.approvalKey, decision: approvalAction.decision,
+          token: approvalAction.token, via: 'feishu:button', channel: 'feishu',
+          userId: String(data?.operator?.open_id ?? ''), chatId: clickedChatOf(data),
+          chatType: data?.context?.open_chat_type ?? data?.chat_type,
+        })
+        : bus.decide({
         approvalKey: approvalAction.approvalKey,
         decision: approvalAction.decision,
         token: approvalAction.token,
@@ -388,7 +403,7 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
         : '该审批已处理或已过期（token 单次核销）'
       // 卡片改成终态（patch 覆盖按钮，防过期按钮二次点击）；不 await，3s 内先回 toast
       patchResolvedCard(data, buildResolvedCard(`${text}（来源：飞书用户 ${data?.operator?.open_id ?? '?'}）`))
-      return { toast: { type: verdict.ok ? 'success' : 'info', content: text } }
+      return { toast: { type: (verdict.ok === true || verdict.status === 'accepted') ? 'success' : 'info', content: text } }
     } catch (error) {
       warn(`卡片回调异常: ${error instanceof Error ? error.message : String(error)}`)
       return { toast: { type: 'info', content: '处理异常，请重试' } }

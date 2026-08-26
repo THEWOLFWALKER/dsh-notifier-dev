@@ -163,6 +163,40 @@ export function createQuestionBridge(deps) {
     return false
   }
 
+  // All question callbacks use the shared Control Core when available. The
+  // question-specific chat/hint matching above remains the source of truth for
+  // numbered replies; this registration only supplies canonical event
+  // construction, authorization, and settlement for callback ingress.
+  if (deps.control !== null && deps.control !== undefined) {
+    deps.control.register('question-answer', {
+      getPending: (input) => ledger.get(input.qKey ?? input.key),
+      buildEvent: (input, row, policy, now) => {
+        const channel = String(input.channel ?? String(input.via ?? '').split(':')[0] ?? '')
+        const chatId = String(input.chatId ?? '')
+        const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).find((target) => String(target.channel) === channel && String(target.chatId) === chatId)
+        return {
+          eventId: input.eventId, sessionId: String(row.agentId ?? input.qKey ?? input.key), source: 'mobile', channel,
+          accountId: channel, userId: String(exact?.userId ?? input.userId ?? ''), chatId,
+          policyVersion: String(row.policyVersion ?? policy.policyVersion ?? '1'), command: 'question-answer',
+          chatType: input.chatType, createdAt: Number(row.createdAt ?? now - 1),
+          expiresAt: Number(row.expiresAt ?? now + defaultTimeoutMs),
+        }
+      },
+      authorize: (input, row, event) => {
+        const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).some((target) => (
+          String(target.channel) === event.channel
+          && String(target.chatId) === event.chatId
+          && (target.userId === undefined || String(target.userId) === event.userId)
+        ))
+        if (input.trusted !== true) return exact
+        return exact || isAuthorizedDeciderQ(identity, event.channel, event.userId)
+      },
+      settle: (input) => input.trusted === true
+        ? settle(input.qKey ?? input.key, ledger.get(input.qKey ?? input.key), input.optIdxes, input.via, input.userId)
+        : decide({ qKey: input.qKey ?? input.key, optIdx: input.optIdx, values: input.values, token: input.token, via: input.via, userId: input.userId, chatId: input.chatId }),
+    })
+  }
+
   /** 交互通道列表（归一 + 防御；getter 失败按空处理）。 */
   function interactiveEntries() {
     try {
@@ -477,13 +511,10 @@ export function createQuestionBridge(deps) {
       sendFeedback(`❓ ${why}\n${numberedHint(row.options, row.multiSelect === true)}`)
       return true // 发错了可以再发：问题保持待决，上面的选项已重发
     }
-    const verdict = decideTrusted({
-      qKey: pending.key,
-      optIdxes,
-      via: `${envelope.channel}:reply`,
-      userId: envelope.userId,
-    })
-    if (verdict.ok === true) {
+    const verdict = deps.control !== null && deps.control !== undefined
+      ? deps.control.handle({ command: 'question-answer', qKey: pending.key, channel: envelope.channel, chatId: envelope.chatId, chatType: envelope.chatType, userId: envelope.userId, via: `${envelope.channel}:reply`, optIdxes, trusted: true })
+      : decideTrusted({ qKey: pending.key, optIdxes, via: `${envelope.channel}:reply`, userId: envelope.userId })
+    if (verdict.ok === true || verdict.status === 'accepted') {
       sendFeedback(`✅ 已作答：${(verdict.answers ?? []).join('、')}`)
       return true
     }
@@ -542,6 +573,7 @@ export function createQuestionBridge(deps) {
           context: String(payload?.context ?? ''),
           agentId: agentId !== null && String(agentId) !== '' ? String(agentId) : null,
           pushedTo: [],
+          expiresAt: Date.now() + timeoutMs,
         })
         // waiter 预注册先于推卡（v0.6.3 审批时序同款：早到作答不被丢）。
         // AUTH-1：wait 登记允许会话范围（allowChats）；pushQuestion 每送达一张卡片即

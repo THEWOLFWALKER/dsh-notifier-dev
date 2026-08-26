@@ -33,7 +33,7 @@ function graceSourceAllowed(row) {
  * @param {import('./inbound/store.mjs').store} [options.store] 动作账本（持久化跨重启）。
  * @param {object} [options.logger]
  */
-export function createActionDispatcher({ vault = null, store = null, logger = null } = {}) {
+export function createActionDispatcher({ vault = null, store = null, logger = null, control = null } = {}) {
   const handlers = new Map() // kind -> handler({ actionKey, payload, via, userId }) -> { ok?, message? }
   const warn = (message) => {
     try { logger?.warn?.('[dsh-notifier/actions]', message) } catch { /* 日志失败绝不致命 */ }
@@ -43,7 +43,7 @@ export function createActionDispatcher({ vault = null, store = null, logger = nu
   // 原地微调，不走账本生命周期操作。
   const ledger = createInteractionLedger({ keyPrefix: 'act:', store, decisionField: 'outcome' })
 
-  return {
+  const api = {
     /** 注册动作 handler（内置白名单由装配层注册；重复注册后到者赢）。 */
     register(kind, handler) {
       if (typeof kind !== 'string' || kind.trim() === '' || typeof handler !== 'function') return false
@@ -149,8 +149,28 @@ export function createActionDispatcher({ vault = null, store = null, logger = nu
      *   ok = 本次点击是否生效（核销成功且 handler 已调用）；message 为给操作者的反馈文案。
      *   任何失败路径返回中文文案，绝不 throw。
      */
-    dispatch({ actionKey, token, via = 'unknown', userId = '(unknown)', chatId = undefined } = {}) {
+    dispatch({ actionKey, token, via = 'unknown', userId = '(unknown)', chatId = undefined, chatType = undefined, __control = false } = {}) {
       try {
+        if (control !== null && __control !== true) {
+          let settlement = null
+          const receipt = control.handle({
+            command: 'stop', key: actionKey, actionKey, token,
+            channel: String(via).split(':')[0], via,
+            userId: userId === undefined || userId === null ? '' : String(userId),
+            chatId: chatId === undefined || chatId === null ? '' : String(chatId),
+            chatType,
+            settle: () => {
+              settlement = api.dispatch({ actionKey, token, via, userId, chatId, chatType, __control: true })
+              return settlement
+            },
+          })
+          return {
+            ok: receipt.status === 'accepted', reason: receipt.reason,
+            message: receipt.status === 'accepted'
+              ? (settlement?.message ?? '✅ 已执行')
+              : '该操作已处理或已过期',
+          }
+        }
         if (typeof actionKey !== 'string' || actionKey === '') {
           return { ok: false, reason: 'malformed', message: '无效操作' }
         }
@@ -240,4 +260,19 @@ export function createActionDispatcher({ vault = null, store = null, logger = nu
       handlers.clear()
     },
   }
+  if (control !== null && typeof control.register === 'function') {
+    control.register('stop', {
+      getPending: (input) => store?.get(input.actionKey ?? input.key),
+      authorize: (input, row, event) => {
+        const srcChats = row?.srcChats
+        if (srcChats === undefined || srcChats === null) return true
+        if (typeof srcChats !== 'object' || Array.isArray(srcChats)) return false
+        const clickVia = event.channel
+        const allowed = Array.isArray(srcChats[clickVia]) ? srcChats[clickVia] : []
+        return allowed.includes(event.chatId)
+      },
+      settle: (input) => api.dispatch({ actionKey: input.actionKey ?? input.key, token: input.token, via: input.via, userId: input.userId, chatId: input.chatId, chatType: input.chatType, __control: true }),
+    })
+  }
+  return api
 }
