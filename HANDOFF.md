@@ -2,7 +2,7 @@
 
 > 写给下一个 agent。本文档是完整的工作上下文快照：设计理念、军规约定、架构地图、
 > 版本脉络、审查记录、已知坑、待办清单。读完这一份即可无缝接手。
-> 当前快照：2026-08-26，当前开发线 HEAD 为 `befd15a`（团队模式批准权限契约的对抗评审 round-3 修复：`createControlEntry` 改为把授权来源绑定到真实原始来源（rowMeta → 待决行 → basePolicy），不再用传入事件铸造策略 channel/accountId 来源；owner 恒取自原始策略/pending，owner/team-member 结算面对无真实会话来源时 fail-closed。接在 `6211d1e` 精确 `(channel,accountId)`+owner `userId` 来源绑定之上）。当前开发线 `npm test` = 1204（1203 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。QQ C2C 单聊原生按钮、GROUP 文本回退，以及 QQ/微信 iLink/钉钉图片代码已接线并通过契约测试；缺失 `chatType` 或未知来源控制 fail-closed，`conversation` 的 `routeUnsafe` 旁路已堵。Web/admin 已具备阶段 2A 本地管理台的远程提问裁决入口（见下方快照），desktop 端仍无 settlement 入口，双端共享未宣称；真实设备/宿主协议仍未验证，能力只能标记 declared/contract-tested。
+> 当前快照：2026-08-26，当前开发线 HEAD 为 `6d87a56`（团队模式批准权限契约的对抗评审 round-4 修复：`createControlEntry` 把所有现存来源权威（basePolicy、每个 pending.control/controlMeta、待决行顶层）作为一致性约束，对 approval/question-answer 任一层次间或与事件不一致即 `source_mismatch_*` fail-closed，杜绝篡改 controlMeta 覆盖冲突的规范 base 来源；授权命令绑定真实原始来源（除 `spec.authorize` 证明精确 pushedTo 目标外绝不回退事件值），非授权 stop/steer/ordinary-message 保留显式 legacy envelope 绑定。接在 `befd15a` round-3 真实原始来源绑定之上）。当前开发线 `npm test` = 1205（1204 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。QQ C2C 单聊原生按钮、GROUP 文本回退，以及 QQ/微信 iLink/钉钉图片代码已接线并通过契约测试；缺失 `chatType` 或未知来源控制 fail-closed，`conversation` 的 `routeUnsafe` 旁路已堵。Web/admin 已具备阶段 2A 本地管理台的远程提问裁决入口（见下方快照），desktop 端仍无 settlement 入口，双端共享未宣称；真实设备/宿主协议仍未验证，能力只能标记 declared/contract-tested。
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
 > 2026-08-23 接力合入公共镜像 v0.8.5 发布内容（issue #11 ask_user 编号回复修复 + PR #9 飞书扫码 SDK 适配），见「当前接力交代」。
 > 上一稳定发布位 v0.8.6 = `bf03a1c`（npm `dsh-notifier@0.8.6`，公共镜像 `db42908` 已清理 node_modules/package-lock）。
@@ -13,6 +13,7 @@
 > 团队模式批准权限契约（2026-08-26，`36aca9f`）：`src/control/session-arbiter.mjs` 对有界可选 `approvalMembers` 归一（trim/去重精确三元组/上限 64/wildcard·global·空·嵌套·无界一律拒绝），新增导出纯 `canSettleApproval(policy,event)` 并仅接入 `canAcceptCommand`/Control Core，同作用于 `approval` 与 `question-answer`，绝不授予 `steer`/`ordinary-message`。`approvalOwnerOnly=true` 仍只允许 `policy.owner`；`mode='team'` 且非空列表要求事件的精确 `(channel,accountId,userId)` 三元组在列表内、否则仅 owner；personal / team 无列表沿用既有精确来源绑定；`sessionId`/`chatId` 在所有命令下恒精确。`src/control/entry.mjs` 把归一化策略快照透传给结算回调（`onSettle(event,policy)`），回调不触碰非归一化策略，stale/scope 不匹配在 onSettle 前被拒。未改任何 IM transport、原生卡片、Web/admin UI、审批/提问核心或 release 版本；个人默认与 `conversation` 仍各自 opt-in。focused tests：`test/session-arbiter.test.mjs`、`test/control-entry.integration.test.mjs`。契约测试通过（`npm test` = 1200），无真机/provider 验证；把 `approvalMembers`/`owner` 经 session registry 与 loopback admin API 持久化推迟到下一节审查。
 > 团队策略对抗评审修复（2026-08-26，`6211d1e`）：评审发现 `canSettleApproval` 对 owner 只比 `userId`，可从错误 channel/account 以 owner id 结算。修复后 `approvalOwnerOnly` 与 team owner 豁免都额外要求事件 `(channel, accountId)` 与归一化策略的 channel/accountId 精确匹配，owner 授权变为精确来源；列表内非 owner 成员仍仅按其归一化精确三元组授权；`sessionId`/`chatId` 恒精确；exported `canSettleApproval` 与 `canAcceptCommand`/Control Core 同规则；ownership/membership 永不授予 steer/ordinary-message。新增对抗测试（错误 owner channel/account），`npm test` 仍 = 1200（1199 pass + 1 skip），未 push、未改版本。
 > 团队策略来源绑定修复 round 3（2026-08-26，`befd15a`）：独立对抗评审再次命中 `src/control/entry.mjs` 的 `createControlEntry`——合并 rowMeta 后又用**传入事件**覆盖策略 channel/accountId/userId/sessionId/chatId，导致待决行省略 `accountId`（或 channel）、或策略点名 owner 却无已绑定会话来源时，owner-only / team owner 事件可从错误 account/channel 以 owner id 结算（事件铸造了 arbiter 授权对照的策略来源）。修复把授权来源绑定改为真实原始来源（rowMeta → 待决行顶层 → basePolicy）：`channel`/`accountId`/`chatId`/`sessionId`/`userId` 任一层已声明则事件必须精确一致，否则 `source_mismatch_*` 拒绝；`owner` 只取自原始策略/pending（永不取自事件）；owner/team-member 结算生效但真实会话来源不存在时 fail-closed（`source_mismatch_channel`）。legacy 非授权路径（action `stop`、conversation steer）源元数据真实缺失时保留 adapter-envelope 绑定；`sessionId`/`chatId` 恒精确；ownership/membership 永不授予 steer/ordinary-message。独立复现错误 account owner（待决行缺 accountId）、QQ private chatType 错误 account/channel、全程无来源 owner-only 三类；新增回归测试于 `test/session-arbiter.test.mjs` 与 `test/control-entry.integration.test.mjs`。验证 `npm test` = **1204（1203 pass + 1 skip）**；release guard（0.8.6/909）、channel matrix、`node --check`、`git diff --check` 全绿；未 push、未改版本。
+> 团队策略来源绑定修复 round 4（2026-08-26，`6d87a56`）：外部独立对抗评审又命中两个剩余缝隙——`sourceOf` 以 rowMeta 优先使陈旧/被篡改的 `pending.control`/`pending.controlMeta` 可覆盖冲突的规范 basePolicy channel/account，且授权命令仍存在事件回退。修复把 `createControlEntry` 里每个现存来源权威（`basePolicy`、每个 `pending.control`/`pending.controlMeta`、待决行顶层）都当作一致性约束：对 `approval`/`question-answer` 只要这几层之间或与其事件出现任何不一致就 `source_mismatch_*` fail-closed；除非适配器 `spec.authorize` 证明精确 `pushedTo` 目标，授权命令绑定真实原始来源，永不回退事件值。非授权 `stop`/`steer`/`ordinary-message` 保留显式 legacy envelope 绑定（`pendingMeta` 确定性 sessionId/key、事件 channel/account/user/chat），源元数据真实缺失的 legacy action/conversation 行仍可结算；`approval`/`question-answer` 永不使用事件回退。新增回归测试（嵌套 controlMeta 覆盖被绑定 base 策略 feishu/evil 对 telegram/a1 被拒、多来源联合不一致、对齐来源接受、question-answer 同规则、Telegram/Feishu action 回调仍经共享 entry 结算）。验证 `npm test` = **1205（1204 pass + 1 skip）**；release guard（0.8.6/909）、channel matrix、`node --check`、`git diff --check` 全绿；未 push、未改版本。把 `approvalMembers`/`owner` 经 session registry 与 loopback admin API 持久化（Stage 4）仍未开始，推迟到下一节审查。
 > 当前 PR #12 模块化重写：QQ 官方机器人已接入显式 `INTERACTION_CREATE` 审批/提问按钮负载，统一走 Control Core；旧客户端自动文本降级，群聊目标禁止可操作按钮以避免成员间泄漏。`approval.parallel` 仅显式 opt-in，默认关闭，等待 Promise reject 按超时 fail-closed。真实 QQ 协议/设备验证仍未完成，能力只能标记 contract-tested/declared。
 
 ## 方向决策（2026-08-25，规划态）
@@ -52,7 +53,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 零运行时依赖（只用 fetch + node:crypto + 原生 WebSocket）。
 
 - 语言/运行时：Node.js ESM（.mjs），无 TypeScript，无构建步骤
-- 代码量：src+test+scripts ≈ 36,000 行；46 个测试文件，1204 测试（1203 pass + 1 skip；已发布 v0.8.6 = 909）
+- 代码量：src+test+scripts ≈ 36,000 行；46 个测试文件，1205 测试（1204 pass + 1 skip；已发布 v0.8.6 = 909）
 - 文档：README.md / README.zh-CN.md / ADAPTER.md（渠道接入规范）/ PLUGINS.md（插件互操作）/ docs/v0.5-design.md / docs/v0.6-design.md / CHANGELOG.md（最详细的历史）
 
 ---
@@ -63,7 +64,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 |---|---|
 | 版本 | package.json = 0.8.6；CHANGELOG、admin UI、双语 README 和发布守卫已同步；npm 已发布 `dsh-notifier@0.8.6`；公共镜像 `main` 已清理 `node_modules/` 与 `package-lock.json` |
 | git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前开发线包含 `73154cd` 及后续文档同步提交（含 `c4fef26`，文档同步分支未发布） |
-| 测试 | `npm test` 已发布 v0.8.6 契约 = **909 tests**；当前开发线 = **1204**（1203 pass + 1 skip；含团队批准成员契约、阶段 2A 的 API/settlement/UI 新用例） |
+| 测试 | `npm test` 已发布 v0.8.6 契约 = **909 tests**；当前开发线 = **1205**（1204 pass + 1 skip；含团队批准成员契约、阶段 2A 的 API/settlement/UI 新用例） |
 | 发布 | v0.8.6 已发布；下一位 agent 接手时无需再走发布 gate，除非版本再次 bump |
 | 真机验证 | 当前分支未完成真实设备/宿主协议验证；QQ/微信 iLink/钉钉图片与 QQ 按钮仅有 contract-tested/declared 证据。历史 v0.6.1/v0.7 验证记录保留在下文 |
 
@@ -82,7 +83,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 用户文档 | `docs/guide.md` · `docs/upgrade-guide.md` · `docs/upgrade-guide.en.md` | README 双语均链接 guide；升级/回滚是装包用户高频需求 |
 | 互操作契约 | `PLUGINS.md` | 其他插件作者消费 notifier 服务时的契约（README 链接） |
 | CLI | `scripts/`（channel-login · test-channel · route · gen-channel-matrix 等） | guide.md 教用户直接 `node scripts/...` |
-| 测试 | `test/` | 行为契约随包分发是项目惯例（已发布 v0.8.6 = 909 用例；开发线 HEAD 1204，装包即可 `npm test`） |
+| 测试 | `test/` | 行为契约随包分发是项目惯例（已发布 v0.8.6 = 909 用例；开发线 HEAD 1205，装包即可 `npm test`） |
 
 **仅工程仓库（不进 npm 包）**：
 
@@ -266,7 +267,7 @@ src/
 ## 8. 快速上手
 
 ```bash
-npm test                    # 当前开发线 1204（1203 pass + 1 skip）；已发布 v0.8.6 契约仍为 909
+npm test                    # 当前开发线 1205（1204 pass + 1 skip）；已发布 v0.8.6 契约仍为 909
 npm run lint 2>/dev/null || node --check src/index.mjs   # 无 lint 配置的话用 node --check
 node scripts/route.mjs --help        # 路由 CLI
 node scripts/channel-login.mjs --help
