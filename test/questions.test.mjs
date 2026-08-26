@@ -14,6 +14,7 @@ import { createInboundBus } from '../src/inbound/bus.mjs'
 import { createTokenVault } from '../src/inbound/tokens.mjs'
 import { createStore } from '../src/inbound/store.mjs'
 import { createIdentity } from '../src/inbound/identity.mjs'
+import { createControlEntry } from '../src/control/entry.mjs'
 
 function tempPath() {
   return join(mkdtempSync(join(tmpdir(), 'dsh-notifier-aq-')), 'state.json')
@@ -1313,5 +1314,147 @@ test('CC-1 跨渠道不匹配：feishu 卡片送达，qq 无 inbound 无 hint �
   assert.equal(row.status, 'pending')
   const result = await pending
   assert.equal(result.answered, false)
+  rig.bridge.dispose()
+})
+
+// ----------------------------------------------------------------
+// P1（stage5）：自定义「答：」与卡片「跳过」经共享 Control Core 契约裁决。
+// 两个路径原先直调 bus.settle 绕过 Control Core 且未纳入 accountId 来源绑定；
+// 修复后统一走 deps.control.handle（trusted + 精确来源 + 首达采纳），Control Core
+// 不可用时保留仅剩的白名单+token+exact 来源兜底（不弱于现网）。
+// 联调台：桥 + createControlEntry（personal/approve）+ 绑定 owner，pushedTo 携带 accountId。
+// ----------------------------------------------------------------
+
+/** 与 questions-admin-settlement 同款 Control Core 联调台，pushedTo 携带 accountId。 */
+function makeControlRig({ channel = 'telegram', accountId = 'tg-acc', chatId = '900113', userId = 'u1' } = {}) {
+  const store = createStore(tempPath())
+  const vault = createTokenVault({ secret: 'ctrl-test-secret' })
+  const bus = createInboundBus({ allowUsers: [userId, 'u-other'], store, vault })
+  const identity = createIdentity({ store, logger: null })
+  identity.addBinding({ channel, userId }) // 首条绑定 = owner
+  const texts = []
+  const raw = {
+    channel,
+    ...(accountId !== null ? { accountId } : {}),
+    notifyTargets: () => [{ chatId, userId }],
+    async sendQuestionCard() { return { messageId: 1 } },
+    async editResolved() {},
+    async sendText(_chatId, text) { texts.push({ chatId: _chatId, text }); return true },
+  }
+  const notifier = { channels: [channel], notifyAll: async () => ({ ok: true, delivered: [channel], skipped: [], failed: [] }) }
+  const control = createControlEntry({ policy: { mode: 'personal', capabilities: { approve: true } }, identity, logger: null })
+  const bridge = createQuestionBridge({
+    bus, vault, store, notifier, identity, control,
+    interactive: () => [raw],
+    config: { timeoutMs: 2000, escalation: { enabled: false } },
+  })
+  bridge.attach()
+  const rig = { store, vault, bus, identity, control, bridge, texts, seen: [] }
+  // 尾部观察者：只在问题处理器不消费时才收到（用于断言「未消费/落回对话路由」）
+  bus.onMessage((envelope) => { rig.seen.push(String(envelope.text ?? envelope.questionAction?.optIdx ?? '')); return false })
+  return rig
+}
+
+test('P1 自定义答经 Control Core：telegram-style 正确 account 作答成功；同一 chat/user 的错误 account 不结算', async () => {
+  const rig = makeControlRig({ channel: 'telegram', accountId: 'tg-acc', chatId: '900113', userId: 'u1' })
+  const p = rig.bridge.askQuestions({ questions: [SINGLE] })
+  await sleep(30)
+  const qKey = rig.store.keys('aq:')[0]
+  // 错误账号（同渠道同 chat 同 user，仅 accountId 不同）→ latestPendingFor 不命中 → 不结算
+  rig.bus.accept({ channel: 'telegram', userId: 'u1', chatId: '900113', accountId: 'tg-evil', chatType: 'private', messageId: 'm-evil', text: '答：渗透对方账号' })
+  assert.equal(rig.store.get(qKey).status, 'pending', '错误 accountId 不可作答')
+  assert.deepEqual(rig.seen, ['答：渗透对方账号'], '错误账号自定义作答未被明确消费/裁决')
+  // 正确账号 → 经 Control Core 结算成功
+  rig.bus.accept({ channel: 'telegram', userId: 'u1', chatId: '900113', accountId: 'tg-acc', chatType: 'private', messageId: 'm-ok', text: '答：我选生产' })
+  const result = await p
+  assert.equal(result.answered, true)
+  assert.deepEqual(result.results[0].answers, ['我选生产'])
+  const row = rig.store.get(qKey)
+  assert.equal(row.status, 'resolved')
+  assert.equal(row.decision, 'answered')
+  rig.bridge.dispose()
+})
+
+test('P1 自定义答经 Control Core：同用户同账号错误 chat → 消费但不清算，问题保持待决', async () => {
+  const rig = makeControlRig({ channel: 'telegram', accountId: 'tg-acc', chatId: '900113', userId: 'u1' })
+  const p = rig.bridge.askQuestions({ questions: [SINGLE] })
+  await sleep(30)
+  const qKey = rig.store.keys('aq:')[0]
+  rig.bus.accept({ channel: 'telegram', userId: 'u1', chatId: '900114', accountId: 'tg-acc', chatType: 'private', messageId: 'm-wrongchat', text: '答：跑别的会话' })
+  assert.deepEqual(rig.seen, [], '错误 chat onChannel 证据 → 消费，不进对话路由')
+  assert.equal(rig.store.get(qKey).status, 'pending', '错误 chat 不结算')
+  const result = await p
+  assert.equal(result.answered, false, '未作答超时交还桌面')
+  rig.bridge.dispose()
+})
+
+test('P1 跳过经 Control Core：feishu-style 正确 account 可跳过；同用户错误 account 被拒不落终态', async () => {
+  const rig = makeControlRig({ channel: 'feishu', accountId: 'cli_a1b2c3d4e5', chatId: 'ou_9100001', userId: 'u1' })
+  const p = rig.bridge.askQuestions({ questions: [SINGLE] })
+  await sleep(30)
+  const qKey = rig.store.keys('aq:')[0]
+  const token = rig.vault.mint(qKey)
+  // 错误账号：同 userId/chat，accountId 不同 → pushedTo 目标不命中 → 拒
+  rig.bus.accept({ channel: 'feishu', userId: 'u1', chatId: 'ou_9100001', accountId: 'cli_evil', chatType: 'private', messageId: 'm-evil', questionAction: { qKey, optIdx: 's', token } })
+  assert.equal(rig.store.get(qKey).status, 'pending', '错误 accountId 不可跳过')
+  // 拒绝回执：可能命中 pushedTo 原会话预检（请到原会话操作）或 Control Core 裁决拒（已作答）。
+  // 安全底线是「不落终态」——上方 status 断言已固；这里只要求确实发了 fail-closed 拒回执。
+  assert.match(rig.texts.at(-1)?.text ?? '', /原会话操作|该提问已被作答/, '错误账号跳过被拒并回执')
+  assert.ok(!/已跳过/.test(rig.texts.at(-1)?.text ?? ''), '错误账号绝不得获跳过着落回执')
+  // 正确账号 → 经 Control Core 结算成功（跳过）
+  rig.bus.accept({ channel: 'feishu', userId: 'u1', chatId: 'ou_9100001', accountId: 'cli_a1b2c3d4e5', chatType: 'private', messageId: 'm-ok', questionAction: { qKey, optIdx: 's', token } })
+  const result = await p
+  assert.equal(result.answered, false, '跳过即交还桌面，非作答')
+  const row = rig.store.get(qKey)
+  assert.equal(row.status, 'resolved', 'aq-skip 经 Control Core 结算落终态')
+  assert.equal(row.decision, 'skipped', 'aq-skip 落账为 skipped（等价 decision.kind=aq-skip）')
+  assert.match(rig.texts.at(-1)?.text ?? '', /已跳过/, '正确账号跳过持有「已跳过」落地回执')
+  rig.bridge.dispose()
+})
+
+test('P1 跳过经 Control Core：feishu 缺失 accountId 回调 fail-closed（绝不跳过，不落终态）', async () => {
+  const rig = makeControlRig({ channel: 'feishu', accountId: 'cli_a1b2c3d4e5', chatId: 'ou_9100001', userId: 'u1' })
+  const p = rig.bridge.askQuestions({ questions: [SINGLE] })
+  await sleep(30)
+  const qKey = rig.store.keys('aq:')[0]
+  const token = rig.vault.mint(qKey)
+  // 同一 owner(u1) 同 chat，但回调不带 accountId：pushedTo 已绑定账号 → 缺失即 fail-closed，绝不放行。
+  rig.bus.accept({ channel: 'feishu', userId: 'u1', chatId: 'ou_9100001', chatType: 'private', messageId: 'm-noacc', questionAction: { qKey, optIdx: 's', token } })
+  assert.equal(rig.store.get(qKey).status, 'pending', '缺失 accountId 不可跳过')
+  assert.match(rig.texts.at(-1)?.text ?? '', /原会话操作|该提问已被作答|作答被拒绝/, '缺失 accountId 跳过被拒并回执')
+  assert.ok(!/已跳过/.test(rig.texts.at(-1)?.text ?? ''), '缺失 accountId 绝不得获跳过着落回执')
+  const result = await p
+  assert.equal(result.answered, false, '缺失 accountId 跳过未生效，问题保持待决')
+  rig.bridge.dispose()
+})
+
+test('P1 跳过经 Control Core：QQ 群聊回调 fail-closed（group_chat_disabled），绝不跳过', async () => {
+  const rig = makeControlRig({ channel: 'qq', accountId: 'qq-acc', chatId: 'qq-private', userId: 'u1' })
+  const p = rig.bridge.askQuestions({ questions: [SINGLE] })
+  await sleep(30)
+  const qKey = rig.store.keys('aq:')[0]
+  const token = rig.vault.mint(qKey)
+  // 群聊回调：chatId 与私聊 pushedTo 一致、账号一致，但 chatType=group → Control Core 拒绝
+  rig.bus.accept({ channel: 'qq', userId: 'u1', chatId: 'qq-private', accountId: 'qq-acc', chatType: 'group', messageId: 'm-group', questionAction: { qKey, optIdx: 's', token } })
+  assert.equal(rig.store.get(qKey).status, 'pending', '群聊跳过被 Control Core 拒，不落终态')
+  const result = await p
+  assert.equal(result.answered, false, '群聊跳过未生效，问题保持待决')
+  rig.bridge.dispose()
+})
+
+test('P1 自定义答 replay/去重：同 messageId 重复入站不重复结算，账本只记一次', async () => {
+  const rig = makeControlRig({ channel: 'telegram', accountId: 'tg-acc', chatId: '900113', userId: 'u1' })
+  const p = rig.bridge.askQuestions({ questions: [SINGLE] })
+  await sleep(30)
+  const qKey = rig.store.keys('aq:')[0]
+  const env = { channel: 'telegram', userId: 'u1', chatId: '900113', accountId: 'tg-acc', chatType: 'private', messageId: 'm-replay', text: '答：replay' }
+  const first = rig.bus.accept(env)
+  assert.equal(first.ok, true, '首次作答受理')
+  const again = rig.bus.accept(env) // 重放同一事件
+  assert.equal(again.ok, false, '总线按 messageId 去重')
+  assert.equal(again.reason, 'duplicate', '重复入站被总线路由层挡掉')
+  assert.deepEqual(rig.store.get(qKey).answers, ['replay'], '账本只记一次首达')
+  const result = await p
+  assert.deepEqual(result.results[0].answers, ['replay'])
   rig.bridge.dispose()
 })

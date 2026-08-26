@@ -177,20 +177,27 @@ export function createQuestionBridge(deps) {
         const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).find((target) => String(target.channel) === channel && String(target.chatId) === chatId && (target.accountId === undefined || String(target.accountId) === String(input.accountId ?? '')))
         return {
           eventId: input.eventId, sessionId: String(row.agentId ?? input.qKey ?? input.key), source: 'mobile', channel,
-          accountId: String(exact?.accountId ?? input.accountId ?? channel), userId: String(exact?.userId ?? input.userId ?? ''), chatId,
+          accountId: String(exact?.accountId ?? input.accountId ?? ''), userId: String(exact?.userId ?? input.userId ?? ''), chatId,
           policyVersion: String(row.policyVersion ?? policy.policyVersion ?? '1'), command: 'question-answer',
           chatType: input.chatType, createdAt: Number(row.createdAt ?? now - 1),
           expiresAt: Number(row.expiresAt ?? now + defaultTimeoutMs),
         }
       },
       authorize: (input, row, event) => {
-        const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).some((target) => (
+        const targets = Array.isArray(row.pushedTo) ? row.pushedTo : []
+        // 同 channel/chat/user 是否存在带 accountId 的推送目标。存在时来源必须精确落到该账号：
+        // 同一用户可能控制多个 bot 账号，token/回调仍须绑定原始账号；缺失/错误 accountId 一律
+        // fail-closed，不得凭 trusted owner 兜底放开到另一账号（CRACK-004 只豁免无账号绑定的行）。
+        const bound = targets.filter((target) => String(target.channel) === event.channel && String(target.chatId) === event.chatId && (target.userId === undefined || String(target.userId) === event.userId))
+        const accountBound = bound.some((t) => t.accountId !== undefined && String(t.accountId) !== '')
+        const exact = targets.some((target) => (
           String(target.channel) === event.channel
           && String(target.chatId) === event.chatId
           && (target.accountId === undefined || String(target.accountId) === event.accountId)
           && (target.userId === undefined || String(target.userId) === event.userId)
         ))
         if (input.trusted !== true) return exact
+        if (accountBound) return exact
         return exact || isAuthorizedDeciderQ(identity, event.channel, event.userId)
       },
       settle: (input) => input.trusted === true
@@ -404,12 +411,36 @@ export function createQuestionBridge(deps) {
       const row = ledger.get(qKey)
       if (row === undefined || row.status !== 'pending') { feedback('该提问已回答或已过期'); return true }
       const sourceChat = envelope.chatId !== undefined && envelope.chatId !== null ? String(envelope.chatId) : ''
-      const target = Array.isArray(row.pushedTo) ? row.pushedTo.find((item) => String(item.channel) === String(envelope.channel) && String(item.chatId) === sourceChat && String(item.userId) === String(envelope.userId)) : null
+      // aq-skip 也纳入 accountId 的来源绑定：同一 chat/user 但不同账号（multi-account 同聊天）
+      // 不得凭 userId 单独命中——pushedTo 只计与事件账号一致的目标，否则 fail-closed 原会话。
+      const target = Array.isArray(row.pushedTo) ? row.pushedTo.find((item) => String(item.channel) === String(envelope.channel) && String(item.chatId) === sourceChat && (item.accountId === undefined || String(item.accountId) === String(envelope.accountId ?? '')) && String(item.userId) === String(envelope.userId)) : null
       if (target === null || sourceChat === '') { feedback('请到原会话操作'); return true }
-      const verdict = bus.settle(qKey, { kind: 'aq-skip', idxs: [] }, `${envelope.channel}:button`, envelope.userId)
-      if (!verdict.ok) { feedback('该提问已被作答（首达采纳）'); return true }
-      ledger.resolve(qKey, 'skipped', { via: `${envelope.channel}:button`, userId: String(envelope.userId) })
-      feedback('⏭ 已跳过该提问：交还桌面处理')
+      // 跳过一律经共享 Control Core 的 question-answer 契约裁决（授权/来源/策略/群聊 fail-closed），
+      // 结算走 settleSkip（仍以 bus.settle 首达采纳为唯一落账点）。控制缺失 → fail-closed：
+      // 绝不直结（不再回退 bus.settle），防止无授权即放行跳过。
+      if (deps.control === null || deps.control === undefined) {
+        feedback('该提问已被作答（首达采纳）')
+        return true
+      }
+      const verdict = deps.control.handle({
+        eventId: String(envelope.messageId ?? ''),
+        command: 'question-answer',
+        qKey,
+        channel: envelope.channel,
+        accountId: envelope.accountId,
+        chatId: envelope.chatId,
+        chatType: envelope.chatType,
+        userId: envelope.userId,
+        via: `${envelope.channel}:button`,
+        trusted: true,
+        settle: () => settleSkip(qKey, envelope),
+      })
+      if (verdict.ok === true || verdict.status === 'accepted') {
+        feedback('⏭ 已跳过该提问：交还桌面处理')
+      } else {
+        // 已决/组聊/来源不满足 → fail-closed：消费回调、提示不可再跳，绝不放行词条
+        feedback(verdict.message ?? '该提问已被作答（首达采纳）')
+      }
       return true
     }
     const sourceRow = ledger.get(qKey)
@@ -418,7 +449,7 @@ export function createQuestionBridge(deps) {
     const sourceTargets = Array.isArray(sourceRow.pushedTo) ? sourceRow.pushedTo.filter((target) => String(target.channel) === String(envelope.channel) && String(target.chatId) === sourceChat && (target.accountId === undefined || String(target.accountId) === String(envelope.accountId ?? ''))) : []
     if (sourceTargets.length === 0 || !sourceTargets.some((target) => String(target.userId) === String(envelope.userId))) { feedback('请到原会话操作'); return true }
     const verdict = deps.control !== null && deps.control !== undefined
-      ? deps.control.handle({ eventId: String(envelope.messageId ?? ''), command: 'question-answer', qKey, optIdx, token: String(action.token ?? ''), via: `${envelope.channel}:button`, channel: envelope.channel, accountId: String(envelope.accountId ?? envelope.channel ?? ''), userId: envelope.userId, chatId: envelope.chatId, chatType: envelope.chatType })
+      ? deps.control.handle({ eventId: String(envelope.messageId ?? ''), command: 'question-answer', qKey, optIdx, token: String(action.token ?? ''), via: `${envelope.channel}:button`, channel: envelope.channel, accountId: envelope.accountId, userId: envelope.userId, chatId: envelope.chatId, chatType: envelope.chatType })
       : decide({ qKey, optIdx, token: String(action.token ?? ''), via: `${envelope.channel}:button`, userId: envelope.userId, chatId: envelope.chatId })
     feedback(verdict.message ?? '该提问已回答或已过期')
     return true
@@ -435,6 +466,25 @@ export function createQuestionBridge(deps) {
     ledger.resolve(qKey, 'answered', { answers: labels, via: String(via), userId: String(userId) })
     warn(`${qKey} 作答：${labels.join('、')}（via ${via}）`)
     return { ok: true, message: `✅ 已作答：${labels.join('、')}`, answers: labels }
+  }
+
+  /** 自定义文本作答（'答：...'）：与 settle 共享 bus.settle 首达采纳 + ledger.resolve 落账。
+   *  只在 Control Core 已放行（或控制不可用时的精确来源兜底）后才被调用——它不是新的直通后门。 */
+  function settleText(qKey, answer, envelope) {
+    const verdict = bus.settle(qKey, { kind: 'aq-text', idxs: [], text: answer }, `${envelope.channel}:text`, envelope.userId)
+    if (!verdict.ok) return { ok: false, message: '该提问已被作答（首达采纳）' }
+    ledger.resolve(qKey, 'answered', { answers: [answer], via: `${envelope.channel}:text`, userId: String(envelope.userId) })
+    warn(`${qKey} 自定义作答（via ${envelope.channel}:text）`)
+    return { ok: true, message: `✅ 已作答（自定义）：${answer}`, answers: [answer] }
+  }
+
+  /** 跳过（aq-skip）：与 admin decline 同语义（交还桌面、绝不编造答案），但来自手机端按钮。 */
+  function settleSkip(qKey, envelope) {
+    const verdict = bus.settle(qKey, { kind: 'aq-skip', idxs: [] }, `${envelope.channel}:button`, envelope.userId)
+    if (!verdict.ok) return { ok: false, message: '该提问已被作答（首达采纳）' }
+    ledger.resolve(qKey, 'skipped', { via: `${envelope.channel}:button`, userId: String(envelope.userId) })
+    warn(`${qKey} 已跳过（via ${envelope.channel}:button）`)
+    return { ok: true, message: '⏭ 已跳过该提问：交还桌面处理' }
   }
 
   // ———————————————— 管理台待决问题 facade（路线图阶段 2A，2026-08-26） ————————————————
@@ -614,16 +664,39 @@ export function createQuestionBridge(deps) {
     const text = String(envelope.text ?? '').trim()
     if (/^答[:：]/.test(text)) {
       const chatId = envelope.chatId !== undefined && envelope.chatId !== null ? String(envelope.chatId) : null
-      const pending = ledger.latestPendingFor(envelope.channel, envelope.userId, chatId)
+      // accountId 一并参与归属匹配：自定义作答不得凭 (channel,userId) 命中另一账号的待决行
+      const pending = ledger.latestPendingFor(envelope.channel, envelope.userId, chatId, envelope.accountId)
       if (pending === null) return false
       if (chatId === null || pending.evidence !== 'exact' && pending.evidence !== 'hint') return true
       const answer = text.replace(/^答[:：]\s*/, '').trim()
       const inbound = interactiveEntries().find((entry) => entry.channel === envelope.channel)
       if (answer === '') { if (inbound !== undefined) void inbound.sendText(envelope.chatId, '请在「答：」后面写回答').catch(() => {}); return true }
-      const verdict = bus.settle(pending.key, { kind: 'aq-text', idxs: [], text: answer }, `${envelope.channel}:text`, envelope.userId)
-      if (!verdict.ok) { if (inbound !== undefined) void inbound.sendText(envelope.chatId, '该提问已被作答（首达采纳）').catch(() => {}); return true }
-      ledger.resolve(pending.key, 'answered', { answers: [answer], via: `${envelope.channel}:text`, userId: String(envelope.userId) })
-      if (inbound !== undefined) void inbound.sendText(envelope.chatId, `✅ 已作答（自定义）：${answer}`).catch(() => {})
+      // 自定义作答也经共享 Control Core 的 question-answer 契约裁决（授权/来源/策略/群聊 fail-closed）；
+      // 结算走 settleText（仍以 bus.settle 首达采纳为唯一落账点）。控制缺失 → fail-closed：绝不直结
+      // （不再回退 bus.settle），防止无授权即落账。
+      if (deps.control === null || deps.control === undefined) {
+        if (inbound !== undefined) void inbound.sendText(envelope.chatId, '该提问已被作答（首达采纳）').catch(() => {})
+        return true
+      }
+      const verdict = deps.control.handle({
+        eventId: String(envelope.messageId ?? ''),
+        command: 'question-answer',
+        qKey: pending.key,
+        channel: envelope.channel,
+        accountId: envelope.accountId,
+        chatId: envelope.chatId,
+        chatType: envelope.chatType,
+        userId: envelope.userId,
+        via: `${envelope.channel}:text`,
+        trusted: true,
+        settle: () => settleText(pending.key, answer, envelope),
+      })
+      if (verdict.ok === true || verdict.status === 'accepted') {
+        if (inbound !== undefined) void inbound.sendText(envelope.chatId, `✅ 已作答（自定义）：${answer}`).catch(() => {})
+      } else {
+        // 已决/来源不满足 → fail-closed：消费消息、提示不可再答
+        if (inbound !== undefined) void inbound.sendText(envelope.chatId, verdict.message ?? '该提问已被作答（首达采纳）').catch(() => {})
+      }
       return true
     }
     if (!/^\d{1,2}([,，]\d{1,2})*$/.test(text)) return false
@@ -677,7 +750,7 @@ export function createQuestionBridge(deps) {
       return true // 发错了可以再发：问题保持待决，上面的选项已重发
     }
     const verdict = deps.control !== null && deps.control !== undefined
-      ? deps.control.handle({ eventId: String(envelope.messageId ?? ''), command: 'question-answer', qKey: pending.key, channel: envelope.channel, accountId: String(envelope.accountId ?? envelope.channel ?? ''), chatId: envelope.chatId, chatType: envelope.chatType, userId: envelope.userId, via: `${envelope.channel}:reply`, optIdxes, trusted: true })
+      ? deps.control.handle({ eventId: String(envelope.messageId ?? ''), command: 'question-answer', qKey: pending.key, channel: envelope.channel, accountId: envelope.accountId, chatId: envelope.chatId, chatType: envelope.chatType, userId: envelope.userId, via: `${envelope.channel}:reply`, optIdxes, trusted: true })
       : decideTrusted({ qKey: pending.key, optIdxes, via: `${envelope.channel}:reply`, userId: envelope.userId })
     if (verdict.ok === true || verdict.status === 'accepted') {
       sendFeedback(`✅ 已作答：${(verdict.answers ?? []).join('、')}`)
