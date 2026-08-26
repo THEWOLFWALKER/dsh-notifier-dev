@@ -44,3 +44,7 @@
 验证：focused `node --test test/session-arbiter.test.mjs test/control-entry.integration.test.mjs` = 17 pass；`npm test` = **1200（1199 pass + 1 skip）**；`node scripts/verify-release.mjs` OK（发布契约 909 不变）；`node scripts/gen-channel-matrix.mjs --check` OK；`node --check` 两个改动 src OK；`git diff --check` 干净。
 
 风险：仅 mock/契约验证，无真实 provider 回调在团队作用域实测；把 `approvalMembers`/`owner` 经 session registry 与 loopback admin API 持久化被推迟到下一节审查（taskpack 已标注）。
+
+## 对抗评审修复（2026-08-26，`6211d1e`）
+
+外部对抗评审发现 `canSettleApproval` 对 owner 只比 `userId`，可从错误 channel/account 以 owner id 结算；`approvalOwnerOnly` 与 team owner 豁免两条路径皆有此漏洞。修复：owner 判定额外要求事件 `(channel, accountId)` 与归一化策略 channel/accountId 精确匹配；列表内非 owner 成员仍仅按其归一化精确三元组授权；`sessionId`/`chatId` 恒精确；exported `canSettleApproval` 与 `canAcceptCommand`/Control Core 同规则；ownership/membership 永不授予 steer/ordinary-message。新增对抗测试（错误 owner channel/account）于 `test/session-arbiter.test.mjs`。验证仍 1200（1199 pass + 1 skip）。本 workstream 状态保持 complete。
