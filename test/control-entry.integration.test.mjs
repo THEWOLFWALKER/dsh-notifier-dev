@@ -131,3 +131,54 @@ test('action callbacks from Telegram and Feishu settle through the shared entry'
   assert.equal(dispatcher.dispatch({ actionKey: feishu.key, token: feishu.token, via: 'feishu:action', userId: 7, chatId: 'fs-chat' }).message, '✅ 已停止任务')
   assert.deepEqual(calls, ['telegram:action', 'feishu:action'])
 })
+
+function makeTeamControl(approvalMembers, owner, settled) {
+  const control = createControlEntry({
+    policy: { mode: 'team', owner, approvalMembers, capabilities: { approve: true } },
+    now: () => 150,
+  })
+  control.register('approval', {
+    getPending: (input) => ({
+      status: 'pending', sessionId: 'session-1', agentId: 'session-1', channel: 'telegram', chatId: 'tg-chat',
+      userId: input.userId, accountId: 'telegram', policyVersion: '1', createdAt: 100, expiresAt: 1000,
+      pushedTo: [{ channel: 'telegram', chatId: 'tg-chat', userId: input.userId }],
+    }),
+    buildEvent: (input, row) => ({
+      eventId: input.eventId, sessionId: row.sessionId, source: 'mobile', channel: row.channel,
+      accountId: input.accountId, userId: input.userId, chatId: input.chatId ?? row.chatId, policyVersion: row.policyVersion,
+      command: 'approval', chatType: input.chatType, createdAt: row.createdAt, expiresAt: row.expiresAt,
+    }),
+    settle: (input, pending, event, policy) => { settled.push({ userId: input.userId, policyOwner: policy.owner }); return true },
+  })
+  return control
+}
+
+test('team approvalMembers authorize only listed members and the owner through the shared Core entry', () => {
+  const settled = []
+  const control = makeTeamControl([{ channel: 'telegram', accountId: 'telegram', userId: 'member-2' }], 'owner-1', settled)
+  const base = { command: 'approval', approvalKey: 'ap:team', channel: 'telegram', accountId: 'telegram', chatId: 'tg-chat', userId: 'member-2' }
+  // listed member settles; the settle callback receives the normalized policy snapshot (owner is set)
+  assert.equal(control.handle({ ...base, eventId: 'm' }).status, 'accepted')
+  assert.equal(settled[0].userId, 'member-2')
+  assert.equal(settled[0].policyOwner, 'owner-1')
+  // owner settles even though not listed, and membership never gets orphaned from a duplicate id
+  const ownerHandle = control.handle({ ...base, eventId: 'o', userId: 'owner-1' })
+  assert.equal(ownerHandle.status, 'accepted')
+  assert.equal(settled.length, 2)
+  // non-member and wrong account are rejected with zero settlement (wrong account is
+  // caught by the pending-row binding layer first; both fail closed)
+  assert.equal(control.handle({ ...base, eventId: 'x', userId: 'intruder' }).reason, 'member_not_allowed')
+  assert.equal(control.handle({ ...base, eventId: 'y', accountId: 'other' }).status, 'rejected')
+  assert.equal(settled.length, 2)
+})
+
+test('team member authorization stays fail-closed on wrong chat and group chat, zero settlement', () => {
+  const settled = []
+  const control = makeTeamControl([{ channel: 'telegram', accountId: 'telegram', userId: 'member-2' }], 'owner-1', settled)
+  const base = { command: 'approval', approvalKey: 'ap:team', channel: 'telegram', accountId: 'telegram', userId: 'member-2' }
+  // conversation binding is exact even for approved team members
+  assert.equal(control.handle({ ...base, eventId: 'wc', chatId: 'other' }).reason, 'source_mismatch_chatId')
+  // QQ-style group control stays fail-closed
+  assert.equal(control.handle({ ...base, eventId: 'gr', chatType: 'group' }).reason, 'group_chat_disabled')
+  assert.equal(settled.length, 0)
+})

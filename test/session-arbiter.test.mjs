@@ -1,13 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizeSessionPolicy, canAcceptCommand, revokePolicy, chooseCommand, createSessionArbiter } from '../src/control/session-arbiter.mjs'
+import { normalizeSessionPolicy, canAcceptCommand, revokePolicy, chooseCommand, createSessionArbiter, canSettleApproval } from '../src/control/session-arbiter.mjs'
 
 const policy = (extra = {}) => normalizeSessionPolicy({ sessionId: 's1', channel: 'telegram', accountId: 'a1', userId: 'u1', chatId: 'c1', owner: 'u1', policyVersion: 'p1', ...extra }, 100)
 const event = (extra = {}) => ({ eventId: 'e1', sessionId: 's1', channel: 'telegram', accountId: 'a1', userId: 'u1', chatId: 'c1', policyVersion: 'p1', command: 'stop', createdAt: 10, expiresAt: 200, ...extra })
+const teamPolicy = (extra = {}) => policy({ mode: 'team', capabilities: { approve: true }, approvalMembers: [{ channel: 'telegram', accountId: 'a1', userId: 'u2' }], ...extra })
 
 test('personal defaults are safe and group/conversation are off', () => {
   const p = normalizeSessionPolicy({}, 100)
   assert.deepEqual(p.capabilities, { observe: true, approve: true, stop: true, converse: false, groupChatControl: false })
+  assert.deepEqual(p.approvalMembers, [])
   assert.equal(p.mode, 'personal')
   assert.equal(canAcceptCommand(p, event()).reason, 'stale_policy')
 })
@@ -15,9 +17,11 @@ test('personal defaults are safe and group/conversation are off', () => {
 test('policy binding and capability gates are exact', () => {
   const p = policy()
   assert.equal(canAcceptCommand(p, event()).ok, true)
+  assert.equal(canAcceptCommand(p, event({ command: 'approval' })).ok, true)
+  assert.equal(canAcceptCommand(p, event({ command: 'question-answer' })).ok, true)
   assert.equal(canAcceptCommand(p, event({ chatId: '' })).reason, 'source_mismatch_chatId')
   assert.equal(canAcceptCommand(p, event({ command: 'steer' })).reason, 'conversation_disabled')
-  assert.equal(canAcceptCommand(p, event({ chatType: 'group' })).reason, 'group_chat_disabled')
+  assert.equal(canAcceptCommand(p, event({ command: 'steer', chatType: 'group' })).reason, 'group_chat_disabled')
   assert.equal(canAcceptCommand(p, event({ policyVersion: 'old' })).reason, 'stale_policy')
   for (const key of ['sessionId', 'channel', 'accountId', 'userId', 'chatId']) {
     assert.match(canAcceptCommand(p, event({ [key]: 'wrong' })).reason, new RegExp(`source_mismatch_${key}`))
@@ -33,8 +37,62 @@ test('team mode permits scoped conversation only when explicitly enabled', () =>
 
 test('owner-only approval and revoke fail closed', () => {
   const p = policy({ approvalOwnerOnly: true })
-  assert.equal(canAcceptCommand(p, event({ command: 'approval', userId: 'u2' })).reason, 'source_mismatch_userId')
+  assert.equal(canAcceptCommand(p, event({ command: 'approval', userId: 'u2' })).reason, 'owner_only')
+  assert.equal(canAcceptCommand(p, event({ command: 'question-answer', userId: 'u2' })).reason, 'owner_only')
   assert.equal(canAcceptCommand(revokePolicy(p, 'manual', 120), event(), 120).reason, 'revoked')
+})
+
+test('approvalMembers normalize safely: trim, drop malformed/wildcard, dedup, and cap at 64', () => {
+  const p = normalizeSessionPolicy({
+    mode: 'team', sessionId: 's1', chatId: 'c1', owner: 'u1',
+    approvalMembers: [
+      { channel: ' telegram ', accountId: ' a1 ', userId: ' u2 ' },   // trimmed to (telegram,a1,u2)
+      { channel: 'telegram', accountId: 'a1', userId: 'u2' },           // duplicate of the trimmed triple
+      {},                                                                // missing all fields -> dropped
+      { channel: 'telegram', accountId: 'a1' },                          // missing userId -> dropped
+      { channel: '*', accountId: 'a1', userId: 'u9' },                   // wildcard -> dropped
+      { channel: 'all', accountId: 'a1', userId: 'u9' },                 // global pseudo-id -> dropped
+      { channel: 'telegram', accountId: 'a1', userId: 'u3' },
+      ['not', 'an', 'object'],                                           // nested array -> dropped
+      null,                                                              // dropped
+    ],
+  }, 100)
+  assert.deepEqual(p.approvalMembers, [
+    { channel: 'telegram', accountId: 'a1', userId: 'u2' },
+    { channel: 'telegram', accountId: 'a1', userId: 'u3' },
+  ])
+  assert.equal(normalizeSessionPolicy({ approvalMembers: 'not-an-array' }, 100).approvalMembers.length, 0)
+  assert.equal(canSettleApproval(p, event({ command: 'approval', userId: 'u9' })), false)
+
+  const many = []
+  for (let i = 0; i < 70; i++) many.push({ channel: 'telegram', accountId: 'a1', userId: `u${i}` })
+  const capped = normalizeSessionPolicy({ mode: 'team', approvalMembers: many }, 100)
+  assert.equal(capped.approvalMembers.length, 64)
+  assert.equal(capped.approvalMembers[63].userId, 'u63')
+})
+
+test('team member exact triple may approve/question-answer; owner overrides; non-members rejected', () => {
+  const p = teamPolicy()
+  assert.equal(canAcceptCommand(p, event({ command: 'approval', userId: 'u2' })).ok, true)
+  assert.equal(canAcceptCommand(p, event({ command: 'question-answer', userId: 'u2' })).ok, true)
+  // owner accepted even when listed members omit the owner
+  assert.equal(canAcceptCommand(teamPolicy(), event({ command: 'approval', userId: 'u1' })).ok, true)
+  assert.equal(canAcceptCommand(teamPolicy(), event({ command: 'question-answer', userId: 'u1' })).ok, true)
+  // wrong channel / account / user rejected
+  assert.equal(canAcceptCommand(p, event({ command: 'approval', userId: 'u2', channel: 'feishu' })).reason, 'member_not_allowed')
+  assert.equal(canAcceptCommand(p, event({ command: 'approval', userId: 'u2', accountId: 'z1' })).reason, 'member_not_allowed')
+  assert.equal(canAcceptCommand(p, event({ command: 'approval', userId: 'u9' })).reason, 'member_not_allowed')
+  // membership must never grant steer / ordinary-message
+  const conv = teamPolicy({ capabilities: { approve: true, converse: true } })
+  assert.equal(canAcceptCommand(conv, event({ command: 'steer', userId: 'u2' })).reason, 'source_mismatch_userId')
+  assert.equal(canAcceptCommand(conv, event({ command: 'ordinary-message', userId: 'u2' })).reason, 'source_mismatch_userId')
+})
+
+test('owner-only and team scope stay fail-closed across expiry/revoke/stale', () => {
+  const p = teamPolicy({ approvalOwnerOnly: true, expiresAt: 50 })
+  assert.equal(canAcceptCommand(p, event({ command: 'approval', userId: 'u2' }), 100).reason, 'expired')
+  assert.equal(canAcceptCommand(revokePolicy(teamPolicy(), 'stop', 120), event({ command: 'approval', userId: 'u2' }), 120).reason, 'revoked')
+  assert.equal(canAcceptCommand(teamPolicy(), { ...event({ command: 'approval', userId: 'u2' }), policyVersion: 'p0' }).reason, 'stale_policy')
 })
 
 test('precedence chooses stop, then question, then approval, steer, ordinary', () => {
@@ -43,7 +101,7 @@ test('precedence chooses stop, then question, then approval, steer, ordinary', (
   assert.equal(chooseCommand(candidates, { policy: p }).event.command, 'stop')
 })
 
-test('arbiter settles once, retries failed settlement, revokes and disposes safely', () => {
+test('arbiter settles once, retries failed settlement, throws fail closed, revokes and disposes safely', () => {
   let calls = 0
   const arbiter = createSessionArbiter({ policy: policy(), now: () => 100, onSettle: () => { calls++; return calls > 1 } })
   assert.equal(arbiter.handle(event()).status, 'desktop_fallback')
@@ -54,4 +112,9 @@ test('arbiter settles once, retries failed settlement, revokes and disposes safe
   assert.equal(arbiter.handle(event({ eventId: 'e4' })).status, 'rejected')
   arbiter.dispose()
   assert.equal(arbiter.handle(event({ eventId: 'e5' })).status, 'desktop_fallback')
+})
+
+test('callback throw on settlement fails closed with no ledger flush', () => {
+  const arbiter = createSessionArbiter({ policy: policy(), now: () => 100, onSettle: () => { throw new Error('boom') } })
+  assert.equal(arbiter.handle(event({ eventId: 'thrown' })).status, 'desktop_fallback')
 })

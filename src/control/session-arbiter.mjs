@@ -7,6 +7,32 @@ const RANK = new Map(COMMANDS.map((command, index) => [command, index]))
 
 const text = (value) => typeof value === 'string' && value.trim() !== '' ? value.trim() : null
 
+// Bounded optional team-approval member list: never wildcard/global/empty,
+// never an unbounded array, never arbitrary nested shapes.
+const MAX_APPROVAL_MEMBERS = 64
+const GLOBAL_IDS = new Set(['*', 'all', 'everyone', 'anyone'])
+const looksGlobal = (value) => value.includes('*') || GLOBAL_IDS.has(String(value).toLowerCase())
+
+function normalizeApprovalMembers(input) {
+  if (!Array.isArray(input)) return Object.freeze([])
+  const seen = new Set()
+  const members = []
+  for (const raw of input) {
+    if (members.length >= MAX_APPROVAL_MEMBERS) break
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const channel = text(raw.channel)
+    const accountId = text(raw.accountId)
+    const userId = text(raw.userId)
+    if (channel === null || accountId === null || userId === null) continue
+    if (looksGlobal(channel) || looksGlobal(accountId) || looksGlobal(userId)) continue
+    const key = `${channel}\u0000${accountId}\u0000${userId}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    members.push(Object.freeze({ channel, accountId, userId }))
+  }
+  return Object.freeze(members)
+}
+
 export function normalizeSessionPolicy(input = {}, now = Date.now()) {
   const mode = MODES.has(input.mode) ? input.mode : 'personal'
   const capabilities = {
@@ -30,6 +56,7 @@ export function normalizeSessionPolicy(input = {}, now = Date.now()) {
     userId: text(input.userId),
     chatId: text(input.chatId),
     approvalOwnerOnly: input.approvalOwnerOnly === true,
+    approvalMembers: normalizeApprovalMembers(input.approvalMembers),
     revoked: input.revoked === true,
     revokedAt: Number.isFinite(Number(input.revokedAt)) ? Number(input.revokedAt) : null,
     expiresAt: Number.isFinite(expiresAt) ? expiresAt : null,
@@ -74,11 +101,33 @@ function isGroupChat(event) {
   return chatId.startsWith('oc_') || chatId.startsWith('group_') || chatId.startsWith('grp_')
 }
 
+/**
+ * Decide whether a normalized event may settle approval/question-answer under the
+ * policy object (which must already be a normalized snapshot). Pure; exported for
+ * tests. Returns true when no explicit member/owner restriction applies — the caller
+ * still enforces the exact per-person source binding for personal / team-without-list.
+ */
+export function canSettleApproval(policy, event) {
+  if (policy == null || event == null) return false
+  if (policy.approvalOwnerOnly === true) {
+    return policy.owner != null && String(event.userId) === String(policy.owner)
+  }
+  const members = Array.isArray(policy.approvalMembers) ? policy.approvalMembers : []
+  if (policy.mode === 'team' && members.length > 0) {
+    if (policy.owner != null && String(event.userId) === String(policy.owner)) return true
+    return members.some((m) => m.channel === event.channel && m.accountId === event.accountId && m.userId === event.userId)
+  }
+  return true
+}
+
 export function canAcceptCommand(policy, event, now = Date.now()) {
   if (policy === null || typeof policy !== 'object' || event === null || typeof event !== 'object') return { ok: false, reason: 'malformed' }
   if (isPolicyExpired(policy, now)) return { ok: false, reason: policy.revoked ? 'revoked' : 'expired' }
   if (bound(event.policyVersion) !== policy.policyVersion) return { ok: false, reason: 'stale_policy' }
-  for (const key of ['sessionId', 'channel', 'accountId', 'userId', 'chatId']) {
+  // Conversation-level binding (session/chat) is always exact for every command.
+  // Person binding is separated below so only explicit team approval membership can
+  // relax the exact-user rule, and only for approve/question-answer.
+  for (const key of ['sessionId', 'chatId']) {
     if (bound(event[key]) === null || bound(policy[key]) === null) return { ok: false, reason: `source_mismatch_${key}` }
     if (bound(policy[key]) !== event[key]) return { ok: false, reason: `source_mismatch_${key}` }
   }
@@ -98,7 +147,22 @@ export function canAcceptCommand(policy, event, now = Date.now()) {
   if (event.command === 'approval' && caps.approve !== true) return { ok: false, reason: 'approval_disabled' }
   if (event.command === 'question-answer' && caps.approve !== true) return { ok: false, reason: 'approval_disabled' }
   if ((event.command === 'steer' || event.command === 'ordinary-message') && caps.converse !== true) return { ok: false, reason: 'conversation_disabled' }
-  if (event.command === 'approval' && policy.approvalOwnerOnly === true && event.userId !== policy.owner) return { ok: false, reason: 'owner_only' }
+  // Person binding. Approve/question-answer may authorize an explicit team member
+  // (or the owner); every other command keeps the exact per-person source binding.
+  const authorizing = event.command === 'approval' || event.command === 'question-answer'
+  const members = Array.isArray(policy.approvalMembers) ? policy.approvalMembers : []
+  const memberScope = authorizing && policy.mode === 'team' && members.length > 0
+  if (authorizing && (policy.approvalOwnerOnly === true || memberScope)) {
+    if (bound(event.channel) === null || bound(event.accountId) === null) return { ok: false, reason: 'source_mismatch_channel' }
+    if (!canSettleApproval(policy, event)) {
+      return { ok: false, reason: policy.approvalOwnerOnly === true ? 'owner_only' : 'member_not_allowed' }
+    }
+  } else {
+    for (const key of ['channel', 'accountId', 'userId']) {
+      if (bound(event[key]) === null || bound(policy[key]) === null) return { ok: false, reason: `source_mismatch_${key}` }
+      if (bound(policy[key]) !== event[key]) return { ok: false, reason: `source_mismatch_${key}` }
+    }
+  }
   return { ok: true }
 }
 

@@ -98,3 +98,16 @@ remote when connectivity works; never push `origin`.
 
 Stop after this task. The next slice may persist policy/owner management through the
 existing session registry and loopback admin API only after this contract is reviewed.
+
+---
+
+## Completion note (2026-08-26)
+
+Implemented. `approvalMembers` (bounded, normalized, capped at 64) + exported pure
+`canSettleApproval(policy,event)` wired into `canAcceptCommand`/Control Core only; applies
+to both `approval` and `question-answer`, never `steer`/`ordinary-message`. `entry.mjs`
+forwards the normalized policy snapshot to the settle callback. Focused tests added to
+`test/session-arbiter.test.mjs` and `test/control-entry.integration.test.mjs`. Full
+`npm test` = 1200 (1199 pass + 1 skip); release guard ok. Contract-tested only; the next
+slice (persist `approvalMembers`/`owner` through the session registry and loopback admin
+API) is gated on review of this contract.

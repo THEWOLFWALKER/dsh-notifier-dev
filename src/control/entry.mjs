@@ -148,7 +148,7 @@ export function createControlEntry({ policy = {}, identity = null, now = Date.no
         policy: mergedPolicy,
         now,
         onAudit: (entry) => audit(entry),
-        onSettle: () => (directSettle ?? spec?.settle)(input, pending, event),
+        onSettle: (ev, policy) => (directSettle ?? spec?.settle)(input, pending, ev, policy),
       })
       const verdict = arbiter.handle(event)
       if (verdict.status === 'accepted') {
