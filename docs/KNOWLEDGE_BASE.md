@@ -4,7 +4,7 @@ This is the navigation page for humans and agents. It deliberately points to one
 
 ## Current Baseline
 
-- Canonical engineering baseline: private development line at `ce46edc` (QQ group/unknown-source control fail-closed, conversation `routeUnsafe` bypass blocked, and Web/admin `ask_user` settlement entry); package version `0.8.6` (published, current control-contract line unreleased).
+- Canonical engineering baseline: private development line at `887b71f` (stage 2A Web/admin `ask_user` settlement plus reconciled handoff facts); package version `0.8.6` (published, current control-contract line unreleased).
 - Canonical collaboration repository: private `dsh-notifier-dev` (GitHub owner `THEWOLFWALKER`). The public repository `https://github.com/THEWOLFWALKER/dsh-notifier` is the release/source mirror, not the day-to-day relay workspace.
 - The public repository's `main` history is unrelated to the current hardening line; do not merge or force-push it implicitly. Public synchronization is a deliberate release operation.
 - Public issue snapshot (2026-08-25): #16/#15/#14/#13/#10/#7/#6/#5/#4/#3/#2/#1 open; #11/#8 closed. PR #12 is open reference material only; PR #9 is merged in the public mirror. These statuses are not claims that the private tree fixes every open issue.

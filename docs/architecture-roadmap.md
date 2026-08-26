@@ -1,6 +1,12 @@
 # Cross-IM Control Plane Roadmap
 
-> Status: planning only (2026-08-25). This document describes approved direction, not shipped behavior.
+> Status: approved direction; the Web/admin `ask_user` settlement slice (stage 2A) is code/contract-tested in the development line, while the remaining stages below are planning only (2026-08-26). This document does not claim real-device/provider support.
+
+## Implementation checkpoint
+
+- Stage 2A (2026-08-26): loopback Web/admin pending-question snapshot plus choose/reject settlement through the shared Control Core is implemented and contract-tested (`ce46edc`, documentation reconciliation `887b71f`). It is not real-host/device verified and does not provide a desktop settlement entry.
+- WeChat iLink batch 4 and Feishu/Telegram batch 5 provider facades are wired at contract level; their provider/device evidence remains `declared` or `contract-tested` as recorded in `docs/memory/risks.md`.
+- The next implementation slice is the remaining provider-neutral permissions/concurrency and performance-security closure, followed by the staged provider extensions. Real-device validation remains a separate release gate.
 
 ## Product direction
 

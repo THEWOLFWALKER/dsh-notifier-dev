@@ -2,7 +2,7 @@
 
 > 写给下一个 agent。本文档是完整的工作上下文快照：设计理念、军规约定、架构地图、
 > 版本脉络、审查记录、已知坑、待办清单。读完这一份即可无缝接手。
-> 当前快照：2026-08-26，当前开发线 HEAD 为 `ce46edc`（阶段 2A 管理台远程提问裁决入口）。当前开发线 `npm test` = 1194（1193 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。QQ C2C 单聊原生按钮、GROUP 文本回退，以及 QQ/微信 iLink/钉钉图片代码已接线并通过契约测试；缺失 `chatType` 或未知来源控制 fail-closed，`conversation` 的 `routeUnsafe` 旁路已堵。Web/admin 已具备阶段 2A 本地管理台的远程提问裁决入口（见下方快照），desktop 端仍无 settlement 入口，双端共享未宣称；真实设备/宿主协议仍未验证，能力只能标记 declared/contract-tested。
+> 当前快照：2026-08-26，当前开发线 HEAD 为 `887b71f`（阶段 2A 管理台远程提问裁决入口及文档事实同步）。当前开发线 `npm test` = 1194（1193 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。QQ C2C 单聊原生按钮、GROUP 文本回退，以及 QQ/微信 iLink/钉钉图片代码已接线并通过契约测试；缺失 `chatType` 或未知来源控制 fail-closed，`conversation` 的 `routeUnsafe` 旁路已堵。Web/admin 已具备阶段 2A 本地管理台的远程提问裁决入口（见下方快照），desktop 端仍无 settlement 入口，双端共享未宣称；真实设备/宿主协议仍未验证，能力只能标记 declared/contract-tested。
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
 > 2026-08-23 接力合入公共镜像 v0.8.5 发布内容（issue #11 ask_user 编号回复修复 + PR #9 飞书扫码 SDK 适配），见「当前接力交代」。
 > 上一稳定发布位 v0.8.6 = `bf03a1c`（npm `dsh-notifier@0.8.6`，公共镜像 `db42908` 已清理 node_modules/package-lock）。
@@ -14,7 +14,7 @@
 
 ## 方向决策（2026-08-25，规划态）
 
-当前维护批仍不引入新功能；下一阶段产品路线改为个人模式优先的跨 IM 移动控制面。默认 `observe + approve`，`converse` 单独开启；微信 iLink 首版只做单账号 QR-first 个人路径，内部保持 account 边界但不暴露多账号配置。控制台继续作为 DSH 内嵌本地 Web 入口，复杂团队 ACL 渐进披露。详细计划、渠道分层、SDK 许可证门槛与实现阶段见 `docs/architecture-roadmap.md`；该文档是规划，不代表已发布能力。
+阶段 2A 已完成代码/契约实现；下一阶段继续按个人模式优先的跨 IM 移动控制面推进。默认 `observe + approve`，`converse` 单独开启；微信 iLink 首版只做单账号 QR-first 个人路径，内部保持 account 边界但不暴露多账号配置。控制台继续作为 DSH 内嵌本地 Web 入口，复杂团队 ACL 渐进披露。详细计划、渠道分层、SDK 许可证门槛与剩余实现阶段见 `docs/architecture-roadmap.md`；真实设备验证仍是独立发布门。
 
 ## 当前接力交代（2026-08-23，第二轮：镜像接力合入）
 
@@ -33,7 +33,7 @@
   - **审查结论**：批次 A+B+C 已过一轮非实现者独立 review（`.agents/workstreams/crack-fix-plan/REVIEW-ABC.md`），**发现 6 个 bug 全部修完、0 遗留** —— 含一个致命语法错（`identity.mjs` 多括号 → 插件 import 即崩，而交接摘要却声称全绿）、一个过度收紧引入的新缺陷（管理台清理入口被锁死）、三个恒绿摆设、一个装配缝（删掉 `index.mjs` 两处 `identity` 传参仍 1011 全绿）。全量 `node --test test/*.test.mjs test/*.spec.mjs` = **1012/1012**，连跑 3 轮一致。
   - **真机门（合 main / 发版前必过，宪法 #8）**：引导码文件交付端到端（起真引导实例 → `cat` 码文件 → 手机 `/pair`）、越权裁决回归（owner 代决 / 非 owner 被拒）、TG 卡片消息删除后回调的真实形状、飞书长连接负载 `context.open_chat_id` 恒带性（不恒带则 C1 会误拒真实点击 —— 主要回滚触发条件）、钉钉/QQ 超上限淘汰行为、微信真实 `context_token` 长度分布、C2 真实 kill -9 重启后僵尸行与新审批并存的裁决走向。清单基线见 `~/dsh-notifier-handoff/06-retest-checklist.md`。
   - 计划与残差：批次计划在 `.agents/workstreams/crack-fix-plan/`（`PLAN.md` 总表、`PLAN-B1.md`、`PLAN-B-k4-fin.md`、`REVIEW-ABC.md`、各轮 `SHORT-*.md`）；残差逐条登记在 `~/dsh-notifier-handoff/20-techdebt.md`。
-- 下一步：真机闭环清单见 `docs/memory/risks.md`（TG 护栏边界、长连接重连可见性、其他渠道 payload 证据、BurntToast 主机、npm 验收）。当前周期不再新增功能；继续 P1-4 admin UI 审计、安全计划 A3-A6、P2 结构性债务。
+- 下一步：代码侧推进 provider-neutral 权限/并发/性能收尾及剩余渠道扩展；真机闭环清单见 `docs/memory/risks.md`（TG 护栏边界、长连接重连可见性、其他渠道 payload 证据、BurntToast 主机、npm 验收）。P1-4 admin UI 审计、安全计划 A3-A6、P2 结构性债务仍需独立安排。
 
 ---
 
