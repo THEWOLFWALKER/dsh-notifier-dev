@@ -912,26 +912,34 @@ test('Stage-6 生命周期：starting→connected；SDK 缺失→unavailable；W
   await err.inbound.stop()
 })
 
-test('Stage-6 群聊敏感控制降级：审批/动作卡 oc_* 群发纯文本，不投递可误点按钮', async () => {
+test('Stage-6 群聊敏感控制降级：审批不发群消息，动作通知仍可纯文本', async () => {
   const rig = makeRig()
   rig.inbound.start()
   await tick()
   // 审批卡到群
   const ap = await rig.inbound.sendApprovalCard({ chatId: 'oc_group1', title: '需要批准', content: '敏感审批', approvalKey: 'ap:x:1', token: 'tk' })
   assert.equal(ap.downgraded, true, '群聊审批须标记降级')
-  assert.match(ap.messageId, /^downgraded:/)
-  const apSent = rig.fake.state.sent[0]
-  assert.equal(apSent.msgType, 'text', '群聊降级必须发纯文本而非 interactive 卡片')
-  assert.notEqual(apSent.receiveIdType, 'open_id')
-  assert.match(JSON.parse(apSent.content).text, /降级为纯文本/)
+  assert.equal(ap.messageId, '', '群聊审批降级不得伪造消息送达证据')
+  assert.equal(rig.fake.state.sent.length, 0, '个人模式敏感审批不得泄漏到群聊')
   // 动作卡到群
   const ac = await rig.inbound.sendActionCard({ chatId: 'oc_group2', title: '操作', content: 'c', actions: [{ label: '⏹ 停止', data: 'ac:x:y' }] })
   assert.equal(ac.downgraded, true)
-  assert.equal(rig.fake.state.sent[1].msgType, 'text', '动作卡同样降级为文本')
+  assert.equal(rig.fake.state.sent[0].msgType, 'text', '普通动作通知仍可降级为文本')
   // 提问卡到群 → 直接拦截（不发任何消息）
   const q = await rig.inbound.sendQuestionCard({ chatId: 'oc_group3', title: '提问', content: 'q', qKey: 'aq:1', token: 'tk', options: ['是', '否'] })
   assert.equal(q, null, '提问按钮绝不放给整群')
-  assert.equal(rig.fake.state.sent.length, 2, '提问卡群发不产生任何消息')
+  assert.equal(rig.fake.state.sent.length, 1, '提问卡群发不产生任何消息')
+  await rig.inbound.stop()
+})
+
+test('Stage-6 群聊敏感编号兜底：提问文本在群聊被抑制，普通文本仍可发送', async () => {
+  const rig = makeRig()
+  rig.inbound.start()
+  await tick()
+  assert.equal(await rig.inbound.sendText('oc_group-q', '提问：是否继续？\n1. 是\n2. 否\n（回复编号）'), false)
+  assert.equal(rig.fake.state.sent.length, 0, '提问编号兜底不得泄漏到群聊')
+  assert.equal(await rig.inbound.sendText('oc_group-q', '任务仍在运行'), true, '普通状态文本仍可发群聊')
+  assert.equal(rig.fake.state.sent.length, 1)
   await rig.inbound.stop()
 })
 

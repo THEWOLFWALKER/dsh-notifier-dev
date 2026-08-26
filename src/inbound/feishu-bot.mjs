@@ -339,6 +339,17 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
   }
 
   /**
+   * Personal-mode approval/question fallbacks must never disclose their
+   * contents to an entire Feishu group. Keep ordinary status/command text
+   * available in groups; only the stable sensitive-control headings emitted
+   * by the approval/question bridges are blocked here.
+   */
+  function isSensitiveControlText(text) {
+    const value = String(text ?? '')
+    return /(?:^|\n)(?:需要批准：|提问：)/.test(value)
+  }
+
+  /**
    * v0.8.3 SEC-1：来源会话校验。卡片 value 里记录了发送目标会话（srcChat）；
    * 点击会话不一致 → 拒绝（toast 提示），不进入裁决、不 patch 终态。
    * 老卡片无 srcChat（升级前在途）→ 显式 warn 后跳过校验（兼容，不打历史卡片）。
@@ -524,10 +535,11 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
     /** 推送审批卡片（失败 null，caller 降级纯通知）。群聊（oc_*）敏感控制卡片在发送前降级为纯文本——不投放可被任一群成员误点的按钮。 */
     async sendApprovalCard({ chatId, title, content, approvalKey, token }) {
       if (client === null) return null
-      // 群聊：不发审批按钮（group sensitive control downgrade）。纯文本通知，避免群内任意成员触发。
+      // 群聊：个人模式敏感审批不发送任何内容；router 也会丢弃该目标，
+      // 这里保留显式降级标记以防调用方绕过规划层后登记虚假的送达证据。
       if (isGroupChatId(chatId)) {
-        const ok = await sendPlain(chatId, `🔐 ${title}\n\n${content}\n（群聊通道降级为纯文本，请到私聊完成审批）`)
-        return ok ? { messageId: `downgraded:${chatId}`, downgraded: true } : null
+        warn(`飞书群聊跳过敏感审批（chat=${String(chatId).slice(0, 32)}；请使用私聊）`)
+        return { downgraded: true, messageId: '' }
       }
       try {
         const messageId = await sendInteractive(chatId, buildCard({ title, content, approvalKey, token, chatId }))
@@ -599,6 +611,13 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
 
     /** 发普通文本（命令回执；尽力而为）。 */
     async sendText(chatId, text) {
+      // questions/router uses sendText for numbered fallback after
+      // sendQuestionCard returns null. Suppress that sensitive fallback in a
+      // group while retaining ordinary status and command notifications.
+      if (isGroupChatId(chatId) && isSensitiveControlText(text)) {
+        warn(`飞书群聊跳过敏感控制文本（chat=${String(chatId).slice(0, 32)}；请使用私聊）`)
+        return false
+      }
       return sendPlain(chatId, text)
     },
   }

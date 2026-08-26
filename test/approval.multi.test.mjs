@@ -277,6 +277,25 @@ test('router：原生审批卡失败时直接文本 fallback 只登记成功 cha
   rig.dispose()
 })
 
+test('router：飞书群聊敏感审批降级不计入 pushedTo/buttonChannels，也不触发文本泄漏 fallback', async () => {
+  const state = { cards: [], texts: [] }
+  const feishu = {
+    channel: 'feishu',
+    notifyTargets: () => [{ chatId: 'oc_group001', userId: 'ou_owner' }],
+    async sendApprovalCard() { return { downgraded: true, messageId: '' } },
+    async sendText(chatId, text) { state.texts.push({ chatId, text }); return true },
+    async editResolved() {},
+    state,
+  }
+  const rig = makeRig({ interactive: [feishu] })
+  const outcome = rig.handle()
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  assert.equal(state.texts.length, 0, '群聊降级结果不得再触发通用编号 fallback')
+  assert.doesNotMatch(rig.broadcasts[0].content, /飞书 已发可点按钮/)
+  assert.equal(await outcome, 'desktop')
+  rig.dispose()
+})
+
 test('router 多通道：editResolved 抛错被吞（回执尽力而为）', async () => {
   const qq = makeFake('qq', { targets: [{ chatId: 'opengrp01', userId: 'u2' }], failEdit: true })
   const rig = makeRig({ interactive: [qq] })

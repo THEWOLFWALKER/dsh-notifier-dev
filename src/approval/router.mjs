@@ -269,11 +269,15 @@ export function registerApprovalHandler(deps) {
           approvalKey: key,
           token,
         })
-        if (card !== null) {
+        // Provider-level group downgrade is deliberately not delivery evidence:
+        // no native button exists and the target must not become a pushedTo
+        // authorization source. A downgraded result also suppresses the
+        // generic numbered-text fallback, which would otherwise leak context.
+        if (card !== null && card?.downgraded !== true) {
           anySuccess = true
           pushedTo.push({ channel, ...(inbound.accountId === undefined ? {} : { accountId: String(inbound.accountId ?? '') }), chatId: target.chatId, userId: target.userId, messageId: card.messageId })
           persistPushed()
-        } else if (await inbound.sendText(target.chatId, fallbackText)) {
+        } else if (card?.downgraded !== true && await inbound.sendText(target.chatId, fallbackText)) {
           // Native renderer failure gets a direct per-chat text fallback. This target is
           // authorization evidence; channel-level notifier broadcasts are never evidence.
           hintTargets.push({ channel, ...(inbound.accountId === undefined ? {} : { accountId: String(inbound.accountId ?? '') }), chatId: target.chatId, userId: target.userId })
