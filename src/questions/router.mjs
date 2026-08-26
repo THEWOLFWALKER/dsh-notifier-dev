@@ -608,7 +608,7 @@ export function createQuestionBridge(deps) {
       trusted: true,
       via: 'admin:web',
       channel: String(target.channel ?? ''),
-      accountId: String(target.accountId ?? target.channel ?? ''),
+      accountId: String(target.accountId ?? ''),
       chatId: String(target.chatId ?? ''),
       // 终端动作仍走问题桥既有裁决核心（settle/decline），由 Control Core onSettle 调起；
       // 捕获真实首达结果供下面区分 already-handled 与「本侧胜出」。

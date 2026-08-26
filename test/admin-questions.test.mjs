@@ -54,6 +54,7 @@ function makeRig({
     cards,
     raw: {
       channel,
+      accountId: channel,
       notifyTargets: () => [{ chatId: String(target.chatId ?? target.userId), userId: String(target.userId) }],
       async sendQuestionCard(payload) { cards.push(payload); return { messageId: cards.length } },
       async editResolved() { return true },

@@ -30,6 +30,7 @@ function makeRig() {
   identity.addBinding({ channel: 'telegram', userId: 'the-owner' })
   const raw = {
     channel: 'telegram',
+    accountId: 'telegram',
     notifyTargets: () => [{ chatId: '900113', userId: 'the-owner' }],
     async sendQuestionCard() { return { messageId: 1 } },
     async editResolved() {},
@@ -171,6 +172,7 @@ test('Control Core 不可用（dispose）→ fail-closed not_available，账本�
   id2.addBinding({ channel: 'telegram', userId: 'the-owner' })
   const raw2 = {
     channel: 'telegram',
+    accountId: 'telegram',
     notifyTargets: () => [{ chatId: '900113', userId: 'the-owner' }],
     async sendQuestionCard() { return { messageId: 1 } },
     async editResolved() {}, async sendText() {},
