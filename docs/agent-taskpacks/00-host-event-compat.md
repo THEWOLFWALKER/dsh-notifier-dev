@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make host event delivery observable and compatible with the dsh web profile that reported zero `session/event` and `agent/created` events. Do not claim the issue fixed until a real host or protocol capture confirms delivery.
+Make host event delivery observable and compatible with the dsh web profile that reported zero `session/event` and `agent/created` events. Latest evidence says the host bus is alive; suspect plugin mount context/scope filtering. Do not claim the issue fixed until a real host or protocol capture confirms delivery.
 
 ## Start
 
@@ -23,14 +23,15 @@ Read `src/index.mjs`, `src/event-listener.mjs`, `src/inbound/conversation.mjs`, 
 ## Mechanical procedure
 
 1. Add a diagnostic counter for each subscription attempt and each received event type. Counters must be bounded and must not log message content, tokens, or credentials.
-2. Capture the exact return/error from `ctx.on('session/event', ...)` and `ctx.on('agent/created', ...)`. A missing or throwing registration must be visible through the existing logger and must not prevent startup.
-3. Normalize supported host callback shapes in one pure function: `(session,event)`, `{session,event}`, and the documented host shape only. Reject ambiguous payloads instead of guessing.
-4. Register the documented event scope/timing. If more than one host version must be supported, use an explicit version/feature check or a narrow fallback registration with deduplication; never subscribe to every event blindly.
-5. Preserve current listener semantics: `turn/end` filtering, debounce, grace, dedup, registry touch, and channel failure isolation.
-6. Treat native `ask_user_question` as a separate host provider contract. Do not replace the Web provider with a mobile provider. The desktop UI must remain available; a future mobile mirror must be optional, first-valid-wins, and timeout/failure must return control to the desktop.
-7. Add tests for registration success, registration throw, each accepted callback shape, malformed payload, duplicate delivery, zero-event diagnostics, and “remote `ask_user` does not silently claim native Web UI parity”.
-8. Run `npm test`, `node scripts/verify-release.mjs`, `node scripts/gen-channel-matrix.mjs --check`, and `node --check src/index.mjs`.
-9. Record the real-device/protocol validation gap in `docs/memory/risks.md` if no dsh host is available. Do not close Issue #16 or claim Issue #5 native parity from mocks.
+2. Inspect `ctx` mount/scope metadata during `apply()`. Confirm whether the plugin context carries an agent scope tag; fix only the plugin-side mount or subscription scope, never global host scope filtering.
+3. Capture the exact return/error from `ctx.on('session/event', ...)` and `ctx.on('agent/created', ...)`. A missing or throwing registration must be visible through the existing logger and must not prevent startup.
+4. Normalize supported host callback shapes in one pure function: `(session,event)`, `{session,event}`, and the documented host shape only. Reject ambiguous payloads instead of guessing.
+5. Register the documented event scope/timing. If more than one host version must be supported, use an explicit version/feature check or a narrow fallback registration with deduplication; never subscribe to every event blindly.
+6. Preserve current listener semantics: `turn/end` filtering, debounce, grace, dedup, registry touch, and channel failure isolation.
+7. Treat native `ask_user_question` as a separate host provider contract. Do not replace the Web provider with a mobile provider. The desktop UI must remain available; a future mobile mirror must be optional, first-valid-wins, and timeout/failure must return control to the desktop.
+8. Add tests for registration success, registration throw, scope-tag diagnostics, each accepted callback shape, malformed payload, duplicate delivery, zero-event diagnostics, and “remote `ask_user` does not silently claim native Web UI parity”.
+9. Run `npm test`, `node scripts/verify-release.mjs`, `node scripts/gen-channel-matrix.mjs --check`, and `node --check src/index.mjs`.
+10. Record the real-device/protocol validation gap in `docs/memory/risks.md` if no dsh host is available. Do not close Issue #16 or claim Issue #5 native parity from mocks.
 
 ## Forbidden
 
