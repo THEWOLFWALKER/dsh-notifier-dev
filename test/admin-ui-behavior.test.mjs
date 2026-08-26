@@ -284,13 +284,13 @@ test('SSE 首访缺 token：与并发 api 共享单飞询问门（不叠窗）�
     auths.push(init.headers.Authorization)
     return { status: 200, ok: true, body: { getReader: () => ({ read: async () => ({ done: true }) }) }, json: async () => ({}) }
   })
-  // 同时起步 loadAll（5 个 api）与 SSE——原实现路径上两者会叠加 6 次询问
+  // 同时起步 loadAll（6 个 api）与 SSE——原实现路径上两者会叠加 7 次询问
   const load = rig.loadAll()
   rig.startNotifyStream()
   await load
   await settle()
   assert.equal(promptCount, 1, 'SSE + 并行 api 共享同一次询问')
-  assert.equal(auths.length, 6, '5 个并行 api + 1 个 SSE 连接')
+  assert.equal(auths.length, 7, '6 个并行 api + 1 个 SSE 连接')
   assert.ok(auths.every((a) => a === 'Bearer NEW'), '所有请求都用询问得到的 token')
   assert.equal(rig.store.getItem('dsh-admin-session-token'), 'NEW', 'SSE 连接成功后会话持久化')
 })
@@ -546,4 +546,62 @@ test('Task 04：测试通知成功/失败均给出下一步与重试文案', () 
   assert.ok(html.includes('下一步：回 Dashboard 确认状态'), '成功测试需给出后续路径')
   assert.ok(html.includes('检查必填凭证后重试'), '失败测试需给出可执行重试路径')
   assert.ok(html.includes('测试失败：'), '异常响应需可见')
+})
+
+// ————————————————— ⑥ 路线图阶段 2A：待处理远程提问面板 —————————————————
+
+test('阶段2A：面板容器与按钮随 Dashboard 分发，个人模式默认可见', () => {
+  const html = ADMIN_UI_HTML
+  assert.ok(html.includes('id="pendingQuestionsPanel"'), 'Dashboard 应有待处理提问面板容器')
+  assert.match(html, /待处理远程提问/, '面板有章节标题')
+  // 面板位于 tab-dashboard（个人模式默认可见的主标签）内
+  const dashStart = html.indexOf('<section id="tab-dashboard"')
+  const dashEnd = html.indexOf('</section>', dashStart)
+  const dashHtml = html.slice(dashStart, dashEnd)
+  assert.ok(dashHtml.includes('pendingQuestionsPanel'), '面板必须落在默认可见的 Dashboard 内')
+  assert.ok(html.includes('onQuestionsClick'), '结算按钮有事件委托处理器')
+})
+
+test('阶段2A：loadAll 渲染面板，仅掩码 ref/聊天，token 与完整标识绝不进 HTML，且转义注入', async () => {
+  const rig = boot()
+  rig.setToken('TKN12345precious')
+  const travialPayload = [
+    {
+      ref: '0f0f0f0f0f0f',
+      question: '选图标 <img src=x onerror=alert(1)>',
+      options: ['测试', '生产'],
+      multiSelect: false,
+      status: 'pending',
+      agent: 'agent-abc123',
+      source: [{ channel: 'telegram', chat: 'chat-111111', user: 'user-222222' }],
+      createdAt: 1, expiresAt: 2,
+    },
+  ]
+  rig.setFetch(async (url) => {
+    if (url === '/api/questions') return resp(200, travialPayload)
+    if (url === '/api/overview') return resp(200, { channels: [], sessions: {}, agents: {}, members: { total: 0 } })
+    return resp(200, { ok: true })
+  })
+  await rig.loadAll()
+  const html = rig.els.get('#pendingQuestionsPanel').innerHTML
+  assert.match(html, /采用此项/, '每个选项提供采用按钮')
+  assert.match(html, /驳回/, '提供驳回（交还桌面）按钮')
+  assert.match(html, /0f0f0f0f0f0f/, 'ref 短段入面板')
+  assert.match(html, /chat-111111/, '掩码 chat 入面板')
+  assert.ok(!html.includes('TKN12345precious'), 'token 绝不进入 DOM')
+  assert.ok(!html.includes('user-222222full') && !html.includes('900113'), '完整原始标识绝不进入 DOM')
+  assert.ok(!html.includes('<img'), 'option/question 文本经 esc 转义，不注入 HTML')
+  assert.ok(html.includes('&lt;img'), '注入串以转义形式呈现')
+})
+
+test('阶段2A：无待决问题/空响应时面板显示空态文案，不崩', async () => {
+  const rig = boot()
+  rig.setToken('TKN')
+  rig.setFetch(async (url) => {
+    if (url === '/api/questions') return resp(200, [])
+    if (url === '/api/overview') return resp(200, { channels: [], sessions: {}, agents: {}, members: { total: 0 } })
+    return resp(200, { ok: true })
+  })
+  await rig.loadAll()
+  assert.match(rig.els.get('#pendingQuestionsPanel').innerHTML, /暂无待处理远程提问/, '空面板给出空态提示')
 })

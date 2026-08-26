@@ -18,6 +18,15 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 - 注册与处理均逐订阅 try/catch 闭环，诊断为有界快照（仅事件计数与 context/scope 状态，不含会话内容、标识符或凭证）；`ask_user` 仍由 `questions.enabled` 独立注册，本批不改变 interaction/desktop/provider 行为。
 - 新增 focused host/event/index 测试。DSH 0.1.1-rc.2 运行态仍须真实宿主/协议验证，Issue #16 只能标记 code/contract hardened，不关闭、不提 real-device 证据。
 
+### 新增：本地管理台远程提问裁决入口（路线图阶段 2A，2026-08-26）
+
+- 管理台新增「待处理远程提问」面板：`GET /api/questions` 返回脱敏只读快照（不可逆 12 位 sha256 ref、掩码 agent/chat/user 短段、选项文本、创建/过期时间、状态），绝不返回 token/凭证/完整聊天/agent 标识/答案隐私。
+- 受保护结算 `POST /api/questions/:ref/settle`：`choose`（采用具体选项）与 `reject`（驳回复用既有 `aq-skip` 语义交还桌面、绝不编造答案），一律经 Control Core 的 `question-answer` 注册 spec 走既有授权（配对/source/policy/首达采纳）与单次结算语义——本端点不复制 ledger 结算、不写状态、不留直通后门；个人模式默认仅本地 owner/admin。
+- 竞态/单次结算：admin 先答 → 手机晚到 already-handled；手机先答 → admin 返回 handled；答辩失败/重复提交/非法选项不产生二次结算。
+- fail-closed：缺 owner 证明 / 过期 / 未知 ref / 非法 action/option / Control Core 未接线 → 安全错误（501/403/410/404/409/422/not_available），绝不直通结算、绝不落账本。
+- 前端 `src/admin/ui.mjs` 面板为纯字符串渲染、逐字段 `esc()` 转义，token/完整标识绝不进 DOM；无新增前端依赖、无第二控制台。
+- 新增 focused API / 结算竞态 / UI 行为测试。真实宿主/设备验证不做，标志为 code/contract-tested（代码 + 契约测试），Issue #16 不关闭。
+
 ### 新增：入站图片信封归一与有界下载（Issue #14，2026-08-26）
 
 - `src/inbound/message.mjs` 定义 text/image/file 统一入站模型；未知结构 fail-closed 返回 `null`，绝不把「非文本」伪装成 text 漏进会话路由。

@@ -51,7 +51,7 @@ The product, UX, planning, review-loop, and DSH GUI consistency contract is main
 - Agent integration: `notify`, `notify_test`, optional `ask_user`, public `ctx.notifier` facade, and `dsh-notifier/sent` events.
 - Operations: JSON state store with key-level merge, cross-process lock, convergence reads, JSONL ledger, local admin API/UI, SSE event stream, route CLI, and channel login/test CLIs.
 - Security posture: installed DSH plugins share the host process and must currently be treated as trusted code; notifier-specific leakage, audit, identity, and resource-bound fixes are tracked separately from DSH host isolation requirements.
-- Control status: QQ C2C native approval/question buttons and QQ GROUP text fallback are contract-tested only; GROUP, missing `chatType`, and unknown source metadata fail closed, and conversation `routeUnsafe` cannot bypass the gate. Web/admin and desktop have no safe reusable `ask_user` settlement entry, so dual-end sharing is not claimed. Real-device/provider and host-protocol validation remains pending.
+- Control status: QQ C2C native approval/question buttons and QQ GROUP text fallback are contract-tested only; GROUP, missing `chatType`, and unknown source metadata fail closed, and conversation `routeUnsafe` cannot bypass the gate. The loopback Web/admin now has a 阶段 2A `ask_user` settlement entry (masked snapshot + choose/reject through Control Core, Bearer-gated; desktop still has none), so dual-end sharing is not claimed. Real-device/provider and host-protocol validation remains pending.
 
 ## Authority Rules
 

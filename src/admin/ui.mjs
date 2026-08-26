@@ -214,6 +214,8 @@ label.fld input { flex: 1; }
     <div id="outGroups"></div>
     <h3>入站通道</h3>
     <div id="inGroups"></div>
+    <h3>待处理远程提问</h3>
+    <div id="pendingQuestionsPanel" class="pendingq"></div>
     <h3>最近审计（写操作 append-only）</h3>
     <div id="auditList" class="auditlist"></div>
   </section>
@@ -528,11 +530,11 @@ function inboundTypes() {
 }
 function loadAll() {
   setLoading(true)
-  return Promise.all([api('/api/overview'), api('/api/bindings'), api('/api/sessions'), api('/api/channels'), api('/api/members')])
+  return Promise.all([api('/api/overview'), api('/api/bindings'), api('/api/sessions'), api('/api/channels'), api('/api/members'), api('/api/questions')])
     .then(function (rs) {
-      state.overview = rs[0]; state.bindings = rs[1]; state.sessions = rs[2]; state.channels = rs[3]; state.members = rs[4]
+      state.overview = rs[0]; state.bindings = rs[1]; state.sessions = rs[2]; state.channels = rs[3]; state.members = rs[4]; state.questions = rs[5]
       draft = null
-      renderDashboard(); renderBindings(); renderSessions(); renderChannels(); renderMembers()
+      renderDashboard(); renderBindings(); renderSessions(); renderChannels(); renderMembers(); renderPendingQuestions()
       flash('已刷新 ' + new Date().toLocaleTimeString(), 'ok')
     })
     .catch(function (e) { flash('加载失败：' + errText(e), 'err') })
@@ -647,6 +649,72 @@ function renderDashboard() {
     var r = plain(row)
     return '<div class="auditrow"><span class="at">' + esc(fmtTime(r.time)) + '</span><b>' + esc(r.action || '') + '</b><span class="mono">' + esc(fmtDetail(r.detail)) + '</span></div>'
   }).join('') || '<div class="muted small" style="padding:8px 0">暂无审计记录</div>'
+}
+
+// ---------- 路线图阶段 2A：待处理远程提问（脱敏只读快照 + 受保护结算）----------
+// 只渲染 { ref, question, options, source(掩码), agent(掩码), 时间 }；token/凭证/完整标识
+// 绝不下发到 DOM。为每个选项提供「采用此项」、整题一个「驳回（交还桌面）」。
+function renderPendingQuestions() {
+  var list = Array.isArray(state.questions) ? state.questions : []
+  var el = $('#pendingQuestionsPanel')
+  if (!el) return
+  if (!list.length) {
+    el.innerHTML = '<div class="muted small" style="padding:8px 0">暂无待处理远程提问</div>'
+    return
+  }
+  el.innerHTML = list.map(function (q) {
+    var qq = plain(q)
+    var opts = (Array.isArray(qq.options) ? qq.options : []).map(function (label, idx) {
+      return '<li><code>' + esc(String(idx + 1)) + '</code> · ' + esc(String(label)) +
+        ' <button type="button" class="small q-choose" data-ref="' + esc(qq.ref) + '" data-opt="' + idx + '">采用此项</button></li>'
+    }).join('')
+    var cul = (Array.isArray(qq.source) ? qq.source : []).map(function (s) {
+      var sp = plain(s)
+      return (esc(String(sp.channel || '?'))) + (sp.user ? ' · ' + esc(sp.user) : '') + (sp.chat ? ' · ' + esc(sp.chat) : '')
+    }).join('；')
+    var meta = []
+    if (qq.agent) meta.push('agent ' + esc(qq.agent))
+    if (cul) meta.push('来源 ' + cul)
+    meta.push('创建 ' + esc(fmtTime(qq.createdAt)))
+    meta.push('截至 ' + esc(fmtTime(qq.expiresAt)))
+    return '<div class="card"><div class="card-head" style="cursor:default"><span class="dot warn"></span>' +
+      '<b>' + esc(String(qq.question || '(无文本)')) + '</b><span class="badge none">待决</span></div>' +
+      '<div class="card-body"><ul class="qopts">' + opts + '</ul>' +
+      '<div class="muted small">' + meta.join(' · ') + '</div>' +
+      '<div class="row" style="margin-top:8px"><button type="button" class="small muted-btn q-reject" data-ref="' + esc(qq.ref) + '">驳回（交还桌面处理）</button>' +
+      '<span class="q-msg inline muted small"></span></div></div></div>'
+  }).join('')
+}
+/** 提交一条 settle 到收件人识别的路由；成功/失败都写到卡片内 q-msg 并联动刷新。 */
+function settleQuestionClick(ref, action, opt) {
+  var target = undefined
+  var refS = String(ref || '')
+  if (action === 'choose' && opt !== undefined && opt !== null) {
+    target = document.querySelector('[data-ref="' + refS + '"][data-opt="' + opt + '"]')
+  } else {
+    target = document.querySelector('[data-ref="' + refS + '"]' + (action === 'reject' ? '.q-reject' : '.q-choose'))
+  }
+  var msgBox = null
+  if (target) {
+    target.disabled = true
+    var card = target.closest ? target.closest('.card') : null
+    msgBox = card ? card.querySelector('.q-msg') : null
+  }
+  if (msgBox) setStatus(msgBox, '提交中…', '')
+  var body = { action: action }
+  if (action === 'choose') body.options = [Number(opt)]
+  api('/api/questions/' + encodeURIComponent(refS) + '/settle', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  })
+    .then(function (d) { if (msgBox) setStatus(msgBox, d.message || '已结算', 'ok') })
+    .catch(function (e) { if (msgBox) setStatus(msgBox, '未生效：' + errText(e), 'err') })
+    .then(function () { if (target) target.disabled = false; loadAll() })
+}
+function onQuestionsClick(evt) {
+  var btn = evt.target && evt.target.closest ? evt.target.closest('button[data-ref]') : null
+  if (!btn || btn.disabled) return
+  if (btn.classList.contains('q-choose')) settleQuestionClick(btn.getAttribute('data-ref'), 'choose', Number(btn.getAttribute('data-opt')))
+  else if (btn.classList.contains('q-reject')) settleQuestionClick(btn.getAttribute('data-ref'), 'reject')
 }
 
 // ---------- 绑定矩阵：agent 键勾选网格 + 通道默认 agent，整表 PUT ----------
@@ -1376,6 +1444,8 @@ function init() {
   // v0.7 成员页事件委托（R5 审查 R5-2-P1-1：首版漏挂——铸码/删成员/撤码/转正/忽略/改角色整页死键）
   $('#tab-members').addEventListener('click', onMembersClick)
   $('#tab-members').addEventListener('change', onMembersChange)
+  // 路线图阶段 2A：待处理远程提问结算（事件委托，面板空/缺按钮时静默）
+  $('#pendingQuestionsPanel').addEventListener('click', onQuestionsClick)
   initNotifyTab()
   renderTokenState()
   loadAll()

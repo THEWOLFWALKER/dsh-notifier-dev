@@ -41,7 +41,7 @@ The full end-user flow is in `docs/guide.md`. The CLI-only upgrade and rollback 
 | Admin unavailable | `admin.enabled`, loopback port, Bearer token, 1 MiB request limit, SSE connection cap |
 | Behavior differs on phone | Run protocol/real-device validation; mocks do not model provider payload limits, callback parsing, or QQ/WeChat iLink/DingTalk image payloads |
 
-QQ single-chat native buttons, QQ group text fallback, and QQ/WeChat iLink/DingTalk image handling are contract-tested only. The loopback Web/admin UI has no secure `ask_user` settlement entry; issue #16/#14 remain pending real-device/host validation.
+QQ single-chat native buttons, QQ group text fallback, and QQ/WeChat iLink/DingTalk image handling are contract-tested only. The loopback Web/admin UI now has a 阶段 2A `ask_user` settlement entry (`/api/questions` list + `/api/questions/:ref/settle` choose/reject, Bearer-gated, masked, through Control Core); desktop has none. Issue #16/#14 remain pending real-device/host validation.
 
 ## Release Smoke Test
 

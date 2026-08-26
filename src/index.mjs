@@ -613,6 +613,8 @@ export function apply(ctx, config = {}) {
         guidedProbe: () => identity.isEmpty() && allowUsers.length === 0, // 与 bus.isGuided 同口径（R5-2-P2-2）
         stateDir,
         logger,
+        questions: questionsBridge, // 路线图阶段 2A：远程提问管理台裁决（脱敏查询 + 受保护结算）
+        control, // 结算必须经 Control Core 唯一裁决（注入同一实例，缺线即 fail-closed）
       })
       // v0.7：接通配对审计晚绑定（inbound 阶段积压的事件此刻转发 admin-audit.jsonl）
       try {

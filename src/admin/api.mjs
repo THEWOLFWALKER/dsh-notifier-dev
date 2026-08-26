@@ -267,19 +267,25 @@ function describeBadChannelValue(key, value) {
  *   缺失时成员查询按空表降级、成员写方法抛 501（能力不可用）
  * @param {object} [options.pairing] - v0.7 配对码状态机实例（src/inbound/pairing.mjs）；
  *   缺失时配对码查询按空表降级、铸造/撤销抛 501
+ * @param {object} [options.questions] - 问题桥（src/questions/router.mjs 的 createQuestionBridge
+ *   返回面）带 `adminPending()`/`adminSettle()` facade；缺省时待决查询按空表降级、
+ *   结算抛 501（能力不可用）
+ * @param {object} [options.control] - Control Core（src/control/entry.mjs createControlEntry）；
+ *   结算必须经其唯一裁决；缺省 + questions 存在视为未接线 → 结算 fail-closed 501，绝不直通
  * @param {() => boolean} [options.guidedProbe] - v0.7 引导态探针（与 bus.isGuided 同口径：
  *   绑定表空 + allowUsers 空）；缺省按非引导态展示
  * @param {string} [options.stateDir] - 审计文件目录（缺省回落 './state'；测试注入临时目录）
  * @param {object} [options.logger] - cordis logger（warn 用）；缺省静默
  * @returns {object} API 实例：overview/getBindings/putBindings/getSessions/patchSession/
  *   getChannels/putChannel/testChannel/scanChannel/getMembers/putMember/deleteMember/
- *   confirmPendingMember/dismissPendingMember/mintPairingCode/revokePairingCode/getAudit
+ *   confirmPendingMember/dismissPendingMember/mintPairingCode/revokePairingCode/getAudit/
+ *   getPendingQuestions/settleQuestion
  *   （appendAudit 为内部函数不外露）
  */
 export function createAdminApi(options = {}) {
   const {
     router, registry, store, notifier, channelsEnabled, outboundConfigs, channelTest, scanHandlers,
-    identity, pairing, guidedProbe = null, stateDir, logger,
+    identity, pairing, guidedProbe = null, stateDir, logger, questions = null, control = null,
   } = options ?? {}
 
   const warn = (message) => {
@@ -1028,6 +1034,82 @@ export function createAdminApi(options = {}) {
      */
     appendAudit(action, detail) {
       appendAudit(String(action ?? 'unknown'), detail)
+    },
+
+    // ---------- 路线图阶段 2A：远程提问管理台裁决（2026-08-26）----------
+    /**
+     * 读「当前待处理远程问题」脱敏快照（只读，query 永不抛、按空表降级）。
+     * 单条仅含 { ref, question, options, multiSelect, status, agent(掩码), source(掩码),
+     * createdAt, expiresAt }——绝无 token / 凭证 / 完整聊天或 agent 标识 / 作答隐私；
+     * 查询本身是安全的，故不要求 owner 证明；结算（settleQuestion）才需 owner/admin 证明。
+     * @returns {Array<object>}
+     */
+    getPendingQuestions() {
+      if (questions === null || typeof questions.adminPending !== 'function') return []
+      try { return questions.adminPending() } catch { return [] }
+    },
+
+    /**
+     * 管理台提交远程提问裁决（choose/reject，2026-08-26）。只对当前待决问题生效，且
+     * 结算一律经 Control Core 唯一裁决（授权/首达采纳/单次结算全在桥 + 控制核心内承接），
+     * 本层只做参数校验 + owner/admin 本地证明 + 委托 + 审计 + 安全错误映射，绝不复制
+     * ledger 结算或直写状态。
+     * owner/admin 本地证明：需 identity 已装配且至少一个 owner 绑定（否则无法证明操作者是
+     * 授权管理员 → fail-closed 501/403）；任何内部异常不产生任何变更。
+     * @throws {ApiError} 422 参数非法；404 未知问题/无目标；410 过期；403 未授权/无 owner；
+     *   409 重复提交或手机先答（already-handled）；501 能力缺失/未接线
+     * @returns {{ ref: string, action: string, settled: boolean, alreadyHandled: boolean, message: string, optionLabels: string[] }}
+     */
+    settleQuestion(body = {}) {
+      const ref = String(body?.ref ?? '').trim()
+      const action = String(body?.action ?? '').trim().toLowerCase()
+      if (ref === '' || (action !== 'choose' && action !== 'reject')) {
+        throw new ApiError(422, '必须提供 ref 与 action（choose|reject）')
+      }
+      // owner/admin 本地证明：无身份层 / 无任何 owner → 无法证明操作者是授权管理员 → fail-closed
+      if (identity === null || typeof identity?.ownerCount !== 'function') {
+        throw new ApiError(501, '身份层未装配，无法证明管理员操作者身份')
+      }
+      let ownerCount = 0
+      try { ownerCount = identity.ownerCount() } catch { ownerCount = 0 }
+      if (ownerCount < 1) throw new ApiError(403, '当前没有已绑定 owner，无法证明本地管理员身份')
+      if (questions === null || typeof questions?.adminSettle !== 'function') {
+        throw new ApiError(501, '问题桥未装配，无法结算远程提问')
+      }
+      if (control === null || typeof control?.handle !== 'function') {
+        throw new ApiError(501, 'Control Core 未接线，结算入口不可用（fail-closed）')
+      }
+      let result
+      try {
+        result = questions.adminSettle({
+          ref,
+          action,
+          options: Array.isArray(body?.options) ? body.options : [],
+        })
+      } catch {
+        throw new ApiError(500, '结算时发生内部错误，未执行任何变更')
+      }
+      if (result === null || typeof result !== 'object') {
+        throw new ApiError(409, '结算未生效（内部状态不可解释）')
+      }
+      const auditDetail = { ref, action, handled: result.handled === true }
+      appendAudit('settleQuestion',
+        result.ok === true
+          ? { ...auditDetail, settled: true }
+          : { ...auditDetail, settled: false, reason: String(result.reason ?? 'unknown') })
+      // 安全错误映射（桥内已 fail-closed；本层只挑状态码，不让 token/完整标识符进响应）
+      if (result.ok === true) {
+        return { ref, action, settled: true, alreadyHandled: false, message: String(result.message ?? '已裁决'), optionLabels: result.optionLabels ?? [] }
+      }
+      if (result.handled === true) throw new ApiError(409, String(result.message ?? '该问题已被裁决（首达采纳），本次未生效'))
+      if (result.reason === 'expired') throw new ApiError(410, String(result.message ?? '该问题已过期'))
+      if (result.reason === 'unknown_question') throw new ApiError(404, String(result.message ?? '未找到该待决问题'))
+      if (result.reason === 'no_target') throw new ApiError(404, String(result.message ?? '该问题没有可用的来源目标'))
+      if (result.reason === 'invalid_action' || result.reason === 'invalid_option') throw new ApiError(422, String(result.message ?? '非法选项/动作'))
+      if (result.reason === 'unauthorized') throw new ApiError(403, String(result.message ?? '无权限结算该问题'))
+      if (result.reason === 'not_available') throw new ApiError(501, String(result.message ?? '结算当前不可用'))
+      // 兜底：任何未枚举失败都按未生效处理（fail-closed，绝不假报成功）
+      throw new ApiError(409, String(result.message ?? '结算未生效（未知原因）'))
     },
   }
   return api

@@ -24,7 +24,7 @@
 // }
 // 军规：任何异常只丢当次提问（工具返回明确失败对象），绝不弄崩宿主。
 
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { normalizeInbound } from '../inbound/_contract.mjs'
 import { guardTargets } from '../inbound/target-guard.mjs'
 import { createEscalationChain } from '../approval/escalation.mjs'
@@ -437,6 +437,167 @@ export function createQuestionBridge(deps) {
     return { ok: true, message: `✅ 已作答：${labels.join('、')}`, answers: labels }
   }
 
+  // ———————————————— 管理台待决问题 facade（路线图阶段 2A，2026-08-26） ————————————————
+  // 本块是 admin/UI 与问题桥之间的最小兼容门面：`adminPending()` 只做脱敏只读快照，
+  // `adminSettle()` 把裁决一律经注入的 Control Core `deps.control.handle()` 路由——
+  // 授权（配对/source/policy/首达采纳）与单次结算语义全部由 Control Core 承接，本块
+  // **绝不**在门口复制 ledger 结算或直接写状态；对已待决之外的任何输入 fail-closed。
+  // 红线：快照与审计里绝不出现 token / 凭证 / 完整聊天或 agent 标识 / 答案隐私。
+  let adminSettleSeq = 0 // 每次 admin 结算给唯一 eventId（缺 eventId 会被 normalize 拒绝）
+  const sha256 = (value) => createHash('sha256').update(String(value)).digest('hex')
+  /** 待决问题键的不可逆短引用（避免把 `aq:<随机>` 原键散进 UI/日志；解析按哈希回扫）。 */
+  const questionRefOf = (key) => sha256(key).slice(0, 12)
+  /** 脱敏标识：sha256 前缀短段 —— 绝不回放完整 session/agent/chat/user 值。 */
+  const maskedId = (value, prefix, len = 6) => {
+    if (value === undefined || value === null || String(value) === '') return null
+    return `${prefix}${sha256(value).slice(0, len)}`
+  }
+  /**
+   * 解析 admin 提交的 ref → 真实 `aq:` 键。只在当前 store 的 aq 待决键中哈希匹配，
+   * 命中即该键（48-bit 前缀碰撞在并发待决里概率可忽略，最坏影响是一次错误结算被
+   * 首达采纳挡掉——fail-closed）。未知 ref 返回 null。
+   */
+  const resolveQuestionRef = (ref) => {
+    const target = String(ref ?? '').trim()
+    if (target === '') return null
+    for (const key of core.scanKeys()) if (questionRefOf(key) === target) return key
+    return null
+  }
+  /** 单条待决问题 → 脱敏快照行（只含 UI 渲染所需：文本/选项/脱敏来源/时间/状态）。 */
+  const sanitizeQuestion = (key, row) => {
+    const sources = Array.isArray(row.pushedTo)
+      ? row.pushedTo.map((target) => ({
+          channel: String(target?.channel ?? ''),
+          chat: maskedId(target?.chatId, 'chat-'),
+          user: maskedId(target?.userId, 'user-'),
+        }))
+      : []
+    return {
+      ref: questionRefOf(key),
+      question: String(row.question ?? ''),
+      options: (Array.isArray(row.options) ? row.options : []).map(String),
+      multiSelect: row.multiSelect === true,
+      status: 'pending',
+      agent: maskedId(row.agentId, 'agent-'),
+      source: sources,
+      createdAt: Number.isFinite(Number(row.createdAt)) ? Number(row.createdAt) : null,
+      expiresAt: Number.isFinite(Number(row.expiresAt)) ? Number(row.expiresAt) : null,
+    }
+  }
+  /** admin 驳回：复用手机端「跳过」的语义（`aq-skip` + ledger.resolve 'skipped'），交还桌面、
+   *  绝不编造答案；bus.settle 首达采纳保证与作答互斥（单次结算）。 */
+  function decline(key, row, via, userId) {
+    const verdict = bus.settle(key, { kind: 'aq-skip', idxs: [] }, via, userId)
+    if (!verdict.ok) return { ok: false, reason: verdict.reason ?? 'already-resolved' }
+    ledger.resolve(key, 'skipped', { via, userId })
+    return { ok: true, message: '已驳回该提问：交还桌面处理', answers: [] }
+  }
+  /** 当前待决问题汇总（读快照，绝不抛）。无任何待决返回空数组。 */
+  function adminPending() {
+    const rows = []
+    for (const key of core.scanKeys()) {
+      if (!key.startsWith(KEY_PREFIX)) continue // scanKeys 已按前缀过滤，双保险
+      const row = core.get(key)
+      if (!core.isPending(row)) continue
+      rows.push(sanitizeQuestion(key, row))
+    }
+    // 新在前，稳定排序（createdAt 同值按 ref 中止，避免排序不稳定）
+    rows.sort((a, b) => (Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0)) || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0))
+    return rows
+  }
+  /**
+   * 管理台裁决入口（单一入口，只对当前待决问题生效）：
+   * action 'choose' 携带 options（0 基下标数组）切到指定选项；action 'reject' 驳回交还桌面。
+   * 授权与单次结算全部经 `deps.control.handle`（pairing/source/policy/首达采纳）；
+   * 本块通过 `input.settle` 直连 Control Core 的 onSettle 并捕获真实 settle/decline 结果，
+   * 以便区分「本侧胜出」与「手机端已先答」（后者返回 handled:true，不重复结算）。
+   * 任何无法确证来源目标 / 越权 / 过期 / 未知 ref / 非法 option / 异常 → fail-closed 安全错误。
+   * @returns {{ ok: boolean, handled?: boolean, reason?: string, message?: string, optionLabels?: string[] }}
+   */
+  function adminSettle(input = {}) {
+    const ref = String(input?.ref ?? '').trim()
+    const action = String(input?.action ?? '').trim().toLowerCase()
+    if (action !== 'choose' && action !== 'reject') {
+      return { ok: false, handled: false, reason: 'invalid_action', message: 'action 只能是 choose 或 reject' }
+    }
+    const key = resolveQuestionRef(ref)
+    if (key === null) {
+      return { ok: false, handled: false, reason: 'unknown_question', message: '未找到该待决问题' }
+    }
+    const row = core.get(key)
+    if (!core.isPending(row)) {
+      // 已决（作答/超时/跳过）或缺失 → already-handled；绝不二次结算
+      return { ok: false, handled: true, reason: 'already_handled', message: '该问题已被裁决（作答/过期/驳回）' }
+    }
+    // 选项封闭集预检（越界/重复/单选多项 → fail-closed），复用 resolveIdxs 语义
+    let optIdxs = null
+    if (action === 'choose') {
+      optIdxs = resolveIdxs(row, Array.isArray(input.options) ? input.options : [])
+      if (optIdxs === null) {
+        return { ok: false, handled: false, reason: 'invalid_option', message: '无效选项：只接受该问题给出的编号（越界/重复/单选不可多项）' }
+      }
+    }
+    // 只能在一个确凿的来源目标上结算（事件绑定 pushedTo，配以 event.channel/chatId 等）。
+    // 无目标即无法安全按当事人来源路由 → fail-closed，绝不凭空编造 channel/chat。
+    const pushed = Array.isArray(row.pushedTo) ? row.pushedTo : []
+    const target = pushed.find((t) => t && t.channel !== '' && t.chatId !== undefined && t.chatId !== null && String(t.chatId) !== '')
+      ?? (pushed.length > 0 ? pushed[0] : null)
+    if (target === null) {
+      return { ok: false, handled: false, reason: 'no_target', message: '该问题没有可用的来源目标，无法安全裁决' }
+    }
+
+    const outcome = { ok: false, handled: false, reason: null, message: '', answers: null }
+    // 结算一律经 Control Core 的 question-answer 注册 spec 裁决（buildEvent/authorize/
+    // canAcceptCommand 全跑）；事件身份 = 该待决问题的确凿来源目标（pushedTo 精确命中的
+    // channel/chatId/accountId），由 spec.buildEvent 据此回填 bound userId —— 管理台操作者
+    // 绝不冒充目标用户身份，操作者来源只经 via='admin:web' 与 admin 审计带出（不落 ledger）。
+    const receipt = deps.control?.handle({
+      command: 'question-answer',
+      eventId: `admin-settle:${key}:${++adminSettleSeq}`,
+      qKey: key,
+      trusted: true,
+      via: 'admin:web',
+      channel: String(target.channel ?? ''),
+      accountId: String(target.accountId ?? target.channel ?? ''),
+      chatId: String(target.chatId ?? ''),
+      // 终端动作仍走问题桥既有裁决核心（settle/decline），由 Control Core onSettle 调起；
+      // 捕获真实首达结果供下面区分 already-handled 与「本侧胜出」。
+      settle: () => {
+        const res = action === 'choose'
+          ? settle(key, row, optIdxs, 'admin:web', 'admin:web')
+          : decline(key, row, 'admin:web', 'admin:web')
+        outcome.ok = res?.ok === true
+        outcome.handled = outcome.handled || res?.ok !== true
+        outcome.reason = res?.reason ?? null
+        outcome.message = res?.message ?? ''
+        outcome.answers = res?.answers ?? null
+        return res === null || res === undefined ? false : res
+      },
+    })
+    // 无 Control Core（未接线）→ receipt 为空 → 落到最末 not_available，fail-closed：
+    // 结算绝不跳过控制核心直接落库（本端点不留直通后门）。
+    const status = receipt?.status
+    if (status === 'accepted') {
+      // spec 的 safest settle 已真实执行；outcome 捕获到的是首达采纳的真实结果。
+      if (outcome.ok === true) return { ok: true, handled: false, reason: null, message: outcome.message, optionLabels: outcome.answers }
+      // 手机端先答夺标：本次未重复结算，明确 already-handled
+      return { ok: false, handled: true, reason: 'already_handled', message: outcome.message || '该问题已被作答（首达采纳），本次未生效' }
+    }
+    if (status === 'already_handled') return { ok: false, handled: true, reason: 'already_handled', message: '该问题已被裁决（首达采纳），本次未生效' }
+    if (status === 'expired') return { ok: false, handled: false, reason: 'expired', message: '该问题已过期' }
+    // rejected / desktop_fallback → fail-closed，按原因细分（绝不假造放行）
+    const reason = receipt?.reason
+    if (reason === 'expired') return { ok: false, handled: false, reason: 'expired', message: '该问题已过期' }
+    if (reason === 'not_pending' || reason === 'duplicate_event') {
+      return { ok: false, handled: true, reason: 'already_handled', message: '该问题已被裁决（作答/过期/驳回）' }
+    }
+    if (reason === 'source_mismatch_channel' || reason === 'source_mismatch_chatId' || reason === 'source_mismatch_accountId'
+      || reason === 'source_mismatch_userId' || reason === 'not_paired' || reason === 'source_policy_rejected' || reason === 'owner_only') {
+      return { ok: false, handled: false, reason: 'unauthorized', message: '管理台不满足该问题的来源/身份授权（无法确证 owner/admin）' }
+    }
+    return { ok: false, handled: false, reason: 'not_available', message: '该问题结算当前不可用（Control Core 未接线或已拒绝）' }
+  }
+
   /**
    * 编号回复兜底（P4）：白名单用户回复 '2' / '1,3'（中英文逗号均可）作答最近一条待决提问。
    * 发错了不作废——无效编号：消费该消息（不进对话路由）+ 回执提示 + 把选项重发一遍，
@@ -661,7 +822,7 @@ export function createQuestionBridge(deps) {
     escalation.dispose()
   }
 
-  return { askQuestions, decide, decideTrusted, attach, dispose }
+  return { askQuestions, decide, decideTrusted, adminPending, adminSettle, attach, dispose }
 }
 
 /** 校验并归一 ask_user 工具参数；违规返回 { ok:false, reason }。 */

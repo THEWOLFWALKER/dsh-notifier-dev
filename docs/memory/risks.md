@@ -24,3 +24,10 @@
 - `src/channels/feishu/` and `src/channels/telegram/` now provide transport facades and callback source normalization while reusing the existing inbound implementations and provider-neutral Control Core contracts.
 - Rich cards, callbacks, WebSocket/polling lifecycle, Telegram text limits and fallbacks are `contract-tested`; file sending is an injected seam marked `declared`.
 - No real platform/device verification was performed in this batch. Do not label either provider `real-device-verified`; protocol payload and callback replay behavior still require device-level validation.
+
+## 2026-08-26 — local admin ask_user settlement entry (roadmap 阶段 2A)
+
+- Web/admin now exposes a pending-question list and a protected settlement endpoint, but **only on the loopback-bound admin server**; there is still no safe desktop-side settlement entry, so dual-end sharing is not claimed.
+- `GET /api/questions` and `POST /api/questions/:ref/settle` are gated by the admin Bearer token; settlement additionally requires a wired Control Core and a first-bound owner (`identity` + `ownerCount>=1`) in personal mode. If Control Core is unwired, settlement fails closed (`501` / `not_available`) with no direct-write bypass. All evidence is mock: no real host served a question to a phone, no real admin console clicked a button, no real settle round-trip was observed. Real-device validation sits on the handoff list.
+- Ref is an irreversible 12-hex sha256 short form of the `aq:` key; admin event identity is bound to the question's precise `pushedTo` source target (never the operator), and settlement reuses the existing `question-answer` / `aq-skip` first-arrival semantics. Admin never fabricates a channel/chat and never authors ledger writes directly.
+- Sanitized snapshots/audit/UI DOM must never carry token, credentials, full chat/user/agent identifiers, `pushedTo`, or answer privacy — this is pinned by focused tests (`test/admin-questions.test.mjs`, `test/questions-admin-settlement.test.mjs`, `test/admin-ui-behavior.test.mjs`). If an exposed field is ever added, the leak tests will fail and the panel must be re-audited before any release.

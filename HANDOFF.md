@@ -2,13 +2,14 @@
 
 > 写给下一个 agent。本文档是完整的工作上下文快照：设计理念、军规约定、架构地图、
 > 版本脉络、审查记录、已知坑、待办清单。读完这一份即可无缝接手。
-> 当前快照：2026-08-26，当前开发线包含 `73154cd` 及其后续文档同步提交（含 `c4fef26`）。当前开发线 `npm test` = 1177（1176 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。QQ C2C 单聊原生按钮、GROUP 文本回退，以及 QQ/微信 iLink/钉钉图片代码已接线并通过契约测试；缺失 `chatType` 或未知来源控制 fail-closed，`conversation` 的 `routeUnsafe` 旁路已堵。Web/admin 与 desktop 仍无安全可复用的 `ask_user` settlement 入口，不能宣称双端共享；真实设备/宿主协议仍未验证，能力只能标记 declared/contract-tested。
+> 当前快照：2026-08-26，当前开发线包含 `73154cd` 及其后续文档同步提交（含 `c4fef26`）。当前开发线 `npm test` = 1194（1193 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。QQ C2C 单聊原生按钮、GROUP 文本回退，以及 QQ/微信 iLink/钉钉图片代码已接线并通过契约测试；缺失 `chatType` 或未知来源控制 fail-closed，`conversation` 的 `routeUnsafe` 旁路已堵。Web/admin 已具备阶段 2A 本地管理台的远程提问裁决入口（见下方快照），desktop 端仍无 settlement 入口，双端共享未宣称；真实设备/宿主协议仍未验证，能力只能标记 declared/contract-tested。
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
 > 2026-08-23 接力合入公共镜像 v0.8.5 发布内容（issue #11 ask_user 编号回复修复 + PR #9 飞书扫码 SDK 适配），见「当前接力交代」。
 > 上一稳定发布位 v0.8.6 = `bf03a1c`（npm `dsh-notifier@0.8.6`，公共镜像 `db42908` 已清理 node_modules/package-lock）。
-> 快照刷新：2026-08-26，Task 04 首次配置 UX 已完成：本地管理台首屏显示四态进度，个人模式默认隐藏绑定/会话高级导航，通道空状态改为字段配置指引，测试成功/失败显示下一步与重试文案；仍保持 loopback/Bearer/零依赖边界。Control Core 已接入宿主事件与 inbound 回调，来源绑定按 `(channel,userId,chatId)` 隔离；能力矩阵/fallback 与 runtime assembly 已对齐。Web/admin 仍无安全的 `ask_user` settlement 入口。`notifyAll().delivered` 仍只有渠道级证据，不能推导具体 chat 送达；未获逐目标 `sendText` 确认的编号兜底保持 fail-closed。Issue #16/#14 只能标记代码/契约完成，待真实设备/宿主验证。公共仓库不动。
+> 快照刷新：2026-08-26，Task 04 首次配置 UX 已完成：本地管理台首屏显示四态进度，个人模式默认隐藏绑定/会话高级导航，通道空状态改为字段配置指引，测试成功/失败显示下一步与重试文案；仍保持 loopback/Bearer/零依赖边界。Control Core 已接入宿主事件与 inbound 回调，来源绑定按 `(channel,userId,chatId)` 隔离；能力矩阵/fallback 与 runtime assembly 已对齐。Web/admin 已具备阶段 2A 本地管理台的远程提问裁决入口（choose/reject，见下方快照）；destktop 端仍无 settlement 入口。`notifyAll().delivered` 仍只有渠道级证据，不能推导具体 chat 送达；未获逐目标 `sendText` 确认的编号兜底保持 fail-closed。Issue #16/#14 只能标记代码/契约完成，待真实设备/宿主验证。公共仓库不动。
 > 批次 4（2026-08-26）微信 iLink provider slice 已接入 `src/channels/wechat-ilink/`：单账号 QR-first、bounded long-poll、账号命名空间 cursor/context、整批交付后推进游标、断线重连/stop、明确 QR 过期状态、文本/编号 fallback、连接状态和结构化图片 envelope。旧 `src/inbound/wechat-ilink.mjs` 保留兼容入口；图片收发仅有可选 media bridge，能力状态为 `declared`，没有真实协议/设备验证，不得标记正式支持。新 focused tests 位于 `test/channels/wechat-ilink.test.mjs`。
 > 批次 5（2026-08-26）飞书与 Telegram provider facade 已建立在 `src/channels/feishu/`、`src/channels/telegram/`：回调归一化强制 user/chat 来源字段，能力证据分别记录为 contract-tested/declared；既有 inbound transport 保持兼容，控制权限仍由 provider-neutral Control Core/session arbiter 负责。文件发送只通过显式 adapter seam，未做真实平台/设备验证，不能标记 `real-device-verified`。focused tests 位于 `test/channels/feishu.test.mjs`、`test/channels/telegram.test.mjs`。
+> 路线图阶段 2A（2026-08-26）：本地管理台远程提问裁决入口已建立于「问题桥 facade + Control Core」之上。`GET /api/questions` 仅返回脱敏只读快照（不可逆 12 位 sha256 ref、掩码 agent/chat/user、选项文本、时间），零 token/凭证/完整标识/答案隐私；`POST /api/questions/:ref/settle`（choose/reject）一律经 Control Core 的 `question-answer` spec 走既有授权与单次结算（首达采纳）语义，本端点不复制 ledger 结算、不留直通后门，Control Core 未接线时 fail-closed `not_available`。竞态双端互斥、驳回复用 `aq-skip` 交还桌面、选项封闭集 fail-closed。前端 `ui.mjs` 面板纯字符串逐字段 `esc()` 转义，token 绝不进 DOM。focused tests：`test/admin-questions.test.mjs`、`test/questions-admin-settlement.test.mjs`、`test/admin-ui-behavior.test.mjs`。真实宿主/设备验证不做，标记 code/contract-tested，Issue #16 不关闭。
 > 当前 PR #12 模块化重写：QQ 官方机器人已接入显式 `INTERACTION_CREATE` 审批/提问按钮负载，统一走 Control Core；旧客户端自动文本降级，群聊目标禁止可操作按钮以避免成员间泄漏。`approval.parallel` 仅显式 opt-in，默认关闭，等待 Promise reject 按超时 fail-closed。真实 QQ 协议/设备验证仍未完成，能力只能标记 contract-tested/declared。
 
 ## 方向决策（2026-08-25，规划态）
@@ -48,7 +49,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 零运行时依赖（只用 fetch + node:crypto + 原生 WebSocket）。
 
 - 语言/运行时：Node.js ESM（.mjs），无 TypeScript，无构建步骤
-- 代码量：src+test+scripts ≈ 36,000 行；46 个测试文件，1177 测试（1176 pass + 1 skip；已发布 v0.8.6 = 909）
+- 代码量：src+test+scripts ≈ 36,000 行；46 个测试文件，1194 测试（1193 pass + 1 skip；已发布 v0.8.6 = 909）
 - 文档：README.md / README.zh-CN.md / ADAPTER.md（渠道接入规范）/ PLUGINS.md（插件互操作）/ docs/v0.5-design.md / docs/v0.6-design.md / CHANGELOG.md（最详细的历史）
 
 ---
@@ -59,7 +60,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 |---|---|
 | 版本 | package.json = 0.8.6；CHANGELOG、admin UI、双语 README 和发布守卫已同步；npm 已发布 `dsh-notifier@0.8.6`；公共镜像 `main` 已清理 `node_modules/` 与 `package-lock.json` |
 | git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前开发线包含 `73154cd` 及后续文档同步提交（含 `c4fef26`，文档同步分支未发布） |
-| 测试 | `npm test` 已发布 v0.8.6 契约 = **909 tests**；当前开发线 = **1177**（1176 pass + 1 skip） |
+| 测试 | `npm test` 已发布 v0.8.6 契约 = **909 tests**；当前开发线 = **1194**（1193 pass + 1 skip；含阶段 2A 的 API/settlement/UI 新用例） |
 | 发布 | v0.8.6 已发布；下一位 agent 接手时无需再走发布 gate，除非版本再次 bump |
 | 真机验证 | 当前分支未完成真实设备/宿主协议验证；QQ/微信 iLink/钉钉图片与 QQ 按钮仅有 contract-tested/declared 证据。历史 v0.6.1/v0.7 验证记录保留在下文 |
 
@@ -262,7 +263,7 @@ src/
 ## 8. 快速上手
 
 ```bash
-npm test                    # 当前开发线 1177（1176 pass + 1 skip）；已发布 v0.8.6 契约仍为 909
+npm test                    # 当前开发线 1194（1193 pass + 1 skip）；已发布 v0.8.6 契约仍为 909
 npm run lint 2>/dev/null || node --check src/index.mjs   # 无 lint 配置的话用 node --check
 node scripts/route.mjs --help        # 路由 CLI
 node scripts/channel-login.mjs --help

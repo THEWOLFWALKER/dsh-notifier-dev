@@ -182,7 +182,7 @@ v0.5 状态上报线默认值：`longRunning` 与 `stall` **默认开**（15min 
 
 <!-- CHANNEL-MATRIX-END -->
 
-另有六个渠道开启入站（远程审批 + 远程会话）：`telegram`、`feishu`、`qq-bot`、`wxpusher`、`wechat`、`dingtalk` —— 长连接或长轮询，无需公网 IP（仅 WxPusher 回调需要公网可达）。Telegram/飞书及 QQ C2C 单聊支持原生控制按钮；QQ GROUP、缺失 `chatType` 或未知来源元数据均 fail-closed，回退为不可操作文本或拒绝，`conversation` 的 `routeUnsafe` 旁路不能绕过该闸门。QQ、微信 iLink、钉钉图片消息代码已接线并通过契约测试，但尚未做真实平台/设备验证；文件收发仍标记为 `declared`。Web/desktop 仍没有可安全复用的 `ask_user` settlement 入口，不能宣称双端共享。v0.5 起 telegram 与 feishu 额外承载通知动作卡片（停止按钮）。v0.7 起每条入站通道响应 `/help` `/whoami` `/pair` `/unpair` 注册命令，出站卡片目标走三级优先解析（该通道绑定 → 通道配置清单 → 全局回落）并按渠道做 id 形状守卫。
+另有六个渠道开启入站（远程审批 + 远程会话）：`telegram`、`feishu`、`qq-bot`、`wxpusher`、`wechat`、`dingtalk` —— 长连接或长轮询，无需公网 IP（仅 WxPusher 回调需要公网可达）。Telegram/飞书及 QQ C2C 单聊支持原生控制按钮；QQ GROUP、缺失 `chatType` 或未知来源元数据均 fail-closed，回退为不可操作文本或拒绝，`conversation` 的 `routeUnsafe` 旁路不能绕过该闸门。QQ、微信 iLink、钉钉图片消息代码已接线并通过契约测试，但尚未做真实平台/设备验证；文件收发仍标记为 `declared`。仅回环的本机 Web 管理台已提供脱敏的待处理多选项提问列表，并经共享 Control Core 提供 choose/reject 结算；desktop 端仍无结算入口，故不宣称双端共享结算。v0.5 起 telegram 与 feishu 额外承载通知动作卡片（停止按钮）。v0.7 起每条入站通道响应 `/help` `/whoami` `/pair` `/unpair` 注册命令，出站卡片目标走三级优先解析（该通道绑定 → 通道配置清单 → 全局回落）并按渠道做 id 形状守卫。
 
 ## 架构
 

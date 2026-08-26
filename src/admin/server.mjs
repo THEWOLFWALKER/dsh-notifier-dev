@@ -96,6 +96,10 @@ export function createAdminServer({ api, verifyToken, host = '127.0.0.1', port =
     { method: 'POST', segments: ['api', 'pairing'], handler: ({ body }) => api.mintPairingCode(body) },
     { method: 'DELETE', segments: ['api', 'pairing', ':id'], handler: ({ params }) => api.revokePairingCode(params.id) },
     { method: 'GET', segments: ['api', 'audit'], handler: () => api.getAudit() },
+    // 路线图阶段 2A：远程提问管理台裁决（2026-08-26）。GET 只读脱敏快照；
+    // POST :ref/settle 走收件人识别的受保护结算（授权在 Control Core + bearer 层）
+    { method: 'GET', segments: ['api', 'questions'], handler: () => api.getPendingQuestions() },
+    { method: 'POST', segments: ['api', 'questions', ':ref', 'settle'], handler: ({ params, body }) => api.settleQuestion({ ...(body ?? {}), ref: params.ref }) },
     { method: 'GET', segments: ['api', 'events'], sse: true }, // v0.4.0 通知事件流（handle 内特判）
   ]
 
