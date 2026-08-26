@@ -24,6 +24,7 @@ import {
 import { createBreaker } from '../../inbound/_breaker.mjs'
 import { createThrottledWarn } from '../../inbound/_bounded.mjs'
 import { resolveNotifyTargets } from '../../inbound/target-guard.mjs'
+import { DEFAULT_INBOUND_MEDIA_TIMEOUT_MS, MAX_INBOUND_IMAGE_BYTES } from '../../inbound/message.mjs'
 import { normalizeInboundMessage, normalizeUpdateBatch, boundedCursor, validAccountId } from './protocol.mjs'
 
 const SYNC_BUF_KEY = 'wechat:sync_buf'
@@ -109,6 +110,9 @@ export function createWechatIlinkInbound(options = {}) {
   const accountKey = accountScoped ? `${accountPrefix}account` : ACCOUNT_KEY
   const contextKey = (uid) => accountScoped ? `${accountPrefix}ctx:${uid}` : `${CTX_PREFIX}${uid}`
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+  const imageDownloadTimeoutMs = clampInt(options.imageDownloadTimeoutMs, DEFAULT_INBOUND_MEDIA_TIMEOUT_MS, 1000, 60000)
+  const imageDownloadMaxBytes = Math.min(MAX_INBOUND_IMAGE_BYTES,
+    Math.max(1, Number(options.imageDownloadMaxBytes) || MAX_INBOUND_IMAGE_BYTES))
   const client = createIlinkClient({
     baseUrl: config.baseUrl,
     token: config.token,
@@ -190,6 +194,34 @@ export function createWechatIlinkInbound(options = {}) {
     } catch { /* 落盘/清扫失败不致命 */ }
   }
 
+  /** Optional media bridge is isolated from control delivery and receives strict resource bounds. */
+  function downloadImageBestEffort(envelope) {
+    const download = options.mediaAdapter?.downloadInboundImage
+    if (typeof download !== 'function') return
+    const controller = new AbortController()
+    let timeoutId = null
+    const timeout = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        controller.abort()
+        reject(new Error(`图片下载超时（${imageDownloadTimeoutMs}ms）`))
+      }, imageDownloadTimeoutMs)
+    })
+    void Promise.race([
+      Promise.resolve().then(() => download(envelope, {
+        signal: controller.signal,
+        maxBytes: imageDownloadMaxBytes,
+        timeoutMs: imageDownloadTimeoutMs,
+      })),
+      timeout,
+    ]).then((result) => {
+      if (Number(result?.size) > imageDownloadMaxBytes) {
+        warn(`图片下载结果超过上限 ${imageDownloadMaxBytes} bytes，已丢弃结果`)
+      }
+    }).catch((error) => {
+      warn(`图片下载失败（文字路径已继续）：${error instanceof Error ? error.message : String(error)}`)
+    }).finally(() => { if (timeoutId !== null) clearTimeout(timeoutId) })
+  }
+
   /** 会话过期善后：清缓存态 + 凭证，停用通道（需人工重新扫码）。 */
   function sessionExpired(detail) {
     warn(`iLink 会话过期（${detail}）：已清空游标/context_token/凭证并停用通道，请重新执行 node scripts/wechat-login.mjs 扫码登录`)
@@ -234,11 +266,8 @@ export function createWechatIlinkInbound(options = {}) {
       })
     }
     // 图片下载是可选能力；先把消息交给 Control Core，再尽力下载。
-    // 下载失败只告警，不阻断文字/控制命令路径。
-    if (normalized.kind === 'image' && typeof options.mediaAdapter?.downloadInboundImage === 'function') {
-      Promise.resolve().then(() => options.mediaAdapter.downloadInboundImage(normalized))
-        .catch((error) => warn(`图片下载失败（文字路径已继续）：${error instanceof Error ? error.message : String(error)}`))
-    }
+    // 下载失败/超时只告警，不阻断文字或控制命令路径。
+    if (normalized.image !== undefined) downloadImageBestEffort(normalized)
   }
 
   async function pollLoop() {

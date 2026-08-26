@@ -25,7 +25,7 @@ const config = { accountId: 'ACC_A', token: 'TOKEN_A', baseUrl: 'https://ilink.t
 
 test('iLink capability evidence stays contract-tested/declared; never real-device-verified', () => {
   assert.equal(WECHAT_ILINK_CAPABILITIES.qrLogin, 'contract-tested')
-  assert.equal(WECHAT_ILINK_CAPABILITIES.imageReceive, 'declared')
+  assert.equal(WECHAT_ILINK_CAPABILITIES.imageReceive, 'contract-tested')
   assert.equal(WECHAT_ILINK_CAPABILITIES.imageSend, 'declared')
   assert.equal(WECHAT_ILINK_CAPABILITIES.realDeviceVerified, false)
 })
@@ -64,11 +64,15 @@ test('unknown fields never enter the control envelope; known text/image are isol
   assert.equal(image.kind, 'image')
   assert.equal(image.text, '[图片消息]')
   assert.equal(image.image.mediaId, 'media-1')
+  assert.equal(normalizeInboundMessage({
+    from_user_id: 'USER_A', message_id: 'M3', item_list: [{ type: 2, image_item: {} }],
+  }, { accountId: 'ACC_A' }), null, '无 URL 或 mediaId 的图片不能进入 Control Core')
 })
 
 test('new provider state is account-scoped and image download failure cannot block text', async () => {
   const store = storeOf()
   const accepted = []
+  let downloadCall = null
   const bus = {
     accept: (envelope) => { accepted.push(envelope); return { ok: true } },
   }
@@ -89,7 +93,12 @@ test('new provider state is account-scoped and image download failure cannot blo
   }
   const inbound = createWechatIlinkInbound({
     config, store, bus, fetchImpl, sleep: async () => {},
-    mediaAdapter: { downloadInboundImage: async () => { throw new Error('download unavailable') } },
+    mediaAdapter: {
+      downloadInboundImage: async (...args) => {
+        downloadCall = args
+        throw new Error('download unavailable')
+      },
+    },
   })
   inbound.start()
   await new Promise((resolve) => setTimeout(resolve, 10))
@@ -100,5 +109,9 @@ test('new provider state is account-scoped and image download failure cannot blo
   assert.equal(accepted[0].text, '控制命令')
   assert.equal(accepted[0].image.mediaId, 'media-2')
   assert.equal(accepted[0].contextToken, undefined, 'context_token 只留在 transport state，不得进入 Control Core')
+  assert.equal(downloadCall[0].text, '控制命令', '混合文本图片也在控制路径后才尽力下载')
+  assert.equal(downloadCall[1].maxBytes, 5 * 1024 * 1024)
+  assert.equal(downloadCall[1].timeoutMs, 10000)
+  assert.ok(downloadCall[1].signal instanceof AbortSignal)
   assert.equal(inbound.status().accountId, 'ACC_A')
 })

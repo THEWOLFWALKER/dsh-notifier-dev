@@ -303,7 +303,7 @@ test('ack 回帧：{ code:200, headers:{contentType,requestId}, messageId, data:
   })
 })
 
-test('非 text msgtype（如 picture）：静默忽略不入 bus，ack 照回', async () => {
+test('Issue #14：钉钉 picture 缺 URL 仍静默拒绝，ack 照回', async () => {
   const rig = makeRig()
   const accepted = []
   rig.bus.onMessage((envelope) => accepted.push(envelope))
@@ -311,6 +311,38 @@ test('非 text msgtype（如 picture）：静默忽略不入 bus，ack 照回', 
   const ws = pushMessage({ msgId: 'msg_pic', msgtype: 'picture', text: undefined })
   assert.equal(accepted.length, 0)
   assert.ok(ws.sent.some((frame) => frame.data === 'ack'))
+})
+
+test('Issue #14：钉钉混合 text + picture 保留文本和安全图片附件', async () => {
+  const rig = makeRig()
+  const accepted = []
+  rig.bus.onMessage((envelope) => accepted.push(envelope))
+  await driveConnected(rig)
+  pushMessage({
+    msgId: 'msg_mixed_image',
+    text: { content: '请看附件' },
+    picture: { downloadUrl: 'https://media.example.test/dingtalk.png', width: 1280, height: 720, ignored: 'x' },
+  })
+  assert.equal(accepted.length, 1)
+  assert.equal(accepted[0].text, '请看附件')
+  assert.deepEqual(accepted[0].image, { url: 'https://media.example.test/dingtalk.png', width: 1280, height: 720 })
+  assert.equal(accepted[0].ignored, undefined)
+})
+
+test('Issue #14：钉钉图片重放和不受信任 sender 仍走原有去重/白名单', async () => {
+  const rig = makeRig()
+  const accepted = []
+  rig.bus.onMessage((envelope) => accepted.push(envelope))
+  await driveConnected(rig)
+  pushMessage({ msgId: 'msg_picture_replay', msgtype: 'picture', text: undefined, picture: { url: 'https://media.example.test/dt.png' } })
+  pushMessage({ msgId: 'msg_picture_replay', msgtype: 'picture', text: undefined, picture: { url: 'https://media.example.test/dt.png' } })
+  pushMessage({
+    msgId: 'msg_picture_untrusted', msgtype: 'picture', text: undefined, senderStaffId: 'staff_untrusted',
+    picture: { url: 'https://media.example.test/dt.png' },
+  })
+  assert.equal(accepted.length, 1)
+  assert.equal(accepted[0].kind, 'image')
+  assert.equal(accepted[0].messageId, 'dt:msg_picture_replay')
 })
 
 test('robotCode 学习：首条入站消息落 store（dingtalk:robot-code），后续推送携带', async () => {

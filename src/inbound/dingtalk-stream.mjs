@@ -34,6 +34,7 @@ import { createTokenManager } from '../adapters/_tokens.mjs'
 import { createBreaker } from './_breaker.mjs'
 import { setBounded, createThrottledWarn } from './_bounded.mjs'
 import { resolveNotifyTargets } from './target-guard.mjs'
+import { normalizeImageAttachment } from './message.mjs'
 
 const DEFAULT_API_BASE = 'https://api.dingtalk.com'
 const DEFAULT_OAPI_BASE = 'https://oapi.dingtalk.com'
@@ -46,6 +47,24 @@ const MSG_DEDUP_MAX = 1024 // seenMsgIds 硬上限：窗口清扫后仍超量则
 // 三个数量级余量），超限淘汰最旧。淘汰安全：两表都是「最近一次入站学来的发送辅助信息」，
 // 缺失分别回落 batchSend 兜底与「chatId 当 staffId」既有路径。
 const CHAT_STATE_MAX = 1024
+
+/** Keep only known image fields; arbitrary provider content never enters a control envelope. */
+export function parseDingtalkImageMessage(msg) {
+  if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) return null
+  const type = String(msg.msgtype ?? '').toLowerCase()
+  const candidates = []
+  if (type === 'picture' || type === 'image') {
+    candidates.push(msg.picture, msg.image, msg.content)
+  } else if (msg.picture !== undefined || msg.image !== undefined) {
+    // Mixed text + image has an explicit attachment field; do not inspect arbitrary text content.
+    candidates.push(msg.picture, msg.image)
+  }
+  for (const candidate of candidates) {
+    const image = normalizeImageAttachment(candidate)
+    if (image !== null) return { kind: 'image', image }
+  }
+  return null
+}
 
 /** content → 6 位十六进制摘要（合成 messageId 用，与 wechat-ilink 同款）。 */
 function hash6(text) {
@@ -259,9 +278,9 @@ export function createDingtalkInbound(options = {}) {
     }
     // 主动推送兜底目标（batchSend 要 staffId 而非 conversationId）；同样有界
     setBounded(chatSenders, chatId, userId, CHAT_STATE_MAX)
-    if (String(msg.msgtype ?? '') !== 'text') return // 图片/富文本等暂不支持，静默忽略
+    const image = parseDingtalkImageMessage(msg)
     const text = String(msg.text?.content ?? '').trim()
-    if (text === '') return
+    if (text === '' && image === null) return
     // v0.7：conversationType 透传（'1' 单聊 / '2' 群聊，/pair 私聊判定）；
     // accept 返回值消费——拒绝/命令回执不再已读不回
     const result = bus.accept({
@@ -270,7 +289,8 @@ export function createDingtalkInbound(options = {}) {
       chatId,
       chatType: String(msg.conversationType ?? ''),
       messageId: `dt:${msgId}`,
-      text,
+      text: text || '[图片消息]',
+      ...(image === null ? {} : { image: image.image, ...(text === '' ? { kind: 'image' } : {}) }),
     })
     if (result?.reply !== undefined) {
       sendReply(chatId, String(result.reply)).catch((error) => {

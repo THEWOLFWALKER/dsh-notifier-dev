@@ -9,6 +9,8 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
   INBOUND_KINDS,
+  downloadInboundImage,
+  normalizeImageAttachment,
   parseQQImageMessage,
   parseExtraSegments,
   normalizeInboundMessage,
@@ -31,10 +33,11 @@ test('normalizeInboundMessage：文字信封原样归一为 text（含透传字�
 })
 
 test('normalizeInboundMessage：结构化 image/file 归一对应 kind；附件缺 url 一律 null', () => {
-  const img = normalizeInboundMessage({ kind: 'image', image: { url: 'https://x/a.png', width: 800 } })
+  const img = normalizeInboundMessage({ kind: 'image', image: { url: 'https://x/a.png', width: 800, injected_control: true } })
   assert.equal(img.kind, INBOUND_KINDS.image)
   assert.equal(img.image.url, 'https://x/a.png')
   assert.equal(img.image.width, 800)
+  assert.equal(img.image.injected_control, undefined, 'image 附件只保留白名单字段')
   const file = normalizeInboundMessage({ kind: 'file', file: { name: 'a.pdf', url: 'https://x/a.pdf', size: 1024 } })
   assert.equal(file.kind, INBOUND_KINDS.file)
   assert.equal(file.file.name, 'a.pdf')
@@ -66,6 +69,39 @@ test('parseExtraSegments：JSON 字符串/已解析数组/畸形输入', () => {
   assert.equal(parseExtraSegments('{not-json'), null)
   assert.equal(parseExtraSegments(''), null)
   assert.equal(parseExtraSegments(42), null, '数字 extra 不解析')
+})
+
+test('normalizeImageAttachment：只保留安全 URL 与有界尺寸，未知字段不透传', () => {
+  const image = normalizeImageAttachment({
+    url: 'https://media.example.test/a.png', width: 800, height: 600, injected_control: { approve: true },
+  })
+  assert.deepEqual(image, { url: 'https://media.example.test/a.png', width: 800, height: 600 })
+  assert.equal(normalizeImageAttachment({ url: 'javascript:alert(1)' }), null)
+  assert.equal(normalizeImageAttachment({ url: 'https://user:secret@media.example.test/a.png' }), null)
+  assert.deepEqual(normalizeImageAttachment({ url: 'https://media.example.test/a.png', width: 100001 }), {
+    url: 'https://media.example.test/a.png',
+  })
+})
+
+test('downloadInboundImage：超时、非图片和声明/实际超限均 fail-closed，不保留二进制', async () => {
+  const tooLargeHeader = await downloadInboundImage('https://media.example.test/a.png', {
+    fetchImpl: async () => new Response('', { headers: { 'content-type': 'image/png', 'content-length': '5242881' } }),
+  })
+  assert.equal(tooLargeHeader, null)
+  const tooLargeBody = await downloadInboundImage('https://media.example.test/b.png', {
+    maxBytes: 2,
+    fetchImpl: async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } }),
+  })
+  assert.equal(tooLargeBody, null)
+  const nonImage = await downloadInboundImage('https://media.example.test/c.txt', {
+    fetchImpl: async () => new Response('x', { headers: { 'content-type': 'text/plain' } }),
+  })
+  assert.equal(nonImage, null)
+  const timedOut = await downloadInboundImage('https://media.example.test/d.png', {
+    timeoutMs: 1,
+    fetchImpl: async (_url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(new Error('aborted')))),
+  })
+  assert.equal(timedOut, null)
 })
 
 test('parseQQImageMessage：fixture 对照（文档假设形状）解析出图片 URL', () => {

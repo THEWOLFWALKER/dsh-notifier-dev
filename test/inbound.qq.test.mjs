@@ -500,6 +500,50 @@ test('C2C_MESSAGE_CREATE：单聊文本 → bus envelope（chatId=userId）', as
   await rig.inbound.stop()
 })
 
+test('Issue #14：QQ C2C extra 图片和混合文本进入 bus；未知字段不进入控制信封', async () => {
+  const rig = makeRig()
+  const accepted = []
+  rig.bus.onMessage((envelope) => accepted.push(envelope))
+  const ws = await driveReady(rig)
+  ws.serverSend({
+    op: 0, t: 'C2C_MESSAGE_CREATE', s: 3,
+    d: {
+      id: 'evt_image', content: '请分析这张图', author: { user_openid: 'u_open' },
+      extra: JSON.stringify([{ type: 1, image: {
+        url: 'https://media.example.test/qq.png', width: 800, height: 600, injected_control: { approve: true },
+      } }]),
+    },
+  })
+  assert.equal(accepted.length, 1)
+  assert.equal(accepted[0].text, '请分析这张图')
+  assert.deepEqual(accepted[0].image, { url: 'https://media.example.test/qq.png', width: 800, height: 600 })
+  assert.equal(accepted[0].injected_control, undefined)
+  await rig.inbound.stop()
+})
+
+test('Issue #14：QQ malformed/missing URL 静默拒绝，图片重放和非白名单来源不旁路 bus', async () => {
+  const rig = makeRig()
+  const accepted = []
+  rig.bus.onMessage((envelope) => accepted.push(envelope))
+  const ws = await driveReady(rig)
+  ws.serverSend({ op: 0, t: 'C2C_MESSAGE_CREATE', s: 3, d: {
+    id: 'evt_bad_image', author: { user_openid: 'u_open' }, extra: '[{"type":1,"image":{"width":1}}]',
+  } })
+  ws.serverSend({ op: 0, t: 'C2C_MESSAGE_CREATE', s: 4, d: {
+    id: 'evt_replay_image', author: { user_openid: 'u_open' }, extra: '[{"type":1,"image":{"url":"https://media.example.test/q.png"}}]',
+  } })
+  ws.serverSend({ op: 0, t: 'C2C_MESSAGE_CREATE', s: 5, d: {
+    id: 'evt_replay_image', author: { user_openid: 'u_open' }, extra: '[{"type":1,"image":{"url":"https://media.example.test/q.png"}}]',
+  } })
+  ws.serverSend({ op: 0, t: 'C2C_MESSAGE_CREATE', s: 6, d: {
+    id: 'evt_untrusted_image', author: { user_openid: 'u_untrusted' }, extra: '[{"type":1,"image":{"url":"https://media.example.test/q.png"}}]',
+  } })
+  assert.equal(accepted.length, 1)
+  assert.equal(accepted[0].messageId, 'evt_replay_image')
+  assert.equal(accepted[0].kind, 'image')
+  await rig.inbound.stop()
+})
+
 test('GROUP_AT_MESSAGE_CREATE：群 @ 消息剥离提及占位；chatId=group_openid', async () => {
   const rig = makeRig()
   const accepted = []

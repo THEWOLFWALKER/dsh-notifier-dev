@@ -10,8 +10,8 @@
 //    DISPLAY_NAMES、OUTBOUND_TO_INBOUND_ALIAS 全部迁到这里，后续只改一处；
 //  - 渐进式接入：现有消费方先不改行为，新增矩阵作为查询 API，后续逐步替换散存常量；
 //  - fail-closed：未知渠道的能力查询返回安全默认值（buttons=false 等）；
-//  - 证据驱动：image/file 入站能力只有在真机证据闭环后才置为 true，
-//    无证据的通道保持 gated=false（有接口但不接线）。
+//  - 证据驱动：image/file 入站能力只在对应 transport 已接线并有契约测试后置为 true；
+//    这不是实机验证声明，未知协议形状仍必须 fail-closed。
 //
 // ⚠️ 群聊敏感交互（审批/提问卡片）不在本矩阵的「能力」范围内——
 //    群聊仅普通消息/普通通知（README 明确不建议敏感用途），
@@ -124,7 +124,7 @@ export const CONNECTION_TYPES = Object.freeze({
  *  - actionCard: 是否实现 sendActionCard（v0.5 通知动作卡，如停止按钮）。
  *  - questionCard: 是否实现 sendQuestionCard（v0.8 远程提问选项卡）。
  *  - imageInbound: 入站是否支持图片消息归一（kind:'image'）。
- *    ⚠️ 证据门：只有真机确认 payload 形状后才置为 true，无证据保持 false（gated）。
+ *    true 表示已接线且有契约测试；它不等同于 `real-device-verified`。
  *  - fileInbound: 入站是否支持文件消息归一（kind:'file'）。同样是证据门。
  *  - sourceChatCheck: 按钮回调是否做来源会话校验（SEC-1，防转发点击）。
  *    无按钮通道此值无意义，但标记为 false 保持矩阵完整。
@@ -153,7 +153,7 @@ const CHANNEL_CAPABILITIES = Object.freeze({
     approvalCard: false, // 当前 sendApprovalCard 走纯文本（实际是发送含编号指引的消息）
     actionCard: false,
     questionCard: false,
-    imageInbound: false, // ⚠️ parseQQImageMessage 接口已就绪但未接线（无真机证据）
+    imageInbound: true,  // contract-tested: QQ C2C `extra` 图片段
     fileInbound: false,  // 无证据
     sourceChatCheck: false, // 无按钮，N/A
   },
@@ -171,7 +171,7 @@ const CHANNEL_CAPABILITIES = Object.freeze({
     approvalCard: false,
     actionCard: false,
     questionCard: false,
-    imageInbound: false, // 无证据（iLink 有图片消息但未解析）
+    imageInbound: true,  // contract-tested: iLink text/image item_list
     fileInbound: false,  // 无证据
     sourceChatCheck: false,
   },
@@ -180,7 +180,7 @@ const CHANNEL_CAPABILITIES = Object.freeze({
     approvalCard: false,
     actionCard: false,
     questionCard: false,
-    imageInbound: false, // 无证据
+    imageInbound: true,  // contract-tested: DingTalk picture/image URL fields
     fileInbound: false,  // 无证据
     sourceChatCheck: false,
   },

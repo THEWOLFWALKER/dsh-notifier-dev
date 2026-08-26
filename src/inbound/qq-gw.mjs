@@ -21,6 +21,7 @@ import { createTokenManager, createRateGate } from '../adapters/_tokens.mjs'
 import { setBounded, createThrottledWarn } from './_bounded.mjs'
 import { resolveNotifyTargets } from './target-guard.mjs'
 import { buildApprovalAction, parseApprovalAction, buildQuestionAction, parseQuestionAction } from './_contract.mjs'
+import { parseQQImageMessage } from './message.mjs'
 
 const TOKEN_URL = 'https://bots.qq.com/app/getAppAccessToken'
 const DEFAULT_API_BASE = 'https://api.sgroup.qq.com'
@@ -244,12 +245,20 @@ export function createQqInbound(options = {}) {
         const userId = String(d?.author?.user_openid ?? '')
         const messageId = String(d?.id ?? '')
         const text = String(d?.content ?? '').trim()
-        if (messageId === '' || userId === '' || text === '') return
+        // QQ's documented C2C image segment is carried by `extra`. Only the shared parser's
+        // known fields survive; a malformed/unknown segment never becomes text or control data.
+        const image = parseQQImageMessage(d)
+        if (messageId === '' || userId === '' || (text === '' && image === null)) return
         setBounded(targetKinds, userId, 'user', CHAT_STATE_MAX, onEvict)
         // v0.7：accept 返回值消费——拒绝/命令回执不再已读不回。
         // msg_id 必带（R5 审查 R5-3-P2-3：C2C 不带 msg_id 走主动消息额度，真机大概率被
         // 平台 4xx 拒掉——mock fetch 不校验被动回复权限，单测测不出；带 msg_id 走被动回复）
-        const result = bus.accept({ channel: 'qq', userId, chatId: userId, messageId, text })
+        const envelope = {
+          channel: 'qq', userId, chatId: userId, messageId,
+          text: text || '[图片消息]',
+          ...(image === null ? {} : { image: image.image, ...(text === '' ? { kind: 'image' } : {}) }),
+        }
+        const result = bus.accept(envelope)
         if (result?.reply !== undefined) {
           postMessage(userId, String(result.reply), messageId).catch((error) => {
             warn(`回执发送失败: ${error instanceof Error ? error.message : String(error)}`) // 回执失败不致命

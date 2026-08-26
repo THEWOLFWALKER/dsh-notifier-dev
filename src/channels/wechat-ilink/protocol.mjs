@@ -2,6 +2,7 @@
 // 这里故意不把未知字段映射成控制事件；只有白名单字段才会进入 Control Core。
 
 import { extractIlinkText, classifyIlinkResponse } from '../../inbound/_ilink-api.mjs'
+import { normalizeImageAttachment } from '../../inbound/message.mjs'
 import { createHash } from 'node:crypto'
 
 export const MAX_CURSOR_LENGTH = 4096
@@ -64,15 +65,13 @@ export function normalizeQrStatus(response) {
 export function normalizeImageItem(item) {
   if (!plain(item) || item.type !== 2 || !plain(item.image_item)) return null
   const raw = item.image_item
-  const url = [raw.url, raw.media_url, raw.download_url].map((v) => String(v ?? '').trim())
-    .find((v) => /^https?:\/\//i.test(v)) ?? ''
+  const attachment = normalizeImageAttachment(raw)
   const mediaId = String(raw.media_id ?? raw.mediaId ?? '').trim()
-  if (url === '' && mediaId === '') return null
+  const safeMediaId = mediaId.length <= 256 && !/[\u0000-\u001f\u007f]/.test(mediaId) ? mediaId : ''
+  if (attachment === null && safeMediaId === '') return null
   const image = {}
-  if (url !== '') image.url = url
-  if (mediaId !== '') image.mediaId = mediaId.slice(0, 256)
-  if (Number.isFinite(Number(raw.width))) image.width = Number(raw.width)
-  if (Number.isFinite(Number(raw.height))) image.height = Number(raw.height)
+  if (attachment !== null) Object.assign(image, attachment)
+  if (safeMediaId !== '') image.mediaId = safeMediaId
   return { kind: 'image', image }
 }
 

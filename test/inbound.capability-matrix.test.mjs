@@ -176,24 +176,24 @@ describe('capability-matrix: 各通道能力符合已知事实', () => {
     assert.equal(fs.sourceChatCheck, true)
   })
 
-  it('qq: 当前无按钮能力（批 6 前），图片入站 gated', () => {
+  it('qq: 当前无按钮能力（批 6 前），图片入站为 contract-tested', () => {
     const qq = capabilitiesOf('qq')
     assert.equal(qq.buttons, false)
     assert.equal(qq.approvalCard, false)
     assert.equal(qq.actionCard, false)
     assert.equal(qq.questionCard, false)
-    assert.equal(qq.imageInbound, false) // gated，无真机证据
+    assert.equal(qq.imageInbound, true)
     assert.equal(qq.sourceChatCheck, false)
   })
 
-  it('wxpusher / wechat / dingtalk: 无按钮能力', () => {
+  it('wxpusher / wechat / dingtalk: 无按钮能力；后两者图片入站为 contract-tested', () => {
     for (const ch of ['wxpusher', 'wechat', 'dingtalk']) {
       const caps = capabilitiesOf(ch)
       assert.equal(caps.buttons, false, `${ch} 无按钮`)
       assert.equal(caps.approvalCard, false, `${ch} 无审批卡`)
       assert.equal(caps.actionCard, false, `${ch} 无动作卡`)
       assert.equal(caps.questionCard, false, `${ch} 无提问卡`)
-      assert.equal(caps.imageInbound, false, `${ch} 图片入站 gated`)
+      assert.equal(caps.imageInbound, ch !== 'wxpusher', `${ch} 图片入站契约状态`)
     }
   })
 })

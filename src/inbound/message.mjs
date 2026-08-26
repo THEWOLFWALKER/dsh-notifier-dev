@@ -22,9 +22,83 @@ export const INBOUND_KINDS = Object.freeze({
 })
 
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+export const MAX_INBOUND_MEDIA_URL_LENGTH = 2048
+export const MAX_INBOUND_IMAGE_DIMENSION = 100000
+export const MAX_INBOUND_IMAGE_BYTES = 5 * 1024 * 1024
+export const DEFAULT_INBOUND_MEDIA_TIMEOUT_MS = 10000
 
 /** url 精确必须是非空字符串（fail-closed：缺 URL 的附件段不构成有效媒体消息）。 */
-const urlPresent = (value) => typeof value === 'string' && value.trim() !== ''
+const urlPresent = (value) => normalizeImageUrl(value) !== ''
+
+/**
+ * 仅接受显式 HTTP(S) 媒体地址。URL 不会被当作命令、回调载荷或状态值；禁止凭证段，
+ * 避免把对端携带的敏感片段带入 agent/audit 信封。
+ */
+export function normalizeImageUrl(value) {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (raw === '' || raw.length > MAX_INBOUND_MEDIA_URL_LENGTH) return ''
+  try {
+    const parsed = new URL(raw)
+    if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || parsed.hostname === ''
+      || parsed.username !== '' || parsed.password !== '') return ''
+    return parsed.href
+  } catch {
+    return ''
+  }
+}
+
+/** Produce a bounded, known-field image object; unknown provider fields are discarded. */
+export function normalizeImageAttachment(raw) {
+  if (!isPlainObject(raw)) return null
+  const url = normalizeImageUrl(raw.url ?? raw.media_url ?? raw.mediaUrl ?? raw.download_url ?? raw.downloadUrl)
+  if (url === '') return null
+  const image = { url }
+  for (const key of ['width', 'height']) {
+    const value = Number(raw[key])
+    if (Number.isFinite(value) && value > 0 && value <= MAX_INBOUND_IMAGE_DIMENSION) image[key] = value
+  }
+  return image
+}
+
+/**
+ * Optional image download primitive for provider bridges. It never persists a binary and only
+ * returns bounded metadata. Callers may omit it entirely; malformed URLs, redirects, oversized
+ * responses, and timeouts fail closed as `null`.
+ */
+export async function downloadInboundImage(url, options = {}) {
+  const safeUrl = normalizeImageUrl(url)
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch?.bind(globalThis)
+  const maxBytes = Math.min(MAX_INBOUND_IMAGE_BYTES, Math.max(1, Number(options.maxBytes) || MAX_INBOUND_IMAGE_BYTES))
+  const timeoutMs = Math.min(60000, Math.max(1, Number(options.timeoutMs) || DEFAULT_INBOUND_MEDIA_TIMEOUT_MS))
+  if (safeUrl === '' || typeof fetchImpl !== 'function') return null
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetchImpl(safeUrl, { signal: controller.signal, redirect: 'error' })
+    if (!response?.ok) return null
+    const declared = Number(response.headers?.get?.('content-length') ?? '')
+    if (Number.isFinite(declared) && declared > maxBytes) return null
+    const contentType = String(response.headers?.get?.('content-type') ?? '').split(';', 1)[0].trim().toLowerCase()
+    if (!contentType.startsWith('image/')) return null
+    const reader = response.body?.getReader?.()
+    if (reader === undefined) return null
+    let size = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value?.byteLength ?? 0
+      if (size > maxBytes) {
+        await reader.cancel().catch(() => {})
+        return null
+      }
+    }
+    return { url: safeUrl, contentType, size }
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 /**
  * 字符串化 extra（QQ 媒体事件负载）解析：JSON 字符串 → 数组。已解析的数组原样返回。
@@ -61,10 +135,12 @@ export function normalizeInboundMessage(input) {
     delete passthrough.file
     return { kind: INBOUND_KINDS.text, text: passthrough.text, ...passthrough }
   }
-  if (passthrough.kind === INBOUND_KINDS.image && isPlainObject(passthrough.image) && urlPresent(passthrough.image.url)) {
+  const image = normalizeImageAttachment(passthrough.image)
+  if (passthrough.kind === INBOUND_KINDS.image && image !== null) {
     delete passthrough.text
     delete passthrough.kind
-    return { kind: INBOUND_KINDS.image, image: passthrough.image, ...passthrough }
+    delete passthrough.image
+    return { ...passthrough, kind: INBOUND_KINDS.image, image }
   }
   if (passthrough.kind === INBOUND_KINDS.file && isPlainObject(passthrough.file) && urlPresent(passthrough.file.url)) {
     delete passthrough.kind
@@ -76,10 +152,8 @@ export function normalizeInboundMessage(input) {
 /**
  * QQ 单聊（C2C）图片消息解析接口。
  *
- * ⚠️ 协议证据状态：QQ 官方机器人 C2C 媒体事件的真实字段形状无真机样本核验，本接口
- *    按【文档描述的常见实现】解析，仅测试 fixture（test/fixtures/qq-c2c-image.json），
- *    **不接线**——qq-gw.mjs 及其余适配器均不 import 本函数。真机确认 extra 段形状后，
- *    在 qq-gw.handleDispatch 的 C2C 分支接入并落 CHANGELOG 说明启用依据。
+ * 协议证据状态：QQ 官方机器人 C2C 媒体事件的真实字段形状尚无真机样本核验。本接口按
+ * fixture 覆盖的 `extra` 段形状接线，属于 contract-tested，不能标记为 real-device-verified。
  *
  * 解析判据（全部满足才判定为图片，否则 null，fail-closed）：
  *  - eventData.extra：JSON 字符串（或已解析数组），内含媒体段数组；
@@ -94,10 +168,9 @@ export function parseQQImageMessage(eventData) {
   for (const segment of segments) {
     if (!isPlainObject(segment)) continue
     const typeOk = segment.type === 'image' || segment.type === 1
-    if (!typeOk || !isPlainObject(segment.image) || !urlPresent(segment.image.url)) continue
-    const image = { url: segment.image.url }
-    if (Number.isFinite(Number(segment.image.width))) image.width = Number(segment.image.width)
-    if (Number.isFinite(Number(segment.image.height))) image.height = Number(segment.image.height)
+    if (!typeOk) continue
+    const image = normalizeImageAttachment(segment.image)
+    if (image === null) continue
     return { kind: INBOUND_KINDS.image, image }
   }
   return null

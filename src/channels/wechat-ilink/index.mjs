@@ -26,7 +26,7 @@ export const WECHAT_ILINK_CAPABILITIES = Object.freeze({
   cursorRecovery: 'contract-tested',
   sessionExpiryRescan: 'contract-tested',
   text: 'contract-tested',
-  imageReceive: 'declared',
+  imageReceive: 'contract-tested',
   imageSend: 'declared',
   controlTextFallback: 'contract-tested',
   connectionStatus: 'contract-tested',
@@ -63,7 +63,7 @@ export function createWechatIlinkInbound(options = {}) {
     accountId: String(config.accountId ?? ''),
     capabilities: Object.freeze({
       ...legacy.capabilities,
-      imageInbound: false,
+      imageInbound: true,
       imageOutbound: false,
       evidence: WECHAT_ILINK_CAPABILITIES,
     }),
