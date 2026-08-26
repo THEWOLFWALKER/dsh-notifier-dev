@@ -2,7 +2,7 @@
 
 > 写给下一个 agent。本文档是完整的工作上下文快照：设计理念、军规约定、架构地图、
 > 版本脉络、审查记录、已知坑、待办清单。读完这一份即可无缝接手。
-> 当前快照：2026-08-26，开发线已合入 `c4fef26`。当前开发线 `npm test` = 1177（1176 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。QQ C2C 单聊原生按钮、GROUP 文本回退，以及 QQ/微信 iLink/钉钉图片代码已接线并通过契约测试；缺失 `chatType` 或未知来源控制 fail-closed，`conversation` 的 `routeUnsafe` 旁路已堵。Web/admin 与 desktop 仍无安全可复用的 `ask_user` settlement 入口，不能宣称双端共享；真实设备/宿主协议仍未验证，能力只能标记 declared/contract-tested。
+> 当前快照：2026-08-26，当前开发线 HEAD 为 `73154cd`（含 `c4fef26`）。当前开发线 `npm test` = 1177（1176 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。QQ C2C 单聊原生按钮、GROUP 文本回退，以及 QQ/微信 iLink/钉钉图片代码已接线并通过契约测试；缺失 `chatType` 或未知来源控制 fail-closed，`conversation` 的 `routeUnsafe` 旁路已堵。Web/admin 与 desktop 仍无安全可复用的 `ask_user` settlement 入口，不能宣称双端共享；真实设备/宿主协议仍未验证，能力只能标记 declared/contract-tested。
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
 > 2026-08-23 接力合入公共镜像 v0.8.5 发布内容（issue #11 ask_user 编号回复修复 + PR #9 飞书扫码 SDK 适配），见「当前接力交代」。
 > 上一稳定发布位 v0.8.6 = `bf03a1c`（npm `dsh-notifier@0.8.6`，公共镜像 `db42908` 已清理 node_modules/package-lock）。
@@ -58,7 +58,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 项 | 状态 |
 |---|---|
 | 版本 | package.json = 0.8.6；CHANGELOG、admin UI、双语 README 和发布守卫已同步；npm 已发布 `dsh-notifier@0.8.6`；公共镜像 `main` 已清理 `node_modules/` 与 `package-lock.json` |
-| git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前开发线含 `c4fef26`（文档同步分支未发布） |
+| git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前开发线 HEAD 为 `73154cd`（含 `c4fef26`，文档同步分支未发布） |
 | 测试 | `npm test` 已发布 v0.8.6 契约 = **909 tests**；当前开发线 = **1177**（1176 pass + 1 skip） |
 | 发布 | v0.8.6 已发布；下一位 agent 接手时无需再走发布 gate，除非版本再次 bump |
 | 真机验证 | 当前分支未完成真实设备/宿主协议验证；QQ/微信 iLink/钉钉图片与 QQ 按钮仅有 contract-tested/declared 证据。历史 v0.6.1/v0.7 验证记录保留在下文 |
