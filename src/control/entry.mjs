@@ -4,11 +4,53 @@
 // canonicalize -> normalize -> paired/source/policy check -> settle.
 
 import { normalizeControlEvent, makeReceipt } from './contract.mjs'
-import { createSessionArbiter, normalizeSessionPolicy } from './session-arbiter.mjs'
+import { createSessionArbiter, normalizeControlOverlay, normalizeSessionPolicy } from './session-arbiter.mjs'
 
 const text = (value) => typeof value === 'string' && value.trim() !== '' ? value.trim() : null
 const COMMANDS = new Set(['stop', 'question-answer', 'approval', 'steer', 'ordinary-message'])
 const DEFAULT_TTL_MS = 10 * 60 * 1000
+const OVERLAY_KEYS = new Set(['mode', 'owner', 'approvalOwnerOnly', 'approvalMembers'])
+
+/**
+ * A resolver is a read-side boundary, so unlike the persistence writers it must
+ * reject rather than silently clean a malformed value.  A bad/unknown overlay
+ * therefore falls back to the immutable base policy; it can never manufacture
+ * a source binding or widen authorization.  `normalizeControlOverlay` remains
+ * the canonical shape/bounds implementation, while this wrapper verifies that
+ * the resolver really returned an already-normalized four-field overlay.
+ */
+function resolverOverlay(value) {
+  if (value === undefined || value === null) return { ok: true, overlay: null }
+  if (typeof value !== 'object' || Array.isArray(value)) return { ok: false, reason: 'malformed' }
+  if (typeof value.then === 'function') return { ok: false, reason: 'async_not_supported' }
+  const proto = Object.getPrototypeOf(value)
+  if (proto !== Object.prototype && proto !== null) return { ok: false, reason: 'non_plain_object' }
+  const keys = Object.keys(value)
+  if (keys.some((key) => !OVERLAY_KEYS.has(key))) return { ok: false, reason: 'unknown_field' }
+  const normalized = normalizeControlOverlay(value)
+  try {
+    // Resolver output is intentionally strict.  Values that the persistence
+    // normalizer would trim/drop are not accepted as a new policy snapshot.
+    if (Object.prototype.hasOwnProperty.call(value, 'mode')
+      && value.mode !== 'team' && value.mode !== 'personal') return { ok: false, reason: 'invalid_mode' }
+    if (Object.prototype.hasOwnProperty.call(value, 'owner')) {
+      if (typeof value.owner !== 'string' || value.owner.trim() !== value.owner || normalized?.owner !== value.owner) {
+        return { ok: false, reason: 'invalid_owner' }
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(value, 'approvalOwnerOnly') && typeof value.approvalOwnerOnly !== 'boolean') {
+      return { ok: false, reason: 'invalid_approvalOwnerOnly' }
+    }
+    if (Object.prototype.hasOwnProperty.call(value, 'approvalMembers')) {
+      if (!Array.isArray(value.approvalMembers)) return { ok: false, reason: 'invalid_approvalMembers' }
+      const members = Array.isArray(normalized?.approvalMembers) ? normalized.approvalMembers : []
+      if (JSON.stringify(members) !== JSON.stringify(value.approvalMembers)) return { ok: false, reason: 'unnormalized_approvalMembers' }
+    }
+  } catch {
+    return { ok: false, reason: 'inspection_failed' }
+  }
+  return { ok: true, overlay: normalized }
+}
 
 function eventIdOf(input, command, key, now) {
   const explicit = text(input.eventId)
@@ -61,8 +103,14 @@ function paired(identity, event) {
  * `register()` is deliberately small so legacy routers can retain their
  * existing ledgers and handlers while routing the final decision through here.
  */
-export function createControlEntry({ policy = {}, identity = null, now = Date.now, logger = null, onAudit = null } = {}) {
+export function createControlEntry({ policy = {}, identity = null, now = Date.now, logger = null, onAudit = null, policyForSession = null, sessionPolicy = null } = {}) {
   const basePolicy = normalizeSessionPolicy(policy, now())
+  // `sessionPolicy` is the descriptive alias retained for callers that already
+  // use that term.  Two different resolvers are ambiguous and are disabled;
+  // static policy remains the safe fallback instead of choosing one silently.
+  const resolver = typeof policyForSession === 'function' && (sessionPolicy === null || sessionPolicy === policyForSession)
+    ? policyForSession
+    : (typeof sessionPolicy === 'function' && (policyForSession === null || policyForSession === sessionPolicy) ? sessionPolicy : null)
   const handlers = new Map()
   const handled = new Set()
   let disposed = false
@@ -163,6 +211,19 @@ export function createControlEntry({ policy = {}, identity = null, now = Date.no
       if (trueSource.userId !== null && trueSource.userId !== event.userId && input.trusted !== true) {
         return makeReceipt('rejected', event, 'source_mismatch_userId')
       }
+      let overlay = null
+      if (resolver !== null && event.sessionId !== null) {
+        try {
+          const resolved = resolverOverlay(resolver(event.sessionId))
+          if (!resolved.ok) {
+            audit({ status: 'policy_overlay_ignored', sessionId: event.sessionId, reason: resolved.reason })
+          } else {
+            overlay = resolved.overlay
+          }
+        } catch (error) {
+          audit({ status: 'policy_overlay_ignored', sessionId: event.sessionId, reason: 'resolver_failed', error })
+        }
+      }
       let specAuthorized = false
       if (typeof spec?.authorize === 'function') {
         specAuthorized = spec.authorize(input, pending, event) === true
@@ -176,7 +237,7 @@ export function createControlEntry({ policy = {}, identity = null, now = Date.no
       const mergedPolicy = normalizeSessionPolicy({
         ...basePolicy,
         ...rowMeta,
-        mode: rowMeta.mode ?? basePolicy.mode,
+        ...(overlay ?? {}),
         capabilities: { ...basePolicy.capabilities, ...(rowMeta.capabilities ?? {}) },
         sessionId: policySource('sessionId'),
         channel: policySource('channel'),
@@ -188,7 +249,10 @@ export function createControlEntry({ policy = {}, identity = null, now = Date.no
           basePolicy.expiresAt !== null && Number.isFinite(Number(basePolicy.expiresAt)) ? Number(basePolicy.expiresAt) : Infinity,
           event.expiresAt !== null && Number.isFinite(Number(event.expiresAt)) ? Number(event.expiresAt) : Infinity,
         ),
-        owner: text(rowMeta.owner) ?? text(basePolicy.owner),
+        mode: overlay?.mode ?? rowMeta.mode ?? basePolicy.mode,
+        owner: overlay?.owner ?? text(rowMeta.owner) ?? text(basePolicy.owner),
+        approvalOwnerOnly: overlay?.approvalOwnerOnly ?? rowMeta.approvalOwnerOnly ?? basePolicy.approvalOwnerOnly,
+        approvalMembers: overlay?.approvalMembers ?? rowMeta.approvalMembers ?? basePolicy.approvalMembers,
       }, now())
       // Owner / team-member settlement is the only authorization that derives its
       // conversation source from the policy; when that source genuinely does not

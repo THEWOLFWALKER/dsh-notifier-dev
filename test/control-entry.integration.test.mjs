@@ -267,3 +267,127 @@ test('team member authorization stays fail-closed on wrong chat and group chat, 
   assert.equal(control.handle({ ...base, eventId: 'gr', chatType: 'group' }).reason, 'group_chat_disabled')
   assert.equal(settled.length, 0)
 })
+
+function overlayPending(userId = 'member-1', extra = {}) {
+  return {
+    status: 'pending', sessionId: 'session-overlay', agentId: 'session-overlay',
+    channel: 'telegram', accountId: 'tg-app', chatId: 'tg-chat', userId,
+    policyVersion: '1', createdAt: 100, expiresAt: 1000, ...extra,
+  }
+}
+
+function runOverlayApproval({ overlay, pendingRow = overlayPending(), policy = {}, input = {}, resolver = null } = {}) {
+  const settled = []
+  const options = { now: () => 150, policy: { capabilities: { approve: true }, ...policy } }
+  if (resolver !== null) options.policyForSession = resolver
+  else if (overlay !== undefined) options.sessionPolicy = () => overlay
+  const control = createControlEntry(options)
+  const result = control.handle({
+    eventId: 'overlay-event', command: 'approval', approvalKey: 'overlay-key',
+    channel: 'telegram', accountId: 'tg-app', chatId: 'tg-chat', userId: pendingRow.userId,
+    sessionId: pendingRow.sessionId, policyVersion: '1', chatType: 'private',
+    pending: pendingRow,
+    ...input,
+    settle: (inputEnvelope, row, event, normalizedPolicy) => { settled.push({ event, row, normalizedPolicy }); return true },
+  })
+  return { result, settled, control }
+}
+
+test('persisted session overlay authorizes a listed team member without replacing source binding', () => {
+  const hit = runOverlayApproval({
+    overlay: {
+      mode: 'team', owner: 'owner-1',
+      approvalMembers: [{ channel: 'telegram', accountId: 'tg-app', userId: 'member-1' }],
+    },
+  })
+  assert.equal(hit.result.status, 'accepted')
+  assert.equal(hit.settled[0].normalizedPolicy.owner, 'owner-1')
+  assert.equal(hit.settled[0].normalizedPolicy.approvalMembers.length, 1)
+})
+
+test('session overlay team member cannot cross channel/account/chat/user bindings', () => {
+  const overlay = {
+    mode: 'team', owner: 'owner-1',
+    approvalMembers: [{ channel: 'telegram', accountId: 'tg-app', userId: 'member-1' }],
+  }
+  for (const input of [
+    { channel: 'feishu' },
+    { accountId: 'other-app' },
+    { chatId: 'other-chat' },
+    { userId: 'intruder' },
+  ]) {
+    const pendingRow = overlayPending(input.userId ?? 'member-1')
+    const hit = runOverlayApproval({ overlay, pendingRow, input })
+    assert.equal(hit.result.status, 'rejected', JSON.stringify(input))
+    assert.equal(hit.settled.length, 0, JSON.stringify(input))
+  }
+})
+
+test('session overlay approvalOwnerOnly allows only the source-bound owner', () => {
+  const overlay = { mode: 'team', owner: 'owner-1', approvalOwnerOnly: true }
+  const member = runOverlayApproval({ overlay })
+  assert.equal(member.result.reason, 'owner_only')
+  const owner = runOverlayApproval({ overlay, pendingRow: overlayPending('owner-1'), input: { userId: 'owner-1' } })
+  assert.equal(owner.result.status, 'accepted')
+  const wrongChannelOwner = runOverlayApproval({
+    overlay, pendingRow: overlayPending('owner-1'), input: { userId: 'owner-1', channel: 'feishu', accountId: 'fs-app' },
+  })
+  assert.equal(wrongChannelOwner.result.status, 'rejected')
+  assert.equal(wrongChannelOwner.settled.length, 0)
+})
+
+test('session overlay keeps personal defaults and approvalMembers never widen conversation commands', () => {
+  const personal = runOverlayApproval({ overlay: { mode: 'personal' } })
+  assert.equal(personal.result.status, 'accepted', 'overlay must not change the personal approval default')
+
+  const control = createControlEntry({
+    now: () => 150,
+    policy: { mode: 'personal', owner: 'owner-1', channel: 'telegram', accountId: 'tg-app', userId: 'owner-1', capabilities: { converse: true } },
+    policyForSession: () => ({ mode: 'team', approvalMembers: [{ channel: 'telegram', accountId: 'tg-app', userId: 'member-1' }] }),
+  })
+  const pendingRow = overlayPending('owner-1')
+  const result = control.handle({
+    eventId: 'ordinary-overlay', command: 'ordinary-message', channel: 'telegram', accountId: 'tg-app',
+    userId: 'member-1', chatId: 'tg-chat', sessionId: 'session-overlay', policyVersion: '1',
+    pending: pendingRow, settle: () => true,
+  })
+  assert.equal(result.status, 'rejected')
+  assert.equal(result.reason, 'source_mismatch_userId')
+})
+
+test('resolver throws, returns unknown/source/unnormalized fields, or is async: static base policy remains fail-closed', () => {
+  const base = { mode: 'team', owner: 'owner-1', approvalOwnerOnly: true, channel: 'telegram', accountId: 'tg-app', capabilities: { approve: true } }
+  for (const resolver of [
+    () => { throw new Error('store unavailable') },
+    () => ({ mode: 'team', approvalMembers: [{ channel: 'telegram', accountId: 'tg-app', userId: 'member-1' }], evil: true }),
+    () => ({ channel: 'feishu', owner: 'owner-1' }),
+    () => Promise.resolve({ mode: 'team', approvalMembers: [] }),
+  ]) {
+    const hit = runOverlayApproval({ policy: base, resolver, input: { trusted: true } })
+    assert.equal(hit.result.status, 'rejected')
+    assert.equal(hit.result.reason, 'owner_only')
+    assert.equal(hit.settled.length, 0)
+  }
+})
+
+test('resolver is keyed by the exact session id and is not consulted when normalization has no session id', () => {
+  const seen = []
+  const hit = runOverlayApproval({
+    policy: { mode: 'team', owner: 'owner-1', approvalOwnerOnly: true, channel: 'telegram', accountId: 'tg-app', capabilities: { approve: true } },
+    resolver: (sessionId) => { seen.push(sessionId); return sessionId === 'other-session' ? { mode: 'team', approvalMembers: [{ channel: 'telegram', accountId: 'tg-app', userId: 'member-1' }] } : null },
+    input: { trusted: true },
+  })
+  assert.deepEqual(seen, ['session-overlay'])
+  assert.equal(hit.result.reason, 'owner_only')
+
+  let calls = 0
+  const control = createControlEntry({ now: () => 150, policyForSession: () => { calls++; return { mode: 'team' } } })
+  control.register('approval', {
+    getPending: () => overlayPending('member-1'),
+    buildEvent: () => ({ eventId: 'missing-session', source: 'mobile', channel: 'telegram', accountId: 'tg-app', userId: 'member-1', chatId: 'tg-chat', policyVersion: '1', command: 'approval', createdAt: 100, expiresAt: 1000 }),
+    settle: () => true,
+  })
+  const result = control.handle({ eventId: 'missing-session', command: 'approval', approvalKey: 'overlay-key', channel: 'telegram', accountId: 'tg-app', userId: 'member-1', chatId: 'tg-chat' })
+  assert.equal(result.reason, 'missing_sessionId')
+  assert.equal(calls, 0)
+})
