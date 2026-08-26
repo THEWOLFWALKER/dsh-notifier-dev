@@ -8,6 +8,7 @@
 > 上一稳定发布位 v0.8.6 = `bf03a1c`（npm `dsh-notifier@0.8.6`，公共镜像 `db42908` 已清理 node_modules/package-lock）。
 > 快照刷新：2026-08-26，Task 04 首次配置 UX 已完成：本地管理台首屏显示四态进度，个人模式默认隐藏绑定/会话高级导航，通道空状态改为字段配置指引，测试成功/失败显示下一步与重试文案；仍保持 loopback/Bearer/零依赖边界。CC-1 补齐提问编号回复的 `(channel,userId,chatId)` 隔离，Task 02 契约 facade（`29ef031`）与 Task 03 session arbiter 已完成，但两者尚未接入具体 IM。`notifyAll().delivered` 仍只有渠道级证据，不能推导具体 chat 送达；未获逐目标 `sendText` 确认的编号兜底保持 fail-closed。PR #12 仅作参考，QQ 原生按钮、提问卡片与 `approval.parallel` 均等待后续批次重写，绝不整体 cherry-pick。公共仓库 issue 快照：#16/#15/#14/#13/#10 等仍开放；私有库是唯一开发基线，公共库不 push/merge/release。版本串停在已发布 v0.8.6 / 909，发版轮再统一提。
 > 批次 4（2026-08-26）微信 iLink provider slice 已接入 `src/channels/wechat-ilink/`：单账号 QR-first、bounded long-poll、账号命名空间 cursor/context、整批交付后推进游标、断线重连/stop、明确 QR 过期状态、文本/编号 fallback、连接状态和结构化图片 envelope。旧 `src/inbound/wechat-ilink.mjs` 保留兼容入口；图片收发仅有可选 media bridge，能力状态为 `declared`，没有真实协议/设备验证，不得标记正式支持。新 focused tests 位于 `test/channels/wechat-ilink.test.mjs`。
+> 批次 5（2026-08-26）飞书与 Telegram provider facade 已建立在 `src/channels/feishu/`、`src/channels/telegram/`：回调归一化强制 user/chat 来源字段，能力证据分别记录为 contract-tested/declared；既有 inbound transport 保持兼容，控制权限仍由 provider-neutral Control Core/session arbiter 负责。文件发送只通过显式 adapter seam，未做真实平台/设备验证，不能标记 `real-device-verified`。focused tests 位于 `test/channels/feishu.test.mjs`、`test/channels/telegram.test.mjs`。
 
 ## 方向决策（2026-08-25，规划态）
 

@@ -5,6 +5,13 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 新增：飞书与 Telegram provider facades（批次 5，2026-08-26）
+
+- 新增 `src/channels/feishu/` 与 `src/channels/telegram/` 独立 provider 入口；旧 inbound 模块继续作为兼容实现，控制语义仍统一复用 Control Core / session arbiter。
+- 两个 provider 暴露来源绑定的回调归一化、生命周期入口和能力证据；未知/缺失 `chatId` 或 `userId` 的回调不会进入控制路径。
+- 飞书富文本卡片、更新、按钮回调、群聊来源校验与 WebSocket 生命周期标记为 `contract-tested`；Telegram 命令、inline buttons、消息编辑、4096 UTF-16 文本护栏、重连和文本兜底沿用既有契约。
+- 文件发送仅保留显式 `fileAdapter` 接口，能力状态为 `declared`；没有真实平台/设备验证，不标记 `real-device-verified`，不宣称正式支持。
+
 ### 新增：微信 iLink 单账号 QR-first provider slice（批次 4，2026-08-26）
 
 - 新增 `src/channels/wechat-ilink/` provider 边界；旧 `src/inbound/wechat-ilink.mjs` 保留兼容入口，应用装配已切换到新边界。
