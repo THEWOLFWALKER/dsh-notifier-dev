@@ -22,6 +22,11 @@
 import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { CHANNEL_TYPES, channelFieldsOf } from '../config.mjs'
+import {
+  CONTROL_OVERLAY_MAX_MEMBERS,
+  CONTROL_OVERLAY_MAX_STRING,
+  isGlobalControlValue,
+} from '../control/session-arbiter.mjs'
 
 /**
  * 入站通道全集（与 inbound 装配一一对应；出站全集 = config.mjs 的 CHANNEL_TYPES）。
@@ -82,6 +87,26 @@ function deepCopyPlain(value) {
   } catch {
     return value
   }
+}
+
+/**
+ * 会话控制覆盖层的**安全脱敏摘要**（getSessions 行 / patchSessionControl 返回值用）。
+ * 只暴露 mode / approvalOwnerOnly / ownerConfigured / approvalMembersCount——绝不回显任何
+ * 原始 owner、成员 channel/accountId/userId 标识（credential/identifier 零泄漏；token 与完整
+ * 身份从不进入任何 API 响应）。覆盖层缺失或损坏时返回 undefined（行内省略该键）。
+ * @param {unknown} control - route:sessions[id].control 原始值。
+ * @returns {{mode?: string, approvalOwnerOnly?: boolean, ownerConfigured?: boolean,
+ *   approvalMembersCount?: number} | undefined}
+ */
+function controlSummary(control) {
+  const raw = plainObjectOf(control)
+  if (raw === null || Object.keys(raw).length === 0) return undefined
+  const summary = {}
+  if (raw.mode === 'team' || raw.mode === 'personal') summary.mode = raw.mode
+  if (typeof raw.approvalOwnerOnly === 'boolean') summary.approvalOwnerOnly = raw.approvalOwnerOnly
+  if (typeof raw.owner === 'string' && raw.owner !== '') summary.ownerConfigured = true
+  if (Array.isArray(raw.approvalMembers)) summary.approvalMembersCount = raw.approvalMembers.length
+  return Object.keys(summary).length > 0 ? summary : undefined
 }
 
 /**
@@ -628,6 +653,8 @@ export function createAdminApi(options = {}) {
         if (rec.disposedAt !== undefined) row.disposedAt = rec.disposedAt
         if (rec.outbound !== undefined) row.outbound = deepCopyPlain(rec.outbound)
         if (rec.inbound !== undefined) row.inbound = deepCopyPlain(rec.inbound)
+        const ctrl = controlSummary(rec.control)
+        if (ctrl !== undefined) row.control = ctrl // Stage 4 安全脱敏覆盖层摘要（绝无原始标识符）
         rows.push(row)
       }
       rows.sort((a, b) => (a.active === b.active
@@ -685,6 +712,119 @@ export function createAdminApi(options = {}) {
       appendAudit('patchSession', { id, diff: normalized })
       const outbound = plainObjectOf(plainObjectOf(readTable(KEY_SESSIONS)[id])?.outbound)
       return { id, outbound: outbound === null ? undefined : deepCopyPlain(outbound) }
+    },
+
+    /**
+     * 写会话控制覆盖层（Stage 4：持久化已评审的 owner / approvalOwnerOnly / approvalMembers）。
+     * 字段级 diff（与 patchSession 同语义）：出现且值为 null 的字段删除（回落 basePolicy），
+     * 出现且非空写入，未出现不动；覆盖层清空即整键移除。
+     *
+     * 校验（失败抛 ApiError(422)，零写入）：未知字段、保留键、以及**任何来源字段**
+     * （channel/accountId/userId/chatId/sessionId/policyVersion/expiresAt/revoked）一律拒绝——
+     * 授权来源只能来自会话真实来源（fail-closed，admin 载荷绝不能铸造 channel/account/user/chat）；
+     * mode 仅 team/personal；owner 非空字符串、≤128、非通配/全局；approvalOwnerOnly 布尔；
+     * approvalMembers 数组 ≤64、每项 { channel, accountId, userId } 全非空≤128 非通配且无未知键。
+     * 会话从未建档 → 404；存储写入失败 → 500。返回脱敏摘要（绝无原始标识符）。
+     *
+     * @param {string} id - 会话 id（=== agent.id）。
+     * @param {{ mode?: string|null, owner?: string|null, approvalOwnerOnly?: boolean|null,
+     *            approvalMembers?: Array<object>|null }} diff - 见字段级语义。
+     * @returns {{ id: string, control?: object }} control = 写后覆盖层的安全脱敏摘要（清空为 undefined）。
+     * @throws {ApiError} 422 入参校验失败；404 会话从未建档；500 存储写入失败。
+     */
+    patchSessionControl(id, diff) {
+      if (typeof id !== 'string' || id.trim() === '') throw new ApiError(422, '会话 id 必须是非空字符串')
+      if (plainObjectOf(diff) === null) {
+        throw new ApiError(422, '请求体必须是对象（{ mode?, owner?, approvalOwnerOnly?, approvalMembers? }）')
+      }
+      const SOURCE_FIELDS = ['channel', 'accountId', 'userId', 'chatId', 'sessionId', 'policyVersion', 'expiresAt', 'revoked']
+      const OVERLAY_FIELDS = ['mode', 'owner', 'approvalOwnerOnly', 'approvalMembers']
+      const normalized = {}
+      for (const key of Object.keys(diff)) {
+        const value = diff[key]
+        if (key === 'mode') {
+          if (value !== null && value !== 'team' && value !== 'personal') {
+            throw new ApiError(422, 'mode 只能是 "team" 或 "personal"（或 null 清除）')
+          }
+          normalized.mode = value === null ? null : value
+        } else if (key === 'owner') {
+          if (value === null) {
+            normalized.owner = null
+          } else {
+            if (typeof value !== 'string' || value.trim() === '') {
+              throw new ApiError(422, 'owner 必须是非空字符串或 null')
+            }
+            const owner = value.trim()
+            if (owner.length > CONTROL_OVERLAY_MAX_STRING) {
+              throw new ApiError(422, `owner 超过 ${CONTROL_OVERLAY_MAX_STRING} 字符上限`)
+            }
+            if (isGlobalControlValue(owner)) throw new ApiError(422, 'owner 不可为通配/全局占位')
+            normalized.owner = owner
+          }
+        } else if (key === 'approvalOwnerOnly') {
+          if (value !== null && typeof value !== 'boolean') {
+            throw new ApiError(422, 'approvalOwnerOnly 必须是布尔值或 null')
+          }
+          normalized.approvalOwnerOnly = value === null ? null : value
+        } else if (key === 'approvalMembers') {
+          if (value === null) {
+            normalized.approvalMembers = null
+          } else {
+            if (!Array.isArray(value)) throw new ApiError(422, 'approvalMembers 必须是数组或 null')
+            if (value.length > CONTROL_OVERLAY_MAX_MEMBERS) {
+              throw new ApiError(422, `approvalMembers 超过 ${CONTROL_OVERLAY_MAX_MEMBERS} 项上限`)
+            }
+            const members = []
+            for (const entry of value) {
+              const obj = plainObjectOf(entry)
+              if (obj === null) {
+                throw new ApiError(422, 'approvalMembers 每项必须是对象 { channel, accountId, userId }')
+              }
+              for (const k of Object.keys(obj)) {
+                if (k !== 'channel' && k !== 'accountId' && k !== 'userId') {
+                  throw new ApiError(422, `approvalMembers 每项只允许 channel/accountId/userId，收到 "${k}"`)
+                }
+              }
+              const triple = {}
+              for (const k of ['channel', 'accountId', 'userId']) {
+                const v = typeof obj[k] === 'string' ? obj[k].trim() : ''
+                if (v === '') throw new ApiError(422, `approvalMembers 每项的 "${k}" 必须是非空字符串`)
+                if (v.length > CONTROL_OVERLAY_MAX_STRING) {
+                  throw new ApiError(422, `approvalMembers 每项 "${k}" 超过 ${CONTROL_OVERLAY_MAX_STRING} 字符上限`)
+                }
+                if (isGlobalControlValue(v)) {
+                  throw new ApiError(422, `approvalMembers 每项 "${k}" 不可为通配/全局占位`)
+                }
+                triple[k] = v
+              }
+              members.push(triple)
+            }
+            normalized.approvalMembers = members
+          }
+        } else if (DANGEROUS_KEYS.has(key)) {
+          throw new ApiError(422, `保留键 "${key}" 不可写入（${[...DANGEROUS_KEYS].join('/')}）`)
+        } else if (SOURCE_FIELDS.includes(key)) {
+          throw new ApiError(422, `"${key}" 是会话来源字段，不可经管理台设置——授权来源只能来自会话真实来源（fail-closed）`)
+        } else {
+          throw new ApiError(422, `未知字段 "${key}"（可用：${OVERLAY_FIELDS.join('/')}）`)
+        }
+      }
+      if (Object.keys(normalized).length === 0) {
+        throw new ApiError(422, '至少提供 mode/owner/approvalOwnerOnly/approvalMembers 之一')
+      }
+
+      // 从未建档判定：store 无记录且 registry 无记录（同 patchSession 口径）
+      const stored = plainObjectOf(readTable(KEY_SESSIONS)[id])
+      if (stored === null && registrySessionOf(id) === undefined) {
+        throw new ApiError(404, `会话 "${id}" 不存在`)
+      }
+
+      if (!callSetter(router?.setSessionControl, id, normalized)) {
+        throw new ApiError(500, '会话控制覆盖写入存储失败')
+      }
+      appendAudit('setSessionControl', { id, diff: controlSummary(normalized) })
+      const control = plainObjectOf(plainObjectOf(readTable(KEY_SESSIONS)[id])?.control)
+      return { id, control: controlSummary(control) }
     },
 
     /**

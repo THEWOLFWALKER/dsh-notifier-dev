@@ -10,6 +10,8 @@ const text = (value) => typeof value === 'string' && value.trim() !== '' ? value
 // Bounded optional team-approval member list: never wildcard/global/empty,
 // never an unbounded array, never arbitrary nested shapes.
 const MAX_APPROVAL_MEMBERS = 64
+/** Per-session control overlay string bound (owner / member ids): far above any real id, bounds garbage. */
+const MAX_OVERLAY_STRING = 128
 const GLOBAL_IDS = new Set(['*', 'all', 'everyone', 'anyone'])
 const looksGlobal = (value) => value.includes('*') || GLOBAL_IDS.has(String(value).toLowerCase())
 
@@ -31,6 +33,40 @@ function normalizeApprovalMembers(input) {
     members.push(Object.freeze({ channel, accountId, userId }))
   }
   return Object.freeze(members)
+}
+
+/** Shared limits for the persisted per-session control overlay (admin + registry + router all import). */
+export const CONTROL_OVERLAY_MAX_MEMBERS = MAX_APPROVAL_MEMBERS
+export const CONTROL_OVERLAY_MAX_STRING = MAX_OVERLAY_STRING
+
+/** Whether a string is a wildcard/global placeholder (never a usable owner/member id). */
+export function isGlobalControlValue(value) {
+  return looksGlobal(value)
+}
+
+/**
+ * Canonical, minimal per-session control overlay. This is the SINGLE definition of what a valid
+ * overlay is — the session registry, the router setter, and the admin layer all funnel through it so
+ * shape/bounds/rejections never drift. It intentionally carries ONLY the four approved fields, never
+ * a source binding: `channel/accountId/userId/chatId/sessionId/policyVersion/expiresAt/revoked` are
+ * dropped even if supplied (an admin or a corrupted store edit must never manufacture the channel/
+ * account/user a later authorization compares against). Never throws; malformed input yields a smaller
+ * (or null) overlay, exactly like `normalizeApprovalMembers` drops bad members.
+ *
+ * @param {unknown} input - raw overlay candidate (e.g. router diff, registry write, corrupted store).
+ * @returns {object|null} frozen { mode?, owner?, approvalOwnerOnly?, approvalMembers? } with only the
+ *   fields that carried a real value, or null when nothing valid remains.
+ */
+export function normalizeControlOverlay(input) {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) return null
+  const out = {}
+  if (input.mode === 'team' || input.mode === 'personal') out.mode = input.mode
+  const owner = text(input.owner)
+  if (owner !== null && owner.length <= MAX_OVERLAY_STRING && !looksGlobal(owner)) out.owner = owner
+  if (typeof input.approvalOwnerOnly === 'boolean') out.approvalOwnerOnly = input.approvalOwnerOnly
+  const members = normalizeApprovalMembers(input.approvalMembers)
+  if (members.length > 0) out.approvalMembers = members
+  return Object.keys(out).length > 0 ? Object.freeze(out) : null
 }
 
 export function normalizeSessionPolicy(input = {}, now = Date.now()) {

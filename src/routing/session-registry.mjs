@@ -16,6 +16,7 @@
 
 import { basename } from 'node:path'
 import { createHostEventRegistrar, normalizeAgentLifecyclePayload } from '../host-events.mjs'
+import { normalizeControlOverlay } from '../control/session-arbiter.mjs'
 
 /** state.json 会话表键（与既有 bind:* / *:account 同域，§2）。 */
 const SESSIONS_KEY = 'route:sessions'
@@ -33,6 +34,11 @@ const HOUR_MS = 3_600_000
 const nonNegativeMs = (value, fallback) => {
   const n = Number(value)
   return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
+/** 深拷贝纯 JSON 值（控制覆盖层 copy-on-read：外部读改返回值绝不污染注册表内存态）。 */
+function deepCopyPlain(value) {
+  try { return JSON.parse(JSON.stringify(value ?? null)) } catch { return value }
 }
 
 /**
@@ -388,6 +394,63 @@ export function createSessionRegistry(options = {}) {
       if (Object.keys(merged).length > 0) record.outbound = merged
       else delete record.outbound
       persist()
+      return { ...record }
+    },
+
+    /**
+     * 读会话控制覆盖层（route:sessions[id].control，Stage 4 会话策略持久化的字段级覆盖）。
+     * 返回值是该覆盖层的**规范化深拷贝**：只含 mode/owner/approvalOwnerOnly/approvalMembers 四个
+     * 已批准字段，绝不携带来源字段（channel/accountId/userId/chatId/sessionId），甚至损坏的
+     * control 子键也经 normalizeControlOverlay 清洗后才回读——copy-on-read，外部改返回值不污染内部。
+     * @param {string} sessionId
+     * @returns {object|undefined} 规范覆盖层深拷贝；记录不存在或覆盖层为空/损坏时 undefined
+     */
+    getControl(sessionId) {
+      const record = recordOf(String(sessionId ?? ''))
+      if (record === undefined) return undefined
+      const normalized = normalizeControlOverlay(record.control)
+      return normalized === null ? undefined : deepCopyPlain(normalized)
+    },
+
+    /**
+     * 写会话控制覆盖层（diff 字段级合并，非快照——与 setOutbound 同语义）：
+     * diff 中**出现**且值为 null/undefined 的字段从覆盖层删除（回落 basePolicy）；出现且非空的写入
+     * （写入前一律经 normalizeControlOverlay 清洗，越界/通配/来源字段静默丢弃，绝不投毒）；
+     * 未出现的字段不动。记录不存在时惰性建最小记录。写前先合并到现有覆盖层再整体归一再落盘，
+     * 保证即便是直接内存直写或损坏输入也不会让无效字段进店。写盘失败按既有 store 防御壳降级
+     * （内存态继续工作，绝不向上抛）。
+     * @param {string} sessionId
+     * @param {object} diff - { mode?, owner?, approvalOwnerOnly?, approvalMembers? }；null 值 = 删键
+     * @returns {object|undefined} 写后记录副本（含新覆盖层）；sessionId 空时 undefined
+     */
+    setControl(sessionId, diff) {
+      const id = String(sessionId ?? '')
+      if (id === '') return undefined
+      const record = ensureRecord(id)
+      const existing = normalizeControlOverlay(record.control)
+      const merged = existing === null ? {} : deepCopyPlain(existing)
+      const input = diff !== null && typeof diff === 'object' ? diff : {}
+      for (const key of ['mode', 'owner', 'approvalOwnerOnly', 'approvalMembers']) {
+        if (!Object.prototype.hasOwnProperty.call(input, key)) continue
+        const value = input[key]
+        if (value === undefined || value === null) delete merged[key]
+        else merged[key] = value
+      }
+      const normalized = normalizeControlOverlay(merged)
+      if (normalized === null) delete record.control
+      else record.control = deepCopyPlain(normalized)
+      persist()
+      return { ...record }
+    },
+
+    /** 清空会话控制覆盖层（幂等；记录/覆盖层不存在时安全无操作）。 */
+    clearControl(sessionId) {
+      const record = recordOf(String(sessionId ?? ''))
+      if (record === undefined) return undefined
+      if (record.control !== undefined) {
+        delete record.control
+        persist()
+      }
       return { ...record }
     },
 

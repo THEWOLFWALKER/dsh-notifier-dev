@@ -438,3 +438,81 @@ test('防御：ctx 缺失 / ctx.on 抛错 / store 缺失——绝不抛，降级
   assert.equal(memoryOnly.getSession('s3').inherit, 'p')
   memoryOnly.dispose()
 })
+
+// ---- Stage 4：会话控制覆盖层（getControl / setControl / clearControl）----
+
+test('setControl/getControl：minimal 覆盖层只落已批准字段，来源字段被丢弃，read 为深拷贝', () => {
+  const { registry, raw } = makeRegistry()
+  const rec = registry.setControl('s1', { mode: 'team', owner: 'u1', approvalOwnerOnly: true, approvalMembers: [{ channel: 'telegram', accountId: 'a1', userId: 'u2' }] })
+  assert.equal(rec.control.mode, 'team')
+  assert.deepEqual(registry.getControl('s1'), {
+    mode: 'team', owner: 'u1', approvalOwnerOnly: true,
+    approvalMembers: [{ channel: 'telegram', accountId: 'a1', userId: 'u2' }],
+  })
+  // copy-on-read：改返回值不污染内部
+  const copy = registry.getControl('s1')
+  copy.approvalOwnerOnly = false
+  copy.approvalMembers[0].userId = 'hacked'
+  assert.equal(registry.getControl('s1').approvalOwnerOnly, true)
+  assert.equal(registry.getControl('s1').approvalMembers[0].userId, 'u2')
+  // 来源字段绝不进店
+  const hostile = registry.setControl('s1', { channel: 'feishu', accountId: 'z1', userId: 'evil', chatId: 'c9', sessionId: 's9' })
+  assert.deepEqual(hostile.control, {
+    mode: 'team', owner: 'u1', approvalOwnerOnly: true,
+    approvalMembers: [{ channel: 'telegram', accountId: 'a1', userId: 'u2' }],
+  })
+  // 直接内存直写来源字段，下一次读/写即清洗
+  raw().s1.control = { ...raw().s1.control, channel: 'feishu' }
+  const cleaned = registry.getControl('s1')
+  assert.equal('channel' in cleaned, false)
+})
+
+test('setControl 字段级 diff：null 删键、未出现键不动、个人默认 safe', () => {
+  const { registry } = makeRegistry()
+  registry.setControl('s1', { mode: 'team', owner: 'u1', approvalMembers: [{ channel: 'telegram', accountId: 'a1', userId: 'u2' }] })
+  // 仅改 approvalOwnerOnly：其余保留
+  let rec = registry.setControl('s1', { approvalOwnerOnly: true })
+  assert.deepEqual(registry.getControl('s1'), {
+    mode: 'team', owner: 'u1', approvalOwnerOnly: true,
+    approvalMembers: [{ channel: 'telegram', accountId: 'a1', userId: 'u2' }],
+  })
+  // null 删键：owner 回退 basePolicy（个人）/默认
+  rec = registry.setControl('s1', { owner: null })
+  assert.equal(registry.getControl('s1').owner, undefined)
+  // 清空全部后 control 键移除
+  const emptied = registry.setControl('s1', { mode: null, approvalOwnerOnly: null, approvalMembers: null })
+  assert.equal(registry.getControl('s1'), undefined)
+  assert.equal('control' in emptied, false)
+})
+
+test('getControl/clearControl：损坏子键按缺失处理，clear 幂等并保留无关键', () => {
+  const store = makeStore({ 'route:sessions': { 's1': { inherit: 'w', workspace: 'w', control: 'not-an-object' } } })
+  const { registry, raw } = makeRegistry({ store })
+  assert.equal(registry.getControl('s1'), undefined) // 损坏覆盖层 → undefined（按缺失处理）
+  const clearedCorrupt = registry.clearControl('s1') // 损坏时 clear 仍删掉损坏子键
+  assert.equal(clearCorruptControlKey(clearedCorrupt), true)
+  // 正常覆盖 + 无关键保留
+  registry.setControl('s2', { owner: 'u1' })
+  raw().s2.inbound = [{ channel: 'telegram', userId: 'u9' }]
+  const cleared = registry.clearControl('s2')
+  assert.equal(registry.getControl('s2'), undefined)
+  assert.deepEqual(cleared.inbound, [{ channel: 'telegram', userId: 'u9' }]) // 无关键保留
+  assert.equal(registry.getControl('nonexistent'), undefined)
+  assert.equal(registry.clearControl('nonexistent'), undefined)
+})
+
+function clearCorruptControlKey(record) {
+  return record !== undefined && record.control === undefined
+}
+
+test('setControl 越界/通配静默清洗：>128 owner、通配成员、超 64 项全部落不下', () => {
+  const { registry } = makeRegistry()
+  const computers = []
+  for (let i = 0; i < 70; i++) computers.push({ channel: 'telegram', accountId: 'a1', userId: `u${i}` })
+  registry.setControl('s1', { owner: 'x'.repeat(129), approvalMembers: computers })
+  assert.equal(registry.getControl('s1').owner, undefined)          // >128 owner 被清洗
+  assert.equal(registry.getControl('s1').approvalMembers.length, 64) // 成员封顶 64
+  // 全通配/全局补丁：覆盖层里没有任何有效字段剩余 → 整键移除
+  registry.setControl('s1', { owner: '*', approvalMembers: [{ channel: 'all', accountId: 'a1', userId: 'u9' }] })
+  assert.equal(registry.getControl('s1'), undefined)
+})

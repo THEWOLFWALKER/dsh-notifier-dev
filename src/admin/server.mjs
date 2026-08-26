@@ -83,6 +83,7 @@ export function createAdminServer({ api, verifyToken, host = '127.0.0.1', port =
     { method: 'PUT', segments: ['api', 'bindings'], handler: ({ body }) => api.putBindings(body) },
     { method: 'GET', segments: ['api', 'sessions'], handler: () => api.getSessions() },
     { method: 'PATCH', segments: ['api', 'sessions', ':id'], handler: ({ params, body }) => api.patchSession(params.id, body) },
+    { method: 'PATCH', segments: ['api', 'sessions', ':id', 'control'], handler: ({ params, body }) => api.patchSessionControl(params.id, body) },
     { method: 'GET', segments: ['api', 'channels'], handler: () => api.getChannels() },
     { method: 'PUT', segments: ['api', 'channels', ':type'], handler: ({ params, body }) => api.putChannel(params.type, body.config ?? body) },
     { method: 'POST', segments: ['api', 'channels', ':type', 'test'], handler: ({ params }) => api.testChannel(params.type) },

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizeSessionPolicy, canAcceptCommand, revokePolicy, chooseCommand, createSessionArbiter, canSettleApproval } from '../src/control/session-arbiter.mjs'
+import { normalizeSessionPolicy, canAcceptCommand, revokePolicy, chooseCommand, createSessionArbiter, canSettleApproval, normalizeControlOverlay, CONTROL_OVERLAY_MAX_MEMBERS } from '../src/control/session-arbiter.mjs'
 
 const policy = (extra = {}) => normalizeSessionPolicy({ sessionId: 's1', channel: 'telegram', accountId: 'a1', userId: 'u1', chatId: 'c1', owner: 'u1', policyVersion: 'p1', ...extra }, 100)
 const event = (extra = {}) => ({ eventId: 'e1', sessionId: 's1', channel: 'telegram', accountId: 'a1', userId: 'u1', chatId: 'c1', policyVersion: 'p1', command: 'stop', createdAt: 10, expiresAt: 200, ...extra })
@@ -142,4 +142,57 @@ test('arbiter settles once, retries failed settlement, throws fail closed, revok
 test('callback throw on settlement fails closed with no ledger flush', () => {
   const arbiter = createSessionArbiter({ policy: policy(), now: () => 100, onSettle: () => { throw new Error('boom') } })
   assert.equal(arbiter.handle(event({ eventId: 'thrown' })).status, 'desktop_fallback')
+})
+
+// ---- normalizeControlOverlay（Stage 4 会话控制覆盖层的唯一规范形状）----
+
+test('normalizeControlOverlay keeps only the four approved fields and drops source fields', () => {
+  const overlay = normalizeControlOverlay({
+    mode: 'team', owner: 'u1', approvalOwnerOnly: false,
+    approvalMembers: [{ channel: 'telegram', accountId: 'a1', userId: 'u2' }],
+    channel: 'feishu', accountId: 'z1', userId: 'evil', chatId: 'c9', sessionId: 's9',
+    policyVersion: 'x', expiresAt: 9, revoked: true, garbage: 123,
+  })
+  assert.deepEqual(overlay, {
+    mode: 'team', owner: 'u1', approvalOwnerOnly: false,
+    approvalMembers: [{ channel: 'telegram', accountId: 'a1', userId: 'u2' }],
+  })
+  for (const key of ['channel', 'accountId', 'userId', 'chatId', 'sessionId', 'policyVersion', 'expiresAt', 'revoked', 'garbage']) {
+    assert.equal(Object.prototype.hasOwnProperty.call(overlay, key), false, key)
+  }
+})
+
+test('normalizeControlOverlay rejects globals/empties, trims, dedups, and caps members', () => {
+  const overlay = normalizeControlOverlay({
+    owner: '*', approvalOwnerOnly: 'yes', // non-boolean dropped
+    approvalMembers: [
+      { channel: ' telegram ', accountId: ' a1 ', userId: ' u2 ' },
+      { channel: 'telegram', accountId: 'a1', userId: 'u2' }, // duplicate -> dedup
+      { channel: '', accountId: 'a1', userId: 'u9' },          // empty -> drop
+      { channel: 'all', accountId: 'a1', userId: 'u9' },        // global -> drop
+      { channel: 'telegram', accountId: 'a1', userId: '*' },    // wildcard -> drop
+    ],
+  })
+  assert.equal(overlay.owner, undefined)
+  assert.equal(overlay.approvalOwnerOnly, undefined)
+  assert.deepEqual(overlay.approvalMembers, [{ channel: 'telegram', accountId: 'a1', userId: 'u2' }])
+})
+
+test('normalizeControlOverlay caps members at 64, freezing a minimal overlay, and nulls on empty', () => {
+  const members = []
+  for (let i = 0; i < 70; i++) members.push({ channel: 'telegram', accountId: 'a1', userId: `u${i}` })
+  const overlay = normalizeControlOverlay({ mode: 'team', approvalMembers: members })
+  assert.equal(overlay.approvalMembers.length, CONTROL_OVERLAY_MAX_MEMBERS)
+  assert.equal(overlay.approvalMembers[63].userId, 'u63')
+  assert.equal(Object.isFrozen(overlay), true)
+  assert.equal(Object.isFrozen(overlay.approvalMembers), true)
+  assert.equal(normalizeControlOverlay({}), null)
+  assert.equal(normalizeControlOverlay(null), null)
+  assert.equal(normalizeControlOverlay([]), null)
+  assert.equal(normalizeControlOverlay('team'), null)
+  // owner capped by string bound
+  assert.equal(normalizeControlOverlay({ owner: 'x'.repeat(129), mode: 'team' }).owner, undefined)
+  assert.equal(normalizeControlOverlay({ owner: 'x'.repeat(128), mode: 'team' }).owner.length, 128)
+  assert.equal(normalizeControlOverlay({ mode: 'bogus' }), null)
+  assert.equal(normalizeControlOverlay({ owner: '' }), null)
 })

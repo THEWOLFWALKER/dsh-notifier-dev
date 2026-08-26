@@ -411,6 +411,58 @@ test('setSessionOutbound：diff 清空后 outbound 键删除，解析整体回�
   })
 })
 
+// ———————— 会话控制覆盖层（Stage 4：route:sessions[id].control） ————————
+
+test('setSessionControl：最小覆盖层只落已批准字段；来源字段被清洗；无关键保留', () => {
+  const { store, router } = makeRouter()
+  assert.equal(router.setSessionControl('s-1', {
+    mode: 'team', owner: 'u1', approvalOwnerOnly: true,
+    approvalMembers: [{ channel: 'telegram', accountId: 'a1', userId: 'u2' }],
+    channel: 'feishu', accountId: 'z1', userId: 'evil', chatId: 'c9', sessionId: 's9',
+  }), true)
+  const control = store.get('route:sessions')['s-1'].control
+  assert.deepEqual(control, {
+    mode: 'team', owner: 'u1', approvalOwnerOnly: true,
+    approvalMembers: [{ channel: 'telegram', accountId: 'a1', userId: 'u2' }],
+  })
+  for (const key of ['channel', 'accountId', 'userId', 'chatId', 'sessionId']) {
+    assert.equal(Object.prototype.hasOwnProperty.call(control, key), false, key)
+  }
+  // 覆盖层不吞并既有 outbound：会话其它字段保留
+  router.setSessionOutbound('s-1', { channels: ['telegram'] })
+  const rec = store.get('route:sessions')['s-1']
+  assert.deepEqual(rec.outbound, { channels: ['telegram'] })
+  assert.deepEqual(rec.control.mode, 'team')
+})
+
+test('setSessionControl：字段级 diff——null 删键、越界/通配清洗、清空后 control 键删除', () => {
+  const { store, router } = makeRouter()
+  router.setSessionControl('s-1', { owner: 'u1', approvalMembers: [{ channel: 'telegram', accountId: 'a1', userId: 'u2' }] })
+  assert.equal(router.setSessionControl('s-1', { approvalOwnerOnly: true }), true)
+  assert.equal(store.get('route:sessions')['s-1'].control.approvalOwnerOnly, true)
+  assert.equal(store.get('route:sessions')['s-1'].control.owner, 'u1') // 未出现的键不动
+  // owner null 删键
+  assert.equal(router.setSessionControl('s-1', { owner: null }), true)
+  assert.equal('owner' in store.get('route:sessions')['s-1'].control, false)
+  // 越界 owner 与通配成员被清洗，不落盘
+  assert.equal(router.setSessionControl('s-1', { owner: '*', approvalMembers: [{ channel: 'all', accountId: 'a1', userId: 'u9' }] }), true)
+  const cleaned = store.get('route:sessions')['s-1'].control
+  assert.equal(cleaned.owner, undefined)
+  assert.equal(cleaned.approvalMembers, undefined)
+  // 清空剩余可写字段 → control 键删除
+  assert.equal(router.setSessionControl('s-1', { mode: null, approvalOwnerOnly: null }), true)
+  assert.equal('control' in store.get('route:sessions')['s-1'], false)
+  assert.deepEqual(store.get('route:sessions'), { 's-1': {} }) // 会话记录仍保留
+})
+
+test('setSessionControl：写入防御——store 缺 set → 不抛、返回 false', () => {
+  const broken = { get: (key) => undefined }
+  const router = createAgentRouter({ store: broken, agentsList: () => [] })
+  assert.equal(router.setSessionControl('s-1', { owner: 'u1' }), false)
+  assert.throws(() => router.setSessionControl('', { owner: 'u1' }), TypeError)
+  assert.throws(() => router.setSessionControl('s-1', 'not-object'), TypeError)
+})
+
 // ———————— describe 与防御 ————————
 
 test('describe：把出站解析每层来源串成可读文本（含各层键名与最终结果）', () => {

@@ -28,6 +28,8 @@ const KEY_AGENTS = 'route:agents'
 const KEY_CHANNELS = 'route:channels'
 const KEY_SESSIONS = 'route:sessions'
 
+import { normalizeControlOverlay } from '../control/session-arbiter.mjs'
+
 /** 入站显式绑定键前缀（与 conversation.mjs 既有键格式一致：bind:<channel>:<userId>）。 */
 const BIND_PREFIX = 'bind:'
 
@@ -451,6 +453,41 @@ export function createAgentRouter({ store, agentsList } = {}) {
       }
       if (Object.keys(diff).length > 0) record.outbound = diff
       else delete record.outbound
+      return writeMap(KEY_SESSIONS, { ...sessions, [sessionId]: record })
+    },
+
+    /**
+     * 写会话控制覆盖层（route:sessions[sessionId].control，Stage 4 会话策略持久化）。
+     *
+     * 字段级 diff 语义（与 setSessionOutbound 完全一致）：patch 里**出现**的字段写入 diff；
+     * **显式 `undefined`/`null` 的字段从覆盖层删除**（= 回落上游 basePolicy）；**未出现**的字段不
+     * 动。写入前把「现有覆盖层 ⊕ 本次 diff」整体经 `normalizeControlOverlay` 归一——只保留
+     * mode/owner/approvalOwnerOnly/approvalMembers 四个已批准字段，越界/通配/来源字段（channel/
+     * accountId/userId/chatId/sessionId）一律丢弃，绝不携带 admin 或损坏 store 注入的来源。覆盖层
+     * 清空后删除 control 键（记录本身保留）。会话记录不存在时惰性建最小记录（同 outbound 兜底）。
+     *
+     * @param {string} sessionId - 会话 id。
+     * @param {{ mode?: string|null, owner?: string|null, approvalOwnerOnly?: boolean|null,
+     *             approvalMembers?: Array<object>|null }} [patch] - 见字段级语义。
+     * @returns {boolean} 是否落盘成功。
+     * @throws {TypeError} sessionId 非空字符串、patch 非对象。
+     */
+    setSessionControl(sessionId, patch = {}) {
+      assertNonEmptyString(sessionId, 'setSessionControl: sessionId')
+      const normalized = patch === undefined || patch === null ? {} : patch
+      if (plainObjectOf(normalized) === null) throw new TypeError('agent-router: setSessionControl: patch 必须是对象')
+      const sessions = readMap(KEY_SESSIONS)
+      const record = { ...plainObjectOf(sessions[sessionId]) }
+      const overlay = { ...(plainObjectOf(record.control) ?? {}) }
+      for (const key of ['mode', 'owner', 'approvalOwnerOnly', 'approvalMembers']) {
+        if (!Object.prototype.hasOwnProperty.call(normalized, key)) continue
+        const value = normalized[key]
+        if (value === undefined || value === null) delete overlay[key]
+        else overlay[key] = value
+      }
+      const canonical = normalizeControlOverlay(overlay)
+      if (canonical === null) delete record.control
+      else record.control = JSON.parse(JSON.stringify(canonical))
       return writeMap(KEY_SESSIONS, { ...sessions, [sessionId]: record })
     },
 
