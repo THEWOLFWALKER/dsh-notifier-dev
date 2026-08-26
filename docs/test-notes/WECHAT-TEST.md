@@ -65,4 +65,24 @@ node scripts/wechat-login.mjs
 - [ ] 审批回复 1/2 生效
 - [ ] CLI 扫码打印「扫码即配对完成」
 - [ ] 重启幂等（不重复建绑定）
+
+## 四、批次 4 provider slice（2026-08-26）
+
+生产入口现由 `src/channels/wechat-ilink/index.mjs` 提供，旧的
+`src/inbound/wechat-ilink.mjs` 仅保留兼容调用面。新入口的游标、context_token
+和会话状态使用 `wechat:<accountId>:` 命名空间；单账号之外的多账号 UI 仍未开放。
+
+已完成协议/契约测试：QR 过期提示、bounded polling、游标上界与整批处理后提交、
+断线重连/stop、来源信封、文本编号兜底、状态显示、未知字段隔离。图片解析和收发
+只保留显式的 media bridge 接口，能力状态为 `declared`；没有真实设备/协议证据，
+不得对外标记 `real-device-verified` 或正式支持。图片下载失败必须只产生告警，
+文字/控制消息仍先进入 Control Core。
+
+离线验证：
+
+```bash
+node --test test/channels/wechat-ilink.test.mjs test/inbound.wechat.test.mjs
+```
+
+真实微信设备、iLink 媒体上传/下载字段、网络节点切换仍需后续协议/设备验证。
 - [ ] `npm test` 807 全绿

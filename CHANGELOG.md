@@ -5,6 +5,13 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 新增：微信 iLink 单账号 QR-first provider slice（批次 4，2026-08-26）
+
+- 新增 `src/channels/wechat-ilink/` provider 边界；旧 `src/inbound/wechat-ilink.mjs` 保留兼容入口，应用装配已切换到新边界。
+- 轮询游标、context_token 和连接状态按 `accountId` 命名空间隔离；游标有界，并在整批消息交给 Control Core 后才推进，断线可重连且由现有 bus 去重避免重复控制命令。
+- QR 过期返回明确重新扫码状态；未知协议字段不进入控制信封；图片消息保留结构化 envelope，图片下载失败不阻断文字/控制路径。
+- 图片收发仅提供可选 media bridge，证据状态为 `declared`；没有真实设备/协议验证，不宣称正式支持或 `real-device-verified`。
+
 ### 改进：管理台首次配置路径（Task 04，2026-08-26）
 
 - 首屏新增「未配置 → 已配对 → 测试通知 → 正常运行」进度状态，并明确本地管理台入口由启动日志提供实际 URL/端口。

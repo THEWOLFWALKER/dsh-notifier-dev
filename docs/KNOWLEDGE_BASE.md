@@ -46,6 +46,7 @@ The product, UX, planning, review-loop, and DSH GUI consistency contract is main
 
 - Outbound: 27 adapters through `createNotifier()`; level routing is `timeSensitive`, `active`, or `passive`.
 - Inbound: Telegram, Feishu, QQ Bot, WxPusher, WeChat iLink, and DingTalk.
+- WeChat iLink provider boundary: `src/channels/wechat-ilink/` (single-account QR-first, bounded polling, account-scoped state); media remains `declared` until protocol/device evidence.
 - Trust stack: identity bindings, pairing codes, HMAC token vault, callback references, inbound bus deduplication, source-chat checks, and first-arrival settlement.
 - Agent integration: `notify`, `notify_test`, optional `ask_user`, public `ctx.notifier` facade, and `dsh-notifier/sent` events.
 - Operations: JSON state store with key-level merge, cross-process lock, convergence reads, JSONL ledger, local admin API/UI, SSE event stream, route CLI, and channel login/test CLIs.
