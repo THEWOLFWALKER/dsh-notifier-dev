@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 2026-08-27 phases 1-6 hardening tests: added 60 comprehensive integration tests across 6 phases covering overlay→Control Core wiring, PR #12 remaining hardening, cross-process session writes, channel fail-closed behaviors, personal UX admin API, and security/structural bounds. npm test = 1329 (1328 pass + 1 skip). All verification scripts green.
 - 2026-08-26 question P1 安全收口：admin settle 路径 `accountId` 不再用 `channel` 兜底（`src/questions/router.mjs` L611 `String(target.accountId ?? target.channel ?? '')` → `String(target.accountId ?? '')`）。修复前，若 `pushedTo` 目标无 `accountId`（测试 rig 缺失），admin settle 会用 `channel` 名冒充 `accountId` 传入 Control Core，违反硬性要求"不得把 channel 当作 accountId 的兜底值"。虽非安全漏洞（`buildEvent` 用真实 `pushedTo` accountId），但违反最小权限原则。同步修复 `test/questions-admin-settlement.test.mjs` 和 `test/admin-questions.test.mjs` 的测试 rig——入站适配器必须携带 `accountId` 以匹配生产行为。聚焦 + 全量测试通过。
 - 2026-08-26 session 并发写入修复（阶段 5 P2）：`setSessionOutbound` 和 `setSessionControl`（`src/routing/agent-router.mjs`）现在在写回前 re-read 最新整表，将本次 diff 合并到最新记录上写回，防止多个 session 并发更新时最后写入者覆盖 sibling 字段。新增 3 个并发回归测试验证：session A 更新后 session B 不覆盖 A 的 outbound/control，outbound 与 control 分别更新不互相覆盖。聚焦 + 全量测试通过。
 - 2026-08-26 team policy persistence adversarial review (Stage 4, round): fixed three defects in the session control overlay persisted at `route:sessions[<sessionId>].control`.
