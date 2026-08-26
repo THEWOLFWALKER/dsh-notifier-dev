@@ -354,7 +354,20 @@ export function apply(ctx, config = {}) {
   const identity = createIdentity({ store, logger })
   // Control Core：所有远程控制回调共用一个入口；personal 默认只允许已配对私聊，
   // converse/group control 必须由显式 policy 开启。
-  const control = createControlEntry({ policy: inboundRaw.control ?? {}, identity, logger })
+  // Session control overlays are read through the registry's defensive
+  // copy-on-read API.  The resolver is intentionally fail-closed at the
+  // integration boundary: a missing session, malformed store row, or registry
+  // exception returns null, preserving the static policy and all existing
+  // source-binding checks in Control Core.  The overlay itself can never add
+  // channel/account/user/chat/session fields (session-arbiter owns that shape).
+  const control = createControlEntry({
+    policy: inboundRaw.control ?? {},
+    identity,
+    logger,
+    policyForSession: (sessionId) => {
+      try { return registry?.getControl?.(sessionId) ?? null } catch { return null }
+    },
+  })
   disposers.push(() => control.dispose())
   const pairing = createPairing({
     store,
