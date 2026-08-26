@@ -3,7 +3,7 @@
 // 由 src/admin/server.mjs 以 200 text/html 返回本串；无任何外部资源引用（无外链脚本 /
 // link / CSS url()），系统字体栈。四标签页：Dashboard（通道健康矩阵/会话数/审计）、
 // 绑定矩阵（route:agents + route:channels）、会话（route:sessions 出站覆盖 diff）、通道（凭证+测试+扫码授权）。
-// 鉴权：Bearer token（用户首次输入，localStorage 持久化，401 清除重询）；错误形状 { error }。
+// 鉴权：Bearer token（用户首次输入，只保存在浏览器会话；401 清除重询）；错误形状 { error }。
 // 注意：内嵌脚本刻意不用模板字符串与反斜杠，避免与外层模板字面量转义纠缠。
 export const ADMIN_UI_HTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -23,7 +23,8 @@ header { display: flex; align-items: center; gap: 12px; padding: 10px 18px; back
 header h1 { font-size: 16px; margin: 0; font-weight: 600; }
 header h1 small { color: var(--muted); font-weight: 400; margin-left: 6px; }
 #loadState { color: var(--accent); }
-#entryHint { color: var(--muted); font-size: 12px; }
+#entryHint { color: var(--muted); font-size: 12px; min-width: 0; overflow-wrap: anywhere; flex: 1 1 220px; }
+#entryUrl { color: var(--text); }
 #tokenState { margin-left: auto; color: var(--muted); border-style: dashed; }
 nav { display: flex; gap: 6px; padding: 10px 18px 0; flex-wrap: wrap; }
 main { padding: 14px 18px 48px; max-width: 1240px; }
@@ -113,6 +114,7 @@ label.fld input { flex: 1; }
    纯 CSS 增量，零逻辑变更零构建；桌面端（>768px）逐字节不变。 */
 @media (max-width: 768px) {
   header { flex-wrap: wrap; padding: 10px 12px; gap: 8px; }
+  #entryHint { flex-basis: 100%; order: 2; }
   main { padding: 12px 10px 40px; }
   nav { flex-wrap: nowrap; overflow-x: auto; padding: 8px 10px 0; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
   nav::-webkit-scrollbar { display: none; }
@@ -129,9 +131,11 @@ label.fld input { flex: 1; }
 <body>
 <header>
   <h1>dsh-notifier 管理台<small>v0.8.6</small></h1>
-  <span id="loadState"></span>
-  <span id="entryHint">本地管理台 · 地址见启动日志</span>
+  <span id="loadState" role="status" aria-live="polite"></span>
+  <span id="entryHint">仅本机回环 · 当前入口：<code id="entryUrl"></code></span>
+  <button id="btnCopyEntry" title="复制当前管理台地址">复制地址</button>
   <button id="tokenState" title="点击输入或更换访问 token"></button>
+  <button id="btnLogout" title="清除此浏览器会话中的访问 token">退出</button>
   <button id="btnRefresh">刷新</button>
 </header>
 <nav>
@@ -307,7 +311,7 @@ label.fld input { flex: 1; }
 
 <script>
 'use strict'
-var TOKEN_KEY = 'dsh-admin-token'
+var TOKEN_KEY = 'dsh-admin-session-token'
 var SCAN_TYPES = ['qq', 'dingtalk', 'feishu', 'wechat']
 var state = { overview: null, bindings: null, sessions: null, channels: null, members: null }
 var draft = null
@@ -355,43 +359,77 @@ function sourceLabel(s) {
   return map[s] || s || '(未知)'
 }
 
-// ---------- 鉴权：Bearer token，localStorage 持久化；单飞门 + 成功后持久化 + 401 单次重登录 ----------
-// 维护批 1 改掉原实现三处缺陷（mnt-1）：
-//  ① 并发 api() 首次访问各弹一次 window.prompt → N 个叠加窗（loadAll 一次 5 个）；
-//  ② prompt 输入的 token 从不持久化 → 刷新必重输；
-//  ③ 并发 401 各递归重询一次 → 风暴刷窗。
-// 改法：
-//  - acquireToken 单飞门：并发调用共享同一次询问（authGate）；
-//  - adoptToken 只在「成功响应（非 401）」执行：正确 token 刷新不重输，错的不残留；
-//  - 401 走 reloginGate 单飞重登录：一次询问 + 新 token 恰好重试一次；autoReloginUsed 门
-//    在每个成功响应后被 markAuthOk 重新武装——错 token 绝不循环弹窗；authGen 世代计数让
-//    「用旧 token 发出的迟到 401」判为过期请求，不再触发第二轮弹窗。
+// ---------- 鉴权：会话级 Bearer token；单飞门 + 401 单次恢复 ----------
+// token 永不进入 URL、日志、响应或 localStorage。sessionStorage 保证同一浏览器会话刷新
+// 后无需重输；受限浏览器退化到本页内存，仍可继续使用且不会因存储异常而中断。
 var authGate = null
 var reloginPromise = null
-var autoReloginUsed = true
 var authGen = 0
-function getToken() { try { return window.localStorage.getItem(TOKEN_KEY) || '' } catch (e) { return '' } }
+var recoveryUsed = false
+var memoryToken = ''
+function sessionStore() { try { return window.sessionStorage } catch (e) { return null } }
+function getToken() {
+  if (memoryToken) return memoryToken
+  var store = sessionStore()
+  if (store) {
+    try {
+      var stored = store.getItem(TOKEN_KEY) || ''
+      if (stored) return stored
+    } catch (e) {}
+  }
+  return memoryToken
+}
+function setCandidateToken(v) {
+  memoryToken = v || ''
+  var store = sessionStore()
+  if (!store) return false
+  try { store.removeItem(TOKEN_KEY); return true } catch (e) { return false }
+}
 function setToken(v) {
-  try { if (v) window.localStorage.setItem(TOKEN_KEY, v); else window.localStorage.removeItem(TOKEN_KEY) } catch (e) {}
+  memoryToken = v || ''
+  var store = sessionStore()
+  if (!store) return false
+  try { if (v) store.setItem(TOKEN_KEY, v); else store.removeItem(TOKEN_KEY); return true } catch (e) { return false }
 }
 function askToken() {
-  var t = window.prompt('请输入管理台访问 token（服务启动时打印；保存在本浏览器，仅 401 时才再询问）：', '')
+  var t = window.prompt('请输入管理台访问 token（服务启动时打印；仅保存在当前浏览器会话，关闭标签页后需重新输入）：', '')
   return t && t.trim() ? t.trim() : ''
 }
-/** token 询问单飞门：并发调用共享同一次弹窗；resolve 空串 = 用户取消。询问本身不持久化。 */
+/** token 询问单飞门：fetch、SSE 与手动操作共享同一次弹窗；空串 = 用户取消。 */
 function acquireToken() {
   if (!authGate) {
     authGate = Promise.resolve().then(function () {
-      var t = askToken()
+      return askToken()
+    }).then(function (t) {
       authGate = null
       return t
+    }, function (error) {
+      authGate = null
+      throw error
     })
   }
   return authGate
 }
 function renderTokenState() {
   var t = getToken()
-  $('#tokenState').textContent = t ? 'token：' + t.slice(0, 4) + '****（点击更换）' : '未设置 token（点击输入）'
+  $('#tokenState').textContent = t ? '会话 token 已设置（点击更换）' : '未设置 token（点击输入）'
+  $('#btnLogout').disabled = !t
+}
+function renderEntryPoint() {
+  var target = window.location.origin + window.location.pathname
+  $('#entryUrl').textContent = target
+  return target
+}
+function copyEntryPoint() {
+  var target = renderEntryPoint()
+  var clipboard = window.navigator && window.navigator.clipboard
+  if (!clipboard || typeof clipboard.writeText !== 'function') {
+    flash('当前地址已显示在顶部，可手动复制', 'warn')
+    return
+  }
+  clipboard.writeText(target).then(function () { flash('管理台地址已复制', 'ok') }, function () {
+    flash('复制失败：当前地址已显示在顶部，可手动复制', 'warn')
+  })
 }
 /** 低层 Bearer 请求（不含 401 处理；401 由 apiWith/relogin 统一裁决）。 */
 function request(path, options, token) {
@@ -399,11 +437,11 @@ function request(path, options, token) {
   if (options.body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(options.body) }
   return fetch(path, init)
 }
-/** 成功响应（非 401）才持久化：刷新不重输，错的绝不残留在本地。 */
+/** 成功响应（非 401）才保存到会话；错误 token 不会留下。 */
 function adoptToken(t) { if (t) setToken(t) }
-/** 任何非 401 响应说明当前 token 当时有效 → 重新武装自动重登录（下一次 401 才再问一次）。 */
-function markAuthOk() { autoReloginUsed = true }
-/** 401 单飞重登录门：清旧 token → 单次询问 → 返回新 token（空串 = 取消）。并发 401 共享。 */
+/** 任何非 401 响应说明当前 token 当时有效 → 重新允许一次未来自动恢复。 */
+function markAuthOk() { recoveryUsed = false }
+/** 401 单飞重登录门：清旧 token → 单次询问 → 返回新 token（空串 = 取消）。 */
 function reloginGate() {
   if (!reloginPromise) {
     reloginPromise = Promise.resolve().then(function () {
@@ -411,9 +449,12 @@ function reloginGate() {
       renderTokenState()
       return acquireToken()
     }).then(function (t) {
-      reloginPromise = null
       authGen += 1 // 世代推进：此后老 token 发出的迟到 401 = 过期请求，不再自动弹窗
+      reloginPromise = null
       return t
+    }, function (error) {
+      reloginPromise = null
+      throw error
     })
   }
   return reloginPromise
@@ -421,7 +462,11 @@ function reloginGate() {
 /** 用新 token 恰好重试一次；仍 401 = 抛错（不循环）。成功则持久化并重新武装。 */
 function retryRelogin(path, options, t) {
   return request(path, options, t).then(function (res) {
-    if (res.status === 401) throw new Error('鉴权失败：token 无效或已失效（已按一次自动重登录处理，请点击右上角 token 状态手动更新）')
+    if (res.status === 401) {
+      setToken('')
+      renderTokenState()
+      throw new Error('鉴权失败：token 无效或已失效（已按一次自动重登录处理，请点击右上角 token 状态手动更新）')
+    }
     markAuthOk()
     adoptToken(t)
     return res
@@ -456,8 +501,8 @@ function apiWith(path, options, token, gen) {
         return retryRelogin(path, options, t)
       })
     }
-    if (!autoReloginUsed) throw new Error('鉴权失败：token 无效或已失效（已自动重试一次，请点击右上角 token 状态手动更新）')
-    autoReloginUsed = false
+    if (recoveryUsed) throw new Error('鉴权失败：token 无效或已失效（已自动重试一次，请点击右上角 token 状态手动更新）')
+    recoveryUsed = true
     return reloginGate().then(function (t) {
       if (!t) throw new Error('登录已取消')
       return retryRelogin(path, options, t)
@@ -1118,6 +1163,7 @@ var notifyLog = []
 var notifyCount = 0
 var audioCtx = null
 var notifyStreamTimer = null
+var notifyStreamEpoch = 0
 
 function readNotifyPrefs() {
   var p = {}
@@ -1138,6 +1184,10 @@ function writeNotifyPrefs() {
   $('#npHidden').checked = p.hiddenOnly
 }
 function setStreamState(text) { var el = $('#nStream'); if (el) el.textContent = text }
+function stopNotifyStream() {
+  notifyStreamEpoch += 1
+  if (notifyStreamTimer) { clearTimeout(notifyStreamTimer); notifyStreamTimer = null }
+}
 function renderPermState() {
   var el = $('#nPerm')
   if (!el) return
@@ -1206,17 +1256,21 @@ function startNotifyStream(explicitToken) {
   var token = explicitToken || getToken()
   if (!token) {
     // 首访无 token：与并行 loadAll 共享同一单飞询问（不重复弹窗）
+    var waitingGen = authGen
     acquireToken().then(function (t) {
-      if (t) startNotifyStream(t)
+      if (t && waitingGen === authGen) startNotifyStream(t)
       else setStreamState('未设置 token，点击右上角 token 状态输入')
     })
     return
   }
   var gen = authGen
+  var epoch = notifyStreamEpoch + 1
+  notifyStreamEpoch = epoch
   fetch('/api/events', { headers: { Authorization: 'Bearer ' + token } }).then(function (res) {
+    if (epoch !== notifyStreamEpoch) return
     if (res.status === 401) {
       if (gen >= authGen) { handleStream401(token); return } // 活 token 失效 → 走共享重登录门
-      setToken(''); renderTokenState(); setStreamState('token 失效（已更换，请刷新）'); return // 过期流
+      setStreamState('旧会话请求已失效；当前 token 未受影响'); return // 迟到旧流不得清掉新 token
     }
     markAuthOk()
     adoptToken(token) // 连接正常 → 持久化（首访 prompt 输入的 token 在此落库）
@@ -1227,6 +1281,7 @@ function startNotifyStream(explicitToken) {
     var buf = ''
     function pump() {
       return reader.read().then(function (chunk) {
+        if (epoch !== notifyStreamEpoch || gen !== authGen) throw new Error('stream superseded')
         if (chunk.done) throw new Error('stream end')
         buf += decoder.decode(chunk.value, { stream: true })
         var blocks = buf.split('\\n\\n')
@@ -1242,6 +1297,7 @@ function startNotifyStream(explicitToken) {
     }
     return pump()
   }).catch(function () {
+    if (epoch !== notifyStreamEpoch || gen !== authGen || getToken() !== token) return
     setStreamState('已断开，5 秒后重连')
     notifyStreamTimer = setTimeout(startNotifyStream, 5000)
   })
@@ -1252,8 +1308,8 @@ function handleStream401(lastToken) {
     reloginGate().then(function (t) { if (t) startNotifyStream(t); else setStreamState('token 失效（未重新登录，请点击右上角重试）') })
     return
   }
-  if (!autoReloginUsed) { setStreamState('token 失效（已自动重试一次，请刷新或点击右上角更新）'); return }
-  autoReloginUsed = false
+  if (recoveryUsed) { setStreamState('token 失效（已自动重试一次，请刷新或点击右上角更新）'); return }
+  recoveryUsed = true
   reloginGate().then(function (t) {
     if (t) startNotifyStream(t)
     else { setToken(''); renderTokenState(); setStreamState('token 失效（未重新登录，请点击右上角重试）') }
@@ -1301,8 +1357,18 @@ function init() {
   })
   $('#tokenState').addEventListener('click', function () {
     var t = askToken()
-    if (t) { authGen += 1; adoptToken(t); renderTokenState(); loadAll() } // 手动换 token 也推进世代：旧请求的迟到 401 不再触发自动弹窗
+    if (t) { authGen += 1; recoveryUsed = false; stopNotifyStream(); setCandidateToken(t); renderTokenState(); loadAll(); startNotifyStream(t) } // 候选仅在成功响应后写入会话
   })
+  $('#btnLogout').addEventListener('click', function () {
+    authGen += 1
+    stopNotifyStream()
+    setToken('')
+    renderTokenState()
+    setStreamState('已退出本浏览器会话；点击 token 状态重新输入')
+    flash('已退出本浏览器会话', 'ok')
+  })
+  $('#btnCopyEntry').addEventListener('click', copyEntryPoint)
+  renderEntryPoint()
   $('#tab-bindings').addEventListener('change', onBindingsChange)
   $('#tab-bindings').addEventListener('click', onBindingsClick)
   $('#tab-sessions').addEventListener('click', onSessionsClick)

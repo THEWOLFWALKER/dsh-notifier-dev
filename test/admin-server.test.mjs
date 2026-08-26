@@ -139,6 +139,17 @@ test('GET /：ui 未装配（空串）→ 最小占位页', async () => {
   })
 })
 
+test('Issue #10/#13：入口查询串不回显也不能充当 token，API 仍只认 Bearer 头', async () => {
+  const urlToken = 'must-not-appear-in-ui-or-auth'
+  await withServer({ ui: ADMIN_UI_HTML }, async (rig) => {
+    const page = await call(rig, `/?token=${encodeURIComponent(urlToken)}`, { token: null })
+    assert.equal(page.status, 200)
+    assert.equal((await textOf(page)).includes(urlToken), false, '入口页不得回显 URL 中的 token')
+    const api = await call(rig, `/api/overview?token=${encodeURIComponent('secret')}`, { token: null })
+    assert.equal(api.status, 401, '查询串 token 绝不替代 Bearer 鉴权')
+  })
+})
+
 // §5.3 修补验收（最小静态断言）：fields 驱动建单 / editable 只读行 / 审计 detail 归一 /
 // 扫码 error 分支 / 凭证热更新提示——UI 是纯静态串，关键字在即可，交互留给浏览器。
 test('ADMIN_UI_HTML：含 fields 建单与 editable 只读的关键字（§5.3 五缺口最小断言）', () => {
