@@ -4,7 +4,7 @@
 
 > 写给下一个 agent。本文档是完整的工作上下文快照：设计理念、军规约定、架构地图、
 > 版本脉络、审查记录、已知坑、待办清单。读完这一份即可无缝接手。
-> 当前快照：2026-08-27，协议预审落地后的渠道适配安全收尾。按 `docs/protocol-preflight/` 事实边界（不改协议猜测）完成代码层修复并同步测试契约：wxpusher 入站注入本地 accountId（修复 WxPusher 审批/提问编号回复自来源绑定硬化后全部失效）；移除 conversation 路由与 Control Core `pendingMeta` 的「channel 当 accountId」兜底（缺账号一律 `missing_accountId` fail-closed），并让 `actions.dispatch` 把传输层本地 accountId 原样转发进 Control Core；**telegram/飞书直接按钮回调把提供方真实 eventId 传入 Control Core**（此前 `ap:`/`aq:` 直接回调缺 eventId，被 `missing_eventId` 拒绝——按钮在 Control Core 接线下全部失效）；questions 缺 chatId 分支补 accountId 消费、编号作答成功回执答案从已结算账本行回读。Session Control Overlay 已由 `src/index.mjs` 将 `registry.getControl(sessionId)` 接入 `createControlEntry` 的唯一授权入口；集成测试证明管理台/重启持久化策略会实际改变 Control Core 授权，恶意来源字段、resolver 异常/异步和跨会话均 fail-closed。P2-2 `allowUsers` 一次性迁移与 P2-3 可选 SDK 生命周期矩阵已完成证据审查，见 `docs/compatibility-matrix.md`。测试契约对齐生产恒接线：approval/questions/phase-2 rig 补 Control Core、`contract.spec` 跳过协议形状 fixture。当前开发线 `npm test` = **1346**（1345 pass + 1 skip）；已发布 v0.8.6 契约仍为 909，当前线未发布、无真机验证。
+> 当前快照：2026-08-27，协议预审落地后的渠道适配安全收尾。按 `docs/protocol-preflight/` 事实边界（不改协议猜测）完成代码层修复并同步测试契约：wxpusher 入站注入本地 accountId（修复 WxPusher 审批/提问编号回复自来源绑定硬化后全部失效）；移除 conversation 路由与 Control Core `pendingMeta` 的「channel 当 accountId」兜底（缺账号一律 `missing_accountId` fail-closed），并让 `actions.dispatch` 把传输层本地 accountId 原样转发进 Control Core；**telegram/飞书直接按钮回调把提供方真实 eventId 传入 Control Core**（此前 `ap:`/`aq:` 直接回调缺 eventId，被 `missing_eventId` 拒绝——按钮在 Control Core 接线下全部失效）；questions 缺 chatId 分支补 accountId 消费、编号作答成功回执答案从已结算账本行回读。Session Control Overlay 已由 `src/index.mjs` 将 `registry.getControl(sessionId)` 接入 `createControlEntry` 的唯一授权入口；集成测试证明管理台/重启持久化策略会实际改变 Control Core 授权，恶意来源字段、resolver 异常/异步和跨会话均 fail-closed。P2-2 `allowUsers` 一次性迁移与 P2-3 可选 SDK 生命周期矩阵已完成证据审查，见 `docs/compatibility-matrix.md`。测试契约对齐生产恒接线：approval/questions/phase-2 rig 补 Control Core、`contract.spec` 跳过协议形状 fixture。当前开发线 `npm test` = **1349**（1348 pass + 1 skip）；已发布 v0.8.6 契约仍为 909，当前线未发布、无真机验证。
 > 上一快照位：2026-08-27，阶段 1-6 硬化测试完成：(1) 持久化 session overlay→Control Core 端到端集成测试（admin→registry→Control Core、重启持久化、fail-closed、恶意覆盖层、approvalOwnerOnly/approvalMembers 正反例、steer/ordinary-message 不授予）；(2) PR #12 硬化（decisionPromise rejection、并发 qKeys 隔离、parallel 默认关闭、按钮降级、重放拒绝）；(3) 跨进程 session 状态写入（独立 registry 读写、墓碑持久化、store 失败返回 false、outbound/control 不互盖）；(4) 渠道能力矩阵与 fail-closed（QQ group/unknown、WeChat declared、Feishu/Telegram facade、UTF-16 边界、跨渠道精确来源绑定）；(5) 个人 UX 与 admin API（引导态、UI 状态、settleQuestion fail-closed、凭证脱敏、source/unknown 字段拒绝）；(6) 安全/结构（覆盖层边界、通配拒绝、来源字段剥离、审计轮转、密钥泄漏防护、通道隔离）。该快照声称的 `npm test` = 1329 已过时：当时 approval/questions 实际存在 7 个预存测试失败（Control Core 强制接线后 rig 未同步），由本次收尾修复并追加 A3/A4/A5/A6。
 > 上一快照位：开发线 HEAD 为 `69ad33f`（Stage 4 会话策略控制覆盖层持久化原始实现，见下方快照段）。当前开发线 `npm test` = 1223（1222 pass + 1 skip）；已发布 v0.8.6 仍为 909，当前线未发布。
 > 本文上一快照位 v0.8.2（2026-08-18）；v0.8.3/v0.8.4 为安全修复版，0.8.4 的 CHANGELOG 条目由接手 agent 于 2026-08-19 回补（发版时遗漏）。
@@ -59,7 +59,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 零运行时依赖（只用 fetch + node:crypto + 原生 WebSocket）。
 
 - 语言/运行时：Node.js ESM（.mjs），无 TypeScript，无构建步骤
-- 代码量：src+test+scripts ≈ 36,000 行；50 个测试文件，1346 测试（1345 pass + 1 skip；已发布 v0.8.6 = 909）
+- 代码量：src+test+scripts ≈ 36,000 行；50 个测试文件，1349 测试（1348 pass + 1 skip；已发布 v0.8.6 = 909）
 - 文档：README.md / README.zh-CN.md / ADAPTER.md（渠道接入规范）/ PLUGINS.md（插件互操作）/ docs/v0.5-design.md / docs/v0.6-design.md / CHANGELOG.md（最详细的历史）
 
 ---
@@ -70,7 +70,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 |---|---|
 | 版本 | package.json = 0.8.6；CHANGELOG、admin UI、双语 README 和发布守卫已同步；npm 已发布 `dsh-notifier@0.8.6`；公共镜像 `main` 已清理 `node_modules/` 与 `package-lock.json` |
 | git | 私有 canonical：`dsh-notifier-dev`；公共发布镜像：`THEWOLFWALKER/dsh-notifier`；当前开发线包含 `73154cd` 及后续文档同步提交（含 `c4fef26`，文档同步分支未发布） |
-| 测试 | `npm test` 已发布 v0.8.6 契约 = **909 tests**；当前开发线 = **1346**（1345 pass + 1 skip；含协议适配安全收尾、阶段 1-6 硬化以及 A3/A4/A5/A6 维护） |
+| 测试 | `npm test` 已发布 v0.8.6 契约 = **909 tests**；当前开发线 = **1349**（1348 pass + 1 skip；含协议适配安全收尾、阶段 1-6 硬化以及 A3/A4/A5/A6 维护） |
 | 发布 | v0.8.6 已发布；下一位 agent 接手时无需再走发布 gate，除非版本再次 bump |
 | 真机验证 | 当前分支未完成真实设备/宿主协议验证；QQ/微信 iLink/钉钉图片与 QQ 按钮仅有 contract-tested/declared 证据。历史 v0.6.1/v0.7 验证记录保留在下文 |
 
@@ -89,7 +89,7 @@ dsh-notifier 是 DSH（一个 agent 宿主，cordis 插件体系）的统一通�
 | 用户文档 | `docs/guide.md` · `docs/upgrade-guide.md` · `docs/upgrade-guide.en.md` | README 双语均链接 guide；升级/回滚是装包用户高频需求 |
 | 互操作契约 | `PLUGINS.md` | 其他插件作者消费 notifier 服务时的契约（README 链接） |
 | CLI | `scripts/`（channel-login · test-channel · route · gen-channel-matrix 等） | guide.md 教用户直接 `node scripts/...` |
-| 测试 | `test/` | 行为契约随包分发是项目惯例（已发布 v0.8.6 = 909 用例；开发线 HEAD 1346，装包即可 `npm test`） |
+| 测试 | `test/` | 行为契约随包分发是项目惯例（已发布 v0.8.6 = 909 用例；开发线 HEAD 1349，装包即可 `npm test`） |
 
 **仅工程仓库（不进 npm 包）**：
 
@@ -273,7 +273,7 @@ src/
 ## 8. 快速上手
 
 ```bash
-npm test                    # 当前开发线 1346（1345 pass + 1 skip）；已发布 v0.8.6 契约仍为 909
+npm test                    # 当前开发线 1349（1348 pass + 1 skip）；已发布 v0.8.6 契约仍为 909
 npm run lint 2>/dev/null || node --check src/index.mjs   # 无 lint 配置的话用 node --check
 node scripts/route.mjs --help        # 路由 CLI
 node scripts/channel-login.mjs --help

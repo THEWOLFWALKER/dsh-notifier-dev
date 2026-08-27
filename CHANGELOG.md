@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 2026-08-27 final maintenance rerun: admin pairing-code revocation now requires explicit confirmation before issuing the destructive DELETE. Focused admin UI coverage is 31/31; full `npm test` is 1349 total (1348 pass + 1 skip). No version or provider-support claims changed.
+
 - 2026-08-27 compatibility closure for taskpack 07: retained YAML `inbound.allowUsers` as a documented one-shot `inbound:migrated` migration (no silent re-seeding after runtime deletions), added an optional Feishu/QQ SDK seam and lifecycle matrix, and documented the WxPusher multi-account residual when multiple apps omit explicit local `accountId`. Evidence is contract/seam tests only; no provider, tenant, or real-device support claim is added.
 
 - 2026-08-27 public facade A3/A4 hardening: `sourceName` is trimmed, length-limited, and control-character safe; each notifier instance now enforces finite call/UTF-8-byte/concurrency/queue budgets shared across facade wrappers, with busy/budget denials isolated to the current call. The consumer facade is deeply contract-stable and frozen (`version`, `enabled`, `push`, `flush` only); teardown is private and registered through the host lifecycle. Focused coverage exercises label rotation, Unicode byte limits, queue saturation, disposal races, and strict mutation failure. No package version change; provider/device validation remains out of scope.
