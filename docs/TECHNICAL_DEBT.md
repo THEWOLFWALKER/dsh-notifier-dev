@@ -1,43 +1,30 @@
-# Technical Debt And Bug-Elimination Plan
+# Technical debt and release gates
 
-This is the active work queue for the next maintenance cycle. It deliberately excludes new user-facing capabilities. The goal is to make the existing 0.8.5 behavior more trustworthy, observable, testable, and easier to release.
+状态更新：2026-08-27。本轮代码维护已完成；剩余事项只是真机/宿主验证和发布门，不应被误读为待实现的新功能。当前开发线 `npm test` 为 `1352`（1351 pass + 1 skip），包版本字段仍为 `0.8.6`，尚未发布。
 
-Status updated `2026-08-27`: P0-2 registry acceptance remains pending npm authentication/publication and profile access; P0-1 and P0-3 stay recorded/done. P1-1 protocol guards are merged with real-device confirmation and long-connection items open. P1-2 error visibility and P1-3 cross-process state stress are done and merged. P1-4 admin UX/workflow audit is done (focused UI/server coverage, including loading/empty/error/disabled/narrow/destructive-confirmation states); P2-2/P2-3 are assessed and documented, while the remaining P2 items stay open.
+## 已完成的维护范围
 
-## Operating Rule
+- 文档、版本和测试基线已对账；历史快照不再作为当前状态。
+- Telegram 文本边界、回调容量、渠道 account/source 绑定、Control Core 结算、问题编号回复和 QQ/Feishu/WeChat iLink/DingTalk adapter seam 已有 focused contract coverage。
+- 错误可见性、跨进程 state 写入、session control overlay 持久化、公共 notifier facade 预算/冻结和管理台个人模式 UX 已完成代码审查与回归测试。
+- `allowUsers` 兼容迁移和 Feishu/QQ 可选 SDK 生命周期已完成兼容性评估，保留原入口；详情见 [compatibility-matrix.md](compatibility-matrix.md)。
 
-Every item follows the same loop: write a short plan, reproduce or measure the problem, implement the smallest fix, perform adversarial review against failure and compatibility paths, revise, run focused tests plus the full suite, and record the result here or in the relevant memory file. Do not close an item because a mock test is green when the risk is provider or host behavior.
+## 剩余外部验证门
 
-## Priority Queue
+- 真机/协议：Telegram 4096 边界、Feishu WS、QQ gateway/按钮 ACK、DingTalk stream、WeChat iLink QR/长轮询、WxPusher 回调、图片/文件 payload 与各 provider 限制。
+- 宿主/桌面：DSH 真实事件装配、真实浏览器管理台操作、重启读取持久化 overlay、Windows BurntToast/PowerShell toast。桌面 `ask_user` 没有安全宿主接口，不能宣称可用或双端共享。
+- 发布：npm 认证、`npm pack --dry-run --json`、registry artifact disposable profile 安装、启动/出站/入站 smoke；只在明确授权后发布。
 
-### P0: Truth And Release Hygiene
+## 维护规则
 
-- **P0-1 Documentation truth audit [done]**: reconcile `HANDOFF.md`, README test wording, package file counts, branch/commit references, and registry status with the current tree. Stale facts are an operational defect because they send the next maintainer down the wrong path.
-- **P0-2 0.8.5 artifact acceptance**: inspect `npm pack --dry-run --json`, then install the registry artifact in a disposable DSH profile and verify version, startup assembly, one outbound test, and one inbound command. Do not treat a `file:` install as acceptance.
-- **P0-3 Host-qualified test baseline [recorded]**: keep the 902-test contract explicit. On the Windows host, 898 pass and four desktop tests require BurntToast/PowerShell capability; the 2026-08-20 Linux relay hosts passed all (897 after P1-1, 902 after P1-2). Validate the desktop adapter on a capable host rather than weakening its behavior.
+新工作仍须遵循 plan → adversarial review → focused tests → full validation；mock 通过不等于 provider/宿主行为已验证。不得以扩大功能、猜测协议字段或放宽 fail-closed 边界来关闭上述门。
 
-### P1: High-Value Bug And Regression Coverage
+完整检查命令：
 
-- **P1-1 Provider protocol blind spots [partially done 2026-08-20]**: Telegram card-path text is now clamped to the 4096 UTF-16 code-unit limit with protocol-shape regression tests (approval/question/action cards, parse_mode guard) on `codex/tech-debt-protocol-guards`. Still open: one real-device confirmation of the clamp boundary, payload-limit evidence for other providers (feishu/qq/wxpusher/dingtalk JSON cards stay unclamped until evidence), legacy markdown escaping coverage beyond the parse_mode guard, callback body limits (A5 overlap — coordinate with the security plan), and long-lived connection behavior. Mock fetch alone remains insufficient for these paths.
-- **P1-2 Error-visibility audit [done 2026-08-20 on `codex/tech-debt-error-visibility`]**: all 356 catch blocks in `src/` were classified (141 logged-visible, 139 deliberately silent with comments, 7 frontend UI, 61 uncommented-silent individually verified). Three real silent-failure gaps fixed: approval routing exceptions now warn while keeping the fail-safe broadcast fallback; `store.mjs` boot corruption now preserves a forensic copy (`.corrupt.<ts>`, copy-not-rename, 8MB cap, empty-file exempt) and warns instead of silently wiping bindings/pending approvals; `keywords.regex` invalid-pattern fallbacks are now reported via `createKeywordFilter().regexFallbacks` and warned by the event listener. Verified non-issues left untouched: `_shared.mjs` rethrow-with-classification, `ledger.mjs` documented best-effort silence, fail-closed token verification. Remaining open: none for this item; real-device confirmation of listener reconnection visibility belongs to P1-1's long-connection item.
-- **P1-3 Cross-process state stress [done 2026-08-23 on `codex/p1-3-state-stress`]**: real multi-process harness (disposable temp profiles, since deleted) exercised concurrent disjoint-key writers (6×10 and 8×25 keys, zero loss), heavy lock contention, mtime convergence (~3ms visibility), corrupt-file self-heal with live writer (double forensics, credential keys survive), and SIGKILL storms (file always parseable). Confirmed defect fixed: a crash-left fresh lock was only recoverable via the >10s mtime rule, so every save degraded to unlocked writes for up to 10s after a kill -9. Recovery now probes the `pid:random` owner stamp (`process.kill(pid,0)`, ESRCH = dead → reclaim same-save) behind a 500ms grace period; live holders, EPERM, and foreign-format locks keep the old behavior. +4 regression tests; contract 902 → 906. Residual: SDK reconnect/dispose lifecycle stays in P2-3; Windows re-run of the new tests pending a capable host.
-- **P1-4 Existing UI workflow audit [done 2026-08-27]**: focused admin UI/server coverage exercises loading, empty, error, disabled, narrow viewport, and destructive-action confirmation states while reusing the DSH visual system. No visual redesign or second console was introduced; real browser/device QA remains an external gap.
-
-### P2: Bounded Structural Debt
-
-- **P2-1 Callback reference capacity**: measure whether the 256-entry FIFO can evict in-flight action/question references under realistic concurrency. Change the bound only if evidence shows user-visible loss, and add a bounded-memory test first.
-- **P2-2 Legacy configuration migration [assessed 2026-08-27]**: retain the deprecated YAML `allowUsers` import path. `createIdentity().migrate()` is one-shot (`inbound:migrated`), composite-key scoped, and covered by config/identity/inbound tests; later starts do not resurrect members removed through admin/pairing. Upgrade impact and the retained compatibility contract are documented in `docs/compatibility-matrix.md`. Removal remains deferred until a release migration plan exists.
-- **P2-3 Optional SDK lifecycle matrix [assessed 2026-08-27]**: documented in `docs/compatibility-matrix.md`. Feishu and QQ QR loaders are lazy and normalize missing/old exports, timeout, SDK failure, and incomplete credentials; Feishu WS has idempotent start/stop with underlying socket termination fallback, while QQ gateway uses bounded reconnect/heartbeat and stop/restart cleanup. Evidence is seam/contract tests only; real provider lifecycle validation remains open.
-
-## Explicitly Deferred
-
-- No new channels, tools, approval modes, question modes, or dashboard features during this cycle.
-- No speculative abstraction or framework migration.
-- No visual restyling of DSH; only consistency, accessibility, and defect correction are in scope.
-
-## Exit Criteria
-
-- No stale release/version/test claims remain in maintained handoff or operational docs.
-- Every P0 item has evidence attached to a commit or registry/profile check.
-- P1 items have focused regression coverage or a documented external-validation procedure.
-- `npm test`, release guard, channel-matrix check, syntax checks, and `git diff --check` pass; known host capability gaps are explicitly recorded.
+```text
+npm test
+node scripts/verify-release.mjs
+node scripts/gen-channel-matrix.mjs --check
+node --check src/index.mjs
+git diff --check
+```

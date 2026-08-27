@@ -2,11 +2,13 @@
 
 ## Unreleased
 
+- 2026-08-27 文档收尾：统一当前 `0.8.6` 未发布开发线与 `1352`（1351 pass + 1 skip）测试事实，压缩 `HANDOFF.md` 与项目记忆，明确 Web 管理台为唯一控制台、desktop `ask_user` 没有安全宿主接口，并归档已完成 taskpack/旧真机测试笔记。代码、版本字段和发布状态不变。
+
 - 2026-08-27 收尾修复：管理台远程提问结算改为传递对象给统一 `api()` 序列化（修复预序列化导致 POST 双重 JSON 编码、服务端丢失 action/options 的真实缺陷），并改用属性匹配查找按钮，恶意/畸形 ref 不再触发 CSS selector 异常。WxPusher 管理台出入站字段新增可选非敏感 `accountId`，支持多应用来源绑定且明确不得填写 APP_TOKEN；YAML/store 显式值覆盖关系保持不变。补充 focused 回归测试；无版本、协议或真机验证声明变更。
 
- - 2026-08-27 final maintenance rerun: admin pairing-code revocation now requires explicit confirmation before issuing the destructive DELETE. Focused admin UI coverage is 33/33 after the settlement/accountId compatibility checks; full `npm test` is 1352 total (1351 pass + 1 skip). No version or provider-support claims changed.
+- 2026-08-27 final maintenance rerun: admin pairing-code revocation now requires explicit confirmation before issuing the destructive DELETE. Focused admin UI coverage is 33/33 after the settlement/accountId compatibility checks; full `npm test` is 1352 total (1351 pass + 1 skip). No version or provider-support claims changed.
 
-- 2026-08-27 compatibility closure for taskpack 07: retained YAML `inbound.allowUsers` as a documented one-shot `inbound:migrated` migration (no silent re-seeding after runtime deletions), added an optional Feishu/QQ SDK seam and lifecycle matrix, and documented the WxPusher multi-account residual when multiple apps omit explicit local `accountId`. Evidence is contract/seam tests only; no provider, tenant, or real-device support claim is added.
+- 2026-08-27 compatibility closure: retained YAML `inbound.allowUsers` as a documented one-shot `inbound:migrated` migration (no silent re-seeding after runtime deletions), added an optional Feishu/QQ SDK seam and lifecycle matrix, and documented the WxPusher multi-account residual when multiple apps omit explicit local `accountId`. Evidence is contract/seam tests only; no provider, tenant, or real-device support claim is added.
 
 - 2026-08-27 public facade A3/A4 hardening: `sourceName` is trimmed, length-limited, and control-character safe; each notifier instance now enforces finite call/UTF-8-byte/concurrency/queue budgets shared across facade wrappers, with busy/budget denials isolated to the current call. The consumer facade is deeply contract-stable and frozen (`version`, `enabled`, `push`, `flush` only); teardown is private and registered through the host lifecycle. Focused coverage exercises label rotation, Unicode byte limits, queue saturation, disposal races, and strict mutation failure. No package version change; provider/device validation remains out of scope.
 - 2026-08-27 inbound callback capacity now fails closed when the bounded reference table is full instead of evicting live buttons; Telegram card builders degrade to text/fallback when references cannot be minted. The package root export is narrowed to `{ name, inject, apply }`; constructors remain available only through the explicit `dsh-notifier/internal` path for local tooling/tests. No OS isolation is implied; same-process hostile plugins remain a host trust-boundary risk.
@@ -432,7 +434,7 @@ QQ 网关心跳 ACK 丢失与 RESUME 恢复路径是批 2 引入的关键韧性�
 ## [0.8.0-tg.0] - 2026-08-17（Telegram 真机测试包）
 
 > v0.8 远程提问（issue #3/#5，规划书《选项卡通知》M1）首个可测版本。
-> 测试步骤见包内 `TG-TEST.md`。
+> 测试步骤曾随测试包提供；当前验证边界以 `docs/memory/risks.md` 为准。
 
 ### 新增：ask_user 远程提问工具（`src/questions/router.mjs`）
 
@@ -508,7 +510,7 @@ QQ 网关心跳 ACK 丢失与 RESUME 恢复路径是批 2 引入的关键韧性�
 ### 测试
 
 - `test/admin-scan.test.mjs` +10 用例（微信流机：基本流/重定向/过期刷新上限/超时/凭证缺失/缺 userId/瞬态重试/已绑定与 identity 异常降级/取码与落盘异常/未知状态），全量 797 → 807。
-- 新增 `WECHAT-TEST.md` 随包分发（离线用例 + 网页/CLI 真机步骤 + 验收清单）。
+- 新增微信测试笔记随包分发（离线用例 + 网页/CLI 真机步骤 + 验收清单；后续文档整理已归档）。
 
 ## [0.7.1] - 2026-08-17
 

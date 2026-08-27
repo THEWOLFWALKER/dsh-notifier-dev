@@ -22,7 +22,7 @@
 ![silence](https://img.shields.io/badge/silence%20never-approves-9C27B0?style=flat-square)
 ![push](https://img.shields.io/badge/push%20it-real%20good-FF4081?style=flat-square)
 
-The published `dsh-notifier@0.8.6` contract is 909 tests. The current development line is 1352 tests (1351 pass + 1 skip); it is unreleased and has not had real-device or host-protocol validation.
+Package metadata remains `dsh-notifier@0.8.6`; the current unreleased development line has 1352 tests (1351 pass + 1 skip). The published registry artifact historically records 909 tests. No real-device or host-protocol validation has been completed.
 
 Unified notification push plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) — one minimal `notify()` API in front, 27 channels behind.
 
@@ -96,7 +96,7 @@ That's it. `turn/end`, `approval/asked`, and `agent/error` events now reach ever
 | **Level routing** | `timeSensitive` / `active` / `passive` → per-channel delivery semantics (silent push, priority headers, @-mentions) with tiered retries. |
 | **Remote approval** | Answer approvals from your phone — Telegram/Feishu cards, QQ native buttons in single chats (group targets are rejected or use text fallback), and `1`/`2` replies on WxPusher / WeChat iLink / DingTalk. Silence never approves. |
 | **Remote conversation** | Chat with your agent: plain text → `followup`/`inject`, `!` prefix steers mid-turn, a merge window reassembles mobile typing. |
-| **Remote questions** (v0.8.0) | The model asks you multiple-choice questions on your phone: 1-4 questions × 2-5 options (multi-select supported). Option cards on Feishu/Telegram and QQ C2C single chats; QQ GROUP targets are non-actionable and cardless channels use numbered-reply fallback. Out-of-range answers get a re-prompt without voiding the question; timeout never fabricates an answer. Same trust chain as approvals (HMAC one-time tokens, first-arrival wins, 30s/60s escalation). |
+| **Remote questions** (v0.8.0) | The model asks you multiple-choice questions on your phone: 1-4 questions × 2-5 options (multi-select supported). Option cards on Feishu/Telegram and QQ C2C single chats; QQ GROUP targets are non-actionable and cardless channels use numbered-reply fallback. Out-of-range answers get a re-prompt without voiding the question; timeout never fabricates an answer. Same trust chain as approvals (HMAC one-time tokens, first-arrival wins, 30s/60s escalation). The loopback Web/admin console can choose/reject masked pending questions through Control Core; desktop has no safe host `ask_user` interface. |
 | **Mobile command center** (v0.5.0) | Long-task heartbeats (default 15min start) and stall alerts (default 10min no events); Telegram/Feishu cards carry a ⏹ stop button (HMAC one-time tokens, same trust chain as approvals); `/quiet`·`/unquiet` mute or restore a session's pushes from your phone. |
 | **Open event source** (v0.6.0) | Other plugins push via the `notifier` service (`ctx.inject(['notifier'], …)` — shared config, routing, ledger, rate limits, flush) and subscribe to delivery metadata via `ctx.on('dsh-notifier/sent')`. Broadcast and directed sends each produce one audited event; message text is never exposed. Per-source rate limiting (10/min), 20k-codepoint clamps, never-reject API; consumer contract in [PLUGINS.md](PLUGINS.md). |
 | **Identity system** (v0.7.0) | "Who can drive inbound" becomes a runtime object: pairing codes (`/pair <code>` in any DM; first redeemer becomes owner), composite-key bindings (`channel:userId` — a Telegram-bound id no longer admits a Feishu message), role management (last owner can't be deleted or demoted), and rejection receipts that tell unbound senders how to get in. Empty whitelist boots into a guided state with a bootstrap pairing code written to a local 0600 file (`<stateDir>/bootstrap-paircode.txt`; logs print the path, never the code) instead of refusing to start. **Full setup-to-daily-use walkthrough: [docs/guide.md](docs/guide.md) (中文)**. |
@@ -182,7 +182,7 @@ v0.5 status line defaults: `longRunning` and `stall` are **on** (15min first hea
 
 <!-- CHANNEL-MATRIX-END -->
 
-Six channels also open inbound (remote approval + conversation): `telegram`, `feishu`, `qq-bot`, `wxpusher`, `wechat`, `dingtalk` — long-lived connections or long polling, so no public IP is required (only the WxPusher callback needs one). Telegram/Feishu and QQ C2C single chats have native control buttons; QQ GROUP targets, missing `chatType`, and unknown source metadata fail closed to non-actionable text or rejection, and the conversation `routeUnsafe` path cannot bypass that gate. QQ, WeChat iLink, and DingTalk image-message code is wired and contract-tested, but real provider/device payloads remain unverified; file receiving/sending stays `declared`. The loopback Web/admin console offers a masked list of pending multi-choice questions plus choose/reject settlement through the shared Control Core; desktop has no settlement entry, so this is not a dual-end shared settlement. Since v0.5, telegram and feishu additionally carry notification action cards (stop button). Since v0.7, every inbound channel answers `/help` `/whoami` `/pair` `/unpair` registration commands, and outbound card targets resolve through a three-tier priority (per-channel bindings → channel config lists → global fallback) with per-channel id-shape guards.
+Six channels also open inbound (remote approval + conversation): `telegram`, `feishu`, `qq-bot`, `wxpusher`, `wechat`, `dingtalk` — long-lived connections or long polling, so no public IP is required (only the WxPusher callback needs one). Telegram/Feishu and QQ C2C single chats have native control buttons; QQ GROUP targets, missing `chatType`, and unknown source metadata fail closed to non-actionable text or rejection, and the conversation `routeUnsafe` path cannot bypass that gate. QQ, WeChat iLink, and DingTalk image-message code is wired and contract-tested, but real provider/device payloads remain unverified; file receiving/sending stays `declared`. The loopback Web/admin console is the only control console and offers a masked list of pending multi-choice questions plus choose/reject settlement through the shared Control Core; desktop has no safe `ask_user` host interface, so this is not a dual-end shared settlement. Since v0.5, telegram and feishu additionally carry notification action cards (stop button). Since v0.7, every inbound channel answers `/help` `/whoami` `/pair` `/unpair` registration commands, and outbound card targets resolve through a three-tier priority (per-channel bindings → channel config lists → global fallback) with per-channel id-shape guards.
 
 ## Architecture
 
@@ -204,7 +204,7 @@ src/
   ledger.mjs          JSONL ledger + daily digest
   rules.mjs           anti-disturb gates (event / keyword / grace)
 scripts/              channel-login.mjs · test-channel.mjs · route.mjs · gen-channel-matrix.mjs
-test/                 909 tests in the published v0.8.6 package; current development line: 1352 (1351 pass + 1 skip)
+test/                 909 tests in the published 0.8.6 package; current development line: 1352 (1351 pass + 1 skip)
 ```
 
 Design rules: pure ESM (`.mjs`), zero runtime dependencies, a declarative spec engine for the bulk of channels, thin honest adapters, no build step.
@@ -212,7 +212,7 @@ Design rules: pure ESM (`.mjs`), zero runtime dependencies, a declarative spec e
 ## Development
 
 ```bash
-npm test          # published v0.8.6 contract: 909 tests; current development line: 1352 (1351 pass + 1 skip)
+npm test          # current 0.8.6 development line: 1352 (1351 pass + 1 skip); published artifact: 909 historical contract tests
 ```
 
 To add a channel: implement the adapter interface (`resolve(cfg)` + `send(msg)`) in `src/adapters/` and register it in `src/config.mjs`; the channel matrix above self-regenerates via `node scripts/gen-channel-matrix.mjs`.

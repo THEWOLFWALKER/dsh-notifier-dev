@@ -9,7 +9,7 @@ node scripts/gen-channel-matrix.mjs --check
 node --check src/index.mjs
 ```
 
-The current development baseline is `1352` tests (`1351` pass + `1` skip). The published v0.8.6 contract remains `909`; do not change `package.json`'s release count on an unreleased development line. Desktop/host and provider protocol behavior still require real-device validation where noted below.
+The current development baseline is `1352` tests (`1351` pass + `1` skip), on the unreleased `0.8.6` development line. The published v0.8.6 artifact historically records `909`; do not change `package.json`'s release count to make these baselines look identical. Desktop/host and provider protocol behavior still require real-device validation where noted below.
 
 The project has no install step for runtime tests. Optional packages are needed only for the corresponding real inbound flows: Feishu SDK, QQ connector, or QR terminal rendering.
 
@@ -25,7 +25,7 @@ Use `$DSH_HOME/dsh-notifier` when `DSH_HOME` is set; otherwise the plugin falls 
 4. Configure one inbound channel, pair the intended `(channel, userId)`, and verify `/whoami`.
 5. Exercise one notification, one approval fallback, and one `ask_user` timeout before enabling unattended workflows. Use the console's **打开高级设置** only when session or binding controls are needed.
 
-The full end-user flow is in `docs/guide.md`. The CLI-only upgrade and rollback procedure is in `docs/upgrade-guide.md` and its English counterpart.
+The Web admin console is the only control console and the full install-to-daily-use flow is in `docs/guide.md`. YAML remains an advanced/automation entry for operators who need it. The CLI-only upgrade and rollback procedure is in `docs/upgrade-guide.md` and its English counterpart.
 
 ## Diagnostics
 
@@ -41,7 +41,7 @@ The full end-user flow is in `docs/guide.md`. The CLI-only upgrade and rollback 
 | Admin unavailable | `admin.enabled`, loopback port, Bearer token, 1 MiB request limit, SSE connection cap |
 | Behavior differs on phone | Run protocol/real-device validation; mocks do not model provider payload limits, callback parsing, or QQ/WeChat iLink/DingTalk image payloads |
 
-QQ single-chat native buttons, QQ group text fallback, and QQ/WeChat iLink/DingTalk image handling are contract-tested only. The loopback Web/admin UI now has a 阶段 2A `ask_user` settlement entry (`/api/questions` list + `/api/questions/:ref/settle` choose/reject, Bearer-gated, masked, through Control Core); desktop has none. Issue #16/#14 remain pending real-device/host validation.
+QQ single-chat native buttons, QQ group text fallback, and QQ/WeChat iLink/DingTalk image handling are contract-tested only. The loopback Web/admin UI now has a 阶段 2A `ask_user` settlement entry (`/api/questions` list + `/api/questions/:ref/settle` choose/reject, Bearer-gated, masked, through Control Core); desktop has no safe host interface for `ask_user`, so it has no settlement entry and dual-end sharing is not claimed. Issue #16/#14 remain pending real-device/host validation.
 
 ## Release Smoke Test
 

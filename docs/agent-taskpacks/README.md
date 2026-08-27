@@ -1,15 +1,7 @@
-# Agent Taskpacks
+# Agent taskpacks（历史索引）
 
-These taskpacks are execution instructions, not shipped features. Runtime source and tests remain authoritative. Execute one pack per branch and stop at its boundary.
+本目录只保留尚未合并或仍需明确决策的历史协作材料，不是当前开发入口，也不是运行时规范。代码、测试和当前事实以 `src/`、`test/`、`HANDOFF.md`、`docs/memory/` 及对应架构文档为准。
 
-## Order
+已完成的 2026-08-27 维护批次执行包和旧测试笔记已删除，避免下一位开发者把它们当作待办重新执行。需要了解背景时，请从 [HANDOFF.md](../../HANDOFF.md) 和 [docs/KNOWLEDGE_BASE.md](../KNOWLEDGE_BASE.md) 开始；需要协议证据请读 [docs/protocol-preflight/](../protocol-preflight/)，需要安全结论请读 [docs/security/](../security/)。
 
-0. `00-host-event-compat.md` — diagnose and fix host event subscription compatibility (Issue #16).
-1. `00-cc1-test-migration.md` — finish exact-chat question test migration.
-2. `01-release-facts-cleanup.md` — reconcile issues, PR references, changelog and handoff facts.
-3. `02-control-contract.md` — add the control-plane contract and compatibility facade only.
-4. `03-session-arbiter.md` — add session policy and command precedence without provider code.
-5. `04-admin-ux.md` — make first-run pairing and console entry understandable without YAML.
-6. `05-wechat-ilink.md` — harden the single-account QR-first WeChat control path.
-
-Do not start later packs until the previous one passes the full validation gate. Do not cherry-pick PR #12. QQ buttons, question cards, and `approval.parallel` are deferred until the control contract and session arbiter are complete.
+目录内剩余文件仅作历史研究或未完成工作记录，使用前必须与当前源码、测试和 `docs/memory/` 对照，不得据此宣称功能已发布或已通过真机验证。

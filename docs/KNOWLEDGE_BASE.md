@@ -1,64 +1,36 @@
-# dsh-notifier Knowledge Base
+# dsh-notifier knowledge base
 
-This is the navigation page for humans and agents. It deliberately points to one authority per question instead of duplicating the whole handoff document.
+这是人类和 agent 的导航页。每个问题尽量只指向一个权威来源；运行时真相仍是 `src/` 与 `test/`，版本真相是 `package.json`。
 
-## Current Baseline
+## 当前基线
 
-- Canonical engineering baseline: private development line at `887b71f` (stage 2A Web/admin `ask_user` settlement plus reconciled handoff facts); package version `0.8.6` (published, current control-contract line unreleased).
-- Canonical collaboration repository: private `dsh-notifier-dev` (GitHub owner `THEWOLFWALKER`). The public repository `https://github.com/THEWOLFWALKER/dsh-notifier` is the release/source mirror, not the day-to-day relay workspace.
-- The public repository's `main` history is unrelated to the current hardening line; do not merge or force-push it implicitly. Public synchronization is a deliberate release operation.
-- Public issue snapshot (2026-08-25): #16/#15/#14/#13/#10/#7/#6/#5/#4/#3/#2/#1 open; #11/#8 closed. PR #12 is open reference material only; PR #9 is merged in the public mirror. These statuses are not claims that the private tree fixes every open issue.
-- Runtime: Node.js ESM, Node `>=22`, no build step, no production dependencies.
-- Test baseline: `1352` total on the current development line (`codex/stage5-wechat-ilink-hardening`, 1351 pass + 1 skip after final maintenance hardening). The published v0.8.6 release retains `909` as its documented test count until a release cycle updates version and count together.
-- The attached npm archive is a release artifact. The engineering archive is the source authority.
+- 当前开发线：`codex/stage5-wechat-ilink-hardening`，包版本字段 `0.8.6`，尚未发布。
+- 当前测试：`1352`（1351 pass + 1 skip）。已发布 npm `0.8.6` 的历史契约为 909；两者不可混写。
+- 私有 `dsh-notifier-dev` 是工程协作仓库；公共 GitHub 仓库只是发布/源码镜像。
+- Node.js ESM、Node `>=22`、无生产依赖、无构建步骤；27 个出站渠道，Telegram/Feishu/QQ Bot/WxPusher/WeChat iLink/DingTalk 六个入站控制通道。
+- Web 管理台是唯一控制台，绑定 `127.0.0.1` 并使用 Bearer token；YAML 是高级/自动化入口。个人模式流程是配置通道 → 配对/扫码 → 测试发送 → 日常审批与 `ask_user`。
+- Web/admin 的问题 choose/reject 已接 Control Core；desktop `ask_user` 没有安全宿主接口，不能声称桌面结算或双端共享。真机、provider 和 DSH 宿主协议验证仍未完成。
 
-## Read Order
+## 阅读顺序
 
-1. `AGENTS.md` for hard boundaries and collaboration rules.
-2. `docs/memory/README.md` for durable project facts and decision hygiene.
-3. `README.zh-CN.md` or `README.md` for user-visible capabilities and configuration.
-4. `docs/architecture.md` for the stable module/data-flow map.
-5. `docs/architecture-roadmap.md` for the approved cross-IM control-plane direction (planning, not shipped behavior).
-6. `docs/OPERATIONS.md` for start-up, state, admin, and release smoke checks.
-7. `docs/TECHNICAL_DEBT.md` for the active no-new-features maintenance queue.
-8. `HANDOFF.md` for detailed historical rationale, review findings, and known traps.
-9. `docs/RELAY_BOOTSTRAP_PROMPT.md` for the copy-paste first message sent to a new relay agent.
-10. `CHANGELOG.md` for chronological changes; it is not a substitute for current rules.
-11. `docs/security/PLUGIN_ATTACK_REVIEW.md` and `docs/security/PLUGIN_SECURITY_FIX_PLAN.md` for the hostile-plugin threat model and staged remediation ownership.
-12. `docs/compatibility-matrix.md` for the assessed legacy `allowUsers` migration and optional SDK lifecycle seams.
+1. [AGENTS.md](../AGENTS.md)：边界、工作流、验证命令。
+2. [memory/README.md](memory/README.md) 与 [memory/project-state.md](memory/project-state.md)：当前事实和发布门。
+3. [README.md](../README.md) / [README.zh-CN.md](../README.zh-CN.md)：安装与能力概览。
+4. [guide.md](guide.md)：从安装、开启管理台到个人模式、配对、测试通知和日常使用。
+5. [architecture.md](architecture.md) / [architecture-roadmap.md](architecture-roadmap.md)：已实现架构与规划方向（规划不等于已发布）。
+6. [OPERATIONS.md](OPERATIONS.md) / [VERSIONING.md](VERSIONING.md)：运维、验证和发布规则。
+7. [protocol-preflight/](protocol-preflight/) / [security/](security/) / [compatibility-matrix.md](compatibility-matrix.md)：协议、安全与兼容性证据。
+8. [HANDOFF.md](../HANDOFF.md)：当前交接快照；[CHANGELOG.md](../CHANGELOG.md)：变更历史。
 
-## Audience Map
+## 能力与安全摘要
 
-| Surface | Audience | Keep here |
-|---|---|---|
-| `AGENTS.md` | Coding agents | Boundaries, workflow, commands, ownership rules |
-| `README*.md` | Users | Install, configure, use, and capability overview |
-| `docs/architecture.md` | Maintainers | Stable components, flows, state keys, trust boundaries |
-| `docs/OPERATIONS.md` | Operators | Verification, troubleshooting, rollback, real-device checks |
-| `docs/VERSIONING.md` | Release owners | Canonical version fields, package comparison, release gate |
-| `docs/memory/` | Future agents | Short durable facts, decisions, and recurring risks |
-| `HANDOFF.md` | Detailed successor context | Historical rationale and full engineering snapshot |
-| `docs/RELAY_BOOTSTRAP_PROMPT.md` | New relay agents | Direct first message for repository takeover and handoff |
-| `.agents/workstreams/` | Parallel agents | Temporary scope reservations and handoff notes |
+- 出站统一经 adapter/spec 层，通知分为 `timeSensitive`、`active`、`passive`；入站审批、会话、问题共享 Control Core、token vault、身份绑定、来源聊天校验和首达结算。
+- 身份至少按 `(channel,userId)` 隔离，携带账号/聊天时精确匹配 `(channel,accountId,userId,chatId)`。未知来源、缺关键字段、错误 token、过期或异常均 fail-closed。
+- QQ C2C 按钮与 GROUP 文本 fallback、QQ/WeChat iLink/DingTalk 图片 envelope 属于 contract-tested；文件/媒体和 provider payload、重连、回调 ACK 仍是 `declared` 或未验证，禁止写成真机支持。
+- `ctx.notifier` facade 具有冻结消费面、来源标签清洗、有限调用/字节/并发/队列预算；这些是支持路径约束，不是同进程插件的 OS 隔离边界。
 
-The product, UX, planning, review-loop, and DSH GUI consistency contract is maintained in `docs/architecture.md`. The approved future control-plane direction is in `docs/architecture-roadmap.md`; it must not be treated as shipped capability.
+## 权威规则
 
-## Capability Summary
-
-- Outbound: 27 adapters through `createNotifier()`; level routing is `timeSensitive`, `active`, or `passive`.
-- Inbound: Telegram, Feishu, QQ Bot, WxPusher, WeChat iLink, and DingTalk.
-- Provider boundaries: `src/channels/wechat-ilink/`, `src/channels/feishu/`, and `src/channels/telegram/`; each wraps the legacy transport while exposing account/source normalization and capability evidence. QQ, WeChat iLink, and DingTalk image paths are wired and contract-tested; file sending/receiving remains `declared` until protocol/device evidence.
-- Trust stack: identity bindings, pairing codes, HMAC token vault, callback references, inbound bus deduplication, source-chat checks, and first-arrival settlement.
-- Agent integration: `notify`, `notify_test`, optional `ask_user`, public `ctx.notifier` facade, and `dsh-notifier/sent` events.
-- Operations: JSON state store with key-level merge, cross-process lock, convergence reads, JSONL ledger, local admin API/UI, SSE event stream, route CLI, and channel login/test CLIs.
-- Security posture: installed DSH plugins share the host process and must currently be treated as trusted code; notifier-specific leakage, audit, identity, and resource-bound fixes are tracked separately from DSH host isolation requirements.
-- Public/plugin boundary (2026-08-27): `ctx.notifier` is a frozen facade with finite instance-shared call/UTF-8-byte/concurrency/queue budgets; source labels are display-only. Callback references reject new entries at capacity (live refs are never evicted), and inbound reject-reply throttling is keyed by `(channel,userId)`. Package root exports only `{ name, inject, apply }`; internal constructors require `dsh-notifier/internal`. These are contract-tested controls, not an OS isolation boundary.
-- Control status: QQ C2C native approval/question buttons and QQ GROUP text fallback are contract-tested only; GROUP, missing `chatType`, and unknown source metadata fail closed, and conversation `routeUnsafe` cannot bypass the gate. The loopback Web/admin now has a 阶段 2A `ask_user` settlement entry (masked snapshot + choose/reject through Control Core, Bearer-gated; desktop still has none), so dual-end sharing is not claimed. Real-device/provider and host-protocol validation remains pending.
-
-## Authority Rules
-
-- If docs and source disagree, inspect the source and tests, then update the stale document in the same change.
-- For collaboration status and decisions, `.agents/` and `docs/memory/` are authoritative; chat is only a request channel. Runtime behavior is still authoritative only in `src/` and `test/`.
-- For serial multi-tool development, commit/push at each machine handoff. Every agent writes a detailed identity-bearing workstream and refreshes the consolidated current handoff snapshot in `HANDOFF.md`; memory remains for durable repository facts and decisions.
-- If the engineering archive and npm archive disagree, keep the engineering tree as truth and record the artifact mismatch in `docs/memory/project-state.md`.
-- If two agents produce competing edits, preserve both diffs until the parent agent resolves them; never silently reset or checkout another agent's work.
+- 文档与源码冲突时先查源码和测试，再在同一变更中修文档。记忆文件保持短小、使用绝对日期，不记录聊天流水账。
+- `docs/agent-taskpacks/` 只保留历史协作索引，不是当前执行入口；已完成旧 taskpack 与旧真机测试笔记已清理。
+- 状态写入必须保留无关 key、使用现有锁/合并行为，且不在日志/API 暴露凭证。公共仓库不作为开发 relay。
