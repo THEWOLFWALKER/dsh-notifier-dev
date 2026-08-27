@@ -49,6 +49,7 @@ function makeRig({ allowUsers = ['UID_1'], config = {}, pushOptions = {} } = {})
       port: 0, // 随机端口（真实 server）
       notifyUids: config.notifyUids ?? [],
       allowedIps: config.allowedIps ?? [],
+      ...(config.accountId === undefined ? {} : { accountId: config.accountId }),
     },
     bus,
     store,
@@ -154,6 +155,30 @@ test('send_up_cmd：剥 #{appId} 前缀 → bus envelope；白名单外 uid 拒�
   await post(rig, { action: 'send_up_cmd', data: { uid: 'UID_EVIL', appId: 'AT_app', time: '1', content: 'hi' } })
   assert.equal(accepted.length, 1)
   await rig.inbound.stop()
+})
+
+test('send_up_cmd：本地 accountId 注入 envelop（config.accountId 优先；缺省字面量 default；回调自报 appId 一律忽略）', async () => {
+  const accepted = []
+  const rig = makeRig({ config: { accountId: 'my-wx-app', notifyUids: ['UID_1'] } })
+  rig.bus.onMessage((envelope) => accepted.push(envelope))
+  rig.inbound.start()
+  await tick()
+  // 载荷自带 appId 是对端自报：accountId 必须仍来自本地配置（my-wx-app），绝不落入 EVIL_*。
+  await post(rig, { action: 'send_up_cmd', data: { uid: 'UID_1', appId: 'EVIL_SELF_REPORT', time: '9', content: 'hi' } })
+  assert.equal(accepted.length, 1)
+  assert.equal(accepted[0].accountId, 'my-wx-app')
+  assert.equal(rig.inbound.accountId, 'my-wx-app')
+  await rig.inbound.stop()
+
+  const acceptedDefault = []
+  const rig2 = makeRig({ config: { notifyUids: [] } })
+  rig2.bus.onMessage((envelope) => acceptedDefault.push(envelope))
+  rig2.inbound.start()
+  await tick()
+  await post(rig2, { action: 'send_up_cmd', data: { uid: 'UID_1', appId: 'EVIL_SELF_REPORT', time: '10', content: 'hi' } })
+  assert.equal(acceptedDefault[0].accountId, 'default', '未显式配置 accountId → 稳定字面量 default')
+  assert.equal(rig2.inbound.accountId, 'default')
+  await rig2.inbound.stop()
 })
 
 test('send_up_cmd：无前缀纯文本直通；不一致 appId 也按 #xxx 形态剥', async () => {

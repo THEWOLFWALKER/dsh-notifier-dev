@@ -219,6 +219,34 @@ test('router 多通道：编号回复跨通道裁决；editResolved 按通道路
   rig.dispose()
 })
 
+test('router 多通道：wxpusher 编号回复账号来源精确绑定（本地 accountId；错账号/缺账号 fail-closed）', async () => {
+  const wx = makeFake('wxpusher', { accountId: 'default', targets: [{ chatId: 'UID_1', userId: 'u2' }] })
+  const rig = makeRig({ interactive: [wx] })
+  // 正确账号来源：本地 accountId 'default' → 编号回复裁决成功
+  const outcome = rig.handle()
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  const accepted = rig.bus.accept({ channel: 'wxpusher', accountId: 'default', userId: 'u2', chatId: 'UID_1', messageId: 'msg:wx:1', text: '1' })
+  assert.equal(accepted.ok, true)
+  assert.equal(await outcome, 'allowed-once')
+
+  // 第二个待决审批：错误账号 → fail-closed（消费但不裁决，行保持 pending）
+  const second = rig.handle({ callId: 'call-2', toolName: 'bash-2' })
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  const wrongAccount = rig.bus.accept({ channel: 'wxpusher', accountId: 'EVIL_APP', userId: 'u2', chatId: 'UID_1', messageId: 'msg:wx:2', text: '2' })
+  assert.equal(wrongAccount.ok, true)
+  const wrongRowKey = wx.state.cards.at(-1).approvalKey
+  assert.equal(rig.store.get(wrongRowKey).status, 'pending', '错误 accountId 不得裁决')
+
+  // 缺账号来源 → fail-closed（消费但不裁决）
+  const missing = rig.bus.accept({ channel: 'wxpusher', userId: 'u2', chatId: 'UID_1', messageId: 'msg:wx:3', text: '1' })
+  assert.equal(missing.ok, true)
+  assert.equal(rig.store.get(wrongRowKey).status, 'pending', '缺 accountId 不得裁决')
+
+  await second
+  assert.equal(rig.store.get(wrongRowKey).decision, 'timeout', '被拒路径不落 resolved（等待超时后回落桌面）')
+  rig.dispose()
+})
+
 test('router 多通道：首达采纳——编号回复后按钮再点返回 already-resolved', async () => {
   const qq = makeFake('qq', { accountId: 'QQ_APP', targets: [{ chatId: 'opengrp01', userId: 'u2' }] })
   const rig = makeRig({ interactive: [qq] })
