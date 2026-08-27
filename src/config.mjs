@@ -343,7 +343,20 @@ export function resolveConfig(config = {}) {
     limitPerMinutePerSource: Number.isFinite(publicLimit) && publicLimit >= 0 ? Math.trunc(publicLimit) : 10,
     emit: rawPublic.emit !== false,
   }
-
+  // Optional facade-instance budgets.  Omit absent keys to preserve the
+  // historical resolved shape; createPublicFacade supplies finite defaults.
+  for (const [key, fallback] of [
+    ['maxCalls', 10_000],
+    ['maxBytes', 10 * 1024 * 1024],
+    ['maxConcurrent', 16],
+    ['maxQueue', 64],
+  ]) {
+    if (!Object.prototype.hasOwnProperty.call(rawPublic, key)) continue
+    const value = Number(rawPublic[key])
+    publicBlock[key] = Number.isFinite(value) && value >= 0
+      ? Math.trunc(value)
+      : fallback
+  }
   return {
     enabled,
     debounceMs,

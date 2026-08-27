@@ -278,6 +278,65 @@ test('输入防御：sourceName 归一（空/非字符串→anonymous，超长�
   })
 })
 
+// ---------------------------------------------------------------- A3/A4：实例预算、来源标签与冻结公共面
+
+test('A3：sourceName 轮换不能绕过实例调用预算，控制字符被替换', async () => {
+  const calls = []
+  const notifier = { notifyAll: async (_message, { source }) => { calls.push(source); return { ok: true, delivered: ['x'], skipped: [], failed: [] } } }
+  const facade = createPublicFacade({ notifier, config: { maxCalls: 2, maxBytes: 1024 }, logger: { warn() {} } })
+  assert.equal((await facade.push({ title: 'a', content: 'b' }, { sourceName: ' one\u001b[31m' })).ok, true)
+  assert.equal((await facade.push({ title: 'a', content: 'b' }, { sourceName: 'two' })).ok, true)
+  const blocked = await facade.push({ title: 'a', content: 'b' }, { sourceName: 'three' })
+  assert.deepEqual(blocked.skipped, ['(budget)'])
+  assert.equal(calls[0].name.includes('\u001b'), false)
+})
+
+test('A3：字节预算按 UTF-8 计算并在分发前拒绝', async () => {
+  let sent = 0
+  const notifier = { notifyAll: async () => { sent += 1; return { ok: true, delivered: ['x'], skipped: [], failed: [] } } }
+  const facade = createPublicFacade({ notifier, config: { maxBytes: 4, maxCalls: 10 }, logger: { warn() {} } })
+  assert.equal((await facade.push({ title: '🍅', content: '' })).ok, true) // 4 UTF-8 bytes
+  assert.deepEqual((await facade.push({ title: 'a', content: '' })).skipped, ['(budget)'])
+  assert.equal(sent, 1)
+})
+
+test('A3：并发/排队预算有界，队列满只拒绝当前调用', async () => {
+  let releaseFirst
+  const firstDone = new Promise((resolve) => { releaseFirst = resolve })
+  let calls = 0
+  const notifier = { notifyAll: async () => { calls += 1; if (calls === 1) await firstDone; return { ok: true, delivered: ['x'], skipped: [], failed: [] } } }
+  const facade = createPublicFacade({ notifier, config: { maxConcurrent: 1, maxQueue: 1, maxCalls: 10 }, logger: { warn() {} } })
+  const first = facade.push({ title: '1', content: 'x' })
+  const queued = facade.push({ title: '2', content: 'x' })
+  const busy = await facade.push({ title: '3', content: 'x' })
+  assert.deepEqual(busy.skipped, ['(busy)'])
+  releaseFirst()
+  assert.equal((await first).ok, true)
+  assert.equal((await queued).ok, true)
+})
+
+test('A4：facade 冻结且不暴露 dispose；内部 disposer 幂等并阻止排队调用', async () => {
+  let dispose
+  let releaseFirst
+  const firstDone = new Promise((resolve) => { releaseFirst = resolve })
+  let calls = 0
+  const notifier = { notifyAll: async () => { calls += 1; await firstDone; return { ok: true, delivered: ['x'], skipped: [], failed: [] } } }
+  const facade = createPublicFacade({ notifier, config: { maxConcurrent: 1, maxQueue: 1 }, onDispose: (fn) => { dispose = fn }, logger: { warn() {} } })
+  assert.equal(Object.isFrozen(facade), true)
+  assert.equal('dispose' in facade, false)
+  assert.throws(() => { facade.push = null }, TypeError)
+  const first = facade.push({ title: '1', content: 'x' })
+  await Promise.resolve()
+  const queued = facade.push({ title: '2', content: 'x' })
+  dispose()
+  dispose()
+  assert.deepEqual((await queued).skipped, ['(busy)'])
+  releaseFirst()
+  assert.equal((await first).ok, true)
+  assert.equal(calls, 1)
+  assert.deepEqual((await facade.push({ title: '3', content: 'x' })).skipped, ['(disposed)'])
+})
+
 // ---------------------------------------------------------------- source 穿透（notify.mjs 侧）
 
 test('source 穿透：无 source 时 record 不出现 source 键（旧行为逐字节不变）', async () => {

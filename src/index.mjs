@@ -116,7 +116,12 @@ export function apply(ctx, config = {}) {
     // 拿到「push 返回 skipped:(disabled)」而非整个宿主起不来。
     warn('已禁用（enabled: false），不注册事件监听与工具；notifier 服务以 no-op 形态照常提供')
     const stubDisposers = []
-    registerNotifierService(createPublicFacade({ notifier: null, config: resolved.public, logger }), stubDisposers)
+    registerNotifierService(createPublicFacade({
+      notifier: null,
+      config: resolved.public,
+      logger,
+      onDispose: (dispose) => stubDisposers.push(dispose),
+    }), stubDisposers)
     ctx.effect(() => () => {
       for (const dispose of stubDisposers) {
         try { dispose()?.catch?.(() => {}) } catch { /* 卸载失败不致命 */ }
@@ -207,9 +212,9 @@ export function apply(ctx, config = {}) {
     config: resolved.public,
     logger,
     onSend,
+    onDispose: (dispose) => disposers.push(dispose),
   })
   registerNotifierService(publicFacade, disposers)
-  disposers.push(() => publicFacade.dispose())
 
   // v0.6.3 state 瘦身（审查 R2 P1-4）：dedup:*/ap:*/act:* 历史上只增不删（bus 每条
   // 入站消息落一个 dedup 键、审批/动作核销后账本行永留），长跑进程 state.json 单调
