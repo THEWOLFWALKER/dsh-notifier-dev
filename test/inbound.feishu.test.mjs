@@ -326,6 +326,46 @@ test('card.action.trigger：重复点击同一审批 → already-resolved toast�
   await inbound.stop()
 })
 
+test('v0.8.7 卡片回调：approval/question 载荷把稳定 eventId 传进 Control Core（缺 eventId 会被 missing_eventId 拒绝）', async () => {
+  const logger = makeLogger()
+  const vault = createTokenVault({ secret: 'k' })
+  const bus = createInboundBus({ allowUsers: ['ou_1'], vault, logger })
+  const fake = makeFakeSdk()
+  const received = []
+  const control = { handle: (input) => { received.push(input); return { status: 'accepted' } } }
+  const inbound = createFeishuInbound({
+    config: { appId: 'a', appSecret: 's' }, bus, logger, sdkLoader: fake.loader,
+    control, questions: { decide: () => ({ ok: false }) },
+  })
+  inbound.start()
+  await tick()
+
+  const key = 'ap:rm:1'
+  const token = vault.mint(key)
+  const approveAct = buildApprovalAction('allowed-once', key, token)
+  fake.state.dispatcher.handlers['card.action.trigger']({
+    operator: { open_id: 'ou_1' },
+    open_message_id: 'om_card1',
+    context: { open_chat_id: 'oc_1' },
+    action: { value: { act: approveAct, srcChat: 'oc_1' } },
+  })
+  const qKey = 'aq:q1'
+  const qToken = vault.mint(qKey)
+  const aqAct = buildQuestionAction(qKey, '0', qToken)
+  fake.state.dispatcher.handlers['card.action.trigger']({
+    operator: { open_id: 'ou_1' },
+    open_message_id: 'om_card2',
+    context: { open_chat_id: 'oc_1' },
+    action: { value: { act: aqAct, srcChat: 'oc_1' } },
+  })
+  assert.equal(received.length, 2)
+  assert.equal(received[0].command, 'approval')
+  assert.equal(received[0].eventId, `feishu:om_card1:ou_1:${approveAct}`)
+  assert.equal(received[1].command, 'question-answer')
+  assert.equal(received[1].eventId, `feishu:om_card2:ou_1:${aqAct}`)
+  await inbound.stop()
+})
+
 test('card.action.trigger：未知 payload / 坏 token → 不裁决，toast 提示', async () => {
   const logger = makeLogger()
   const vault = createTokenVault({ secret: 'k' })

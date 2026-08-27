@@ -180,7 +180,7 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
         const optIdx = parts[parts.length - 2]
         const token = parts[parts.length - 1]
         const verdict = control !== null
-          ? control.handle({ command: 'question-answer', qKey, optIdx, token, via: 'telegram', channel: 'telegram', accountId: resolvedAccountId, userId: String(query.from?.id ?? ''), chatId: String(query.message?.chat?.id ?? ''), chatType: query.message?.chat?.type })
+          ? control.handle({ command: 'question-answer', eventId: String(query.id ?? ''), qKey, optIdx, token, via: 'telegram', channel: 'telegram', accountId: resolvedAccountId, userId: String(query.from?.id ?? ''), chatId: String(query.message?.chat?.id ?? ''), chatType: query.message?.chat?.type })
           : questions.decide({ qKey, optIdx, token, via: 'telegram', accountId: resolvedAccountId, userId: query.from?.id, chatId: query.message?.chat?.id })
         const text = verdict?.message ?? (verdict?.status === 'accepted' ? '✅ 已作答' : '该提问已回答或已过期')
         await api('answerCallbackQuery', { callback_query_id: query.id, text: String(text).slice(0, 200) }).catch(() => {})
@@ -200,8 +200,11 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
         const decision = parts[1]
         const approvalKey = parts.slice(2, -1).join(':')
         const token = parts[parts.length - 1]
+        // v0.8.7：callback_query.id 是 Telegram 官方唯一回调事件标识——必须作为 eventId 传入
+        // Control Core（approval spec 的 buildEvent 直取 input.eventId，缺失即 missing_eventId
+        // 拒绝，按钮将无法裁决）。
         const verdict = control !== null
-          ? control.handle({ command: 'approval', approvalKey, decision, token, via: 'telegram', channel: 'telegram', accountId: resolvedAccountId, userId: String(query.from?.id ?? ''), chatId: String(query.message?.chat?.id ?? ''), chatType: query.message?.chat?.type })
+          ? control.handle({ command: 'approval', eventId: String(query.id ?? ''), approvalKey, decision, token, via: 'telegram', channel: 'telegram', accountId: resolvedAccountId, userId: String(query.from?.id ?? ''), chatId: String(query.message?.chat?.id ?? ''), chatType: query.message?.chat?.type })
           : bus.decide({
           approvalKey,
           decision,

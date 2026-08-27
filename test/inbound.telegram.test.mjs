@@ -550,6 +550,40 @@ test('长轮询：callback_query 携带合法 token → bus.decide；二次点�
   assert.equal(answered.length, 2) // 首达采纳文案与失效文案各回一次
 })
 
+test('v0.8.7 按钮回调：approval/question 载荷把真实 callback_query.id 作为 eventId 传进 Control Core', async () => {
+  const received = []
+  const control = { handle: (input) => { received.push(input); return { status: 'accepted' } } }
+  const vault = createTokenVault({ secret: 'k' })
+  const token = vault.mint('ap:rm:1')
+  const qToken = vault.mint('aq:aq:x')
+  const card = { message: { chat: { id: 42 }, message_id: 9 }, from: { id: 42 }, id: 'cbq-approve' }
+  const updates = [
+    { update_id: 1, callback_query: { ...card, data: `ap:allowed-once:ap:rm:1:${token}` } },
+    { update_id: 2, callback_query: { ...card, id: 'cbq-answer', data: `aq:aq:x:0:${qToken}` } },
+  ]
+  let i = 0
+  const { fetchImpl } = makeFetch({
+    getUpdates: () => {
+      if (i >= updates.length) return { ok: true, result: [] }
+      const out = { ok: true, result: [updates[i]] }
+      i += 1
+      return out
+    },
+    answerCallbackQuery: { ok: true, result: true },
+    editMessageText: { ok: true, result: true },
+  })
+  const tg = createTelegramInbound({ config: CONFIG, bus: makeBus(), vault, fetchImpl, control, questions: { decide: () => ({ ok: false }) }, errorBackoffMs: 10 })
+  tg.start()
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  await tg.stop()
+  // 缺 eventId 会被 Control Core 以 missing_eventId 拒绝（approval/question spec.buildEvent 直取 input.eventId）
+  assert.equal(received.length, 2)
+  assert.equal(received[0].command, 'approval')
+  assert.equal(received[0].eventId, 'cbq-approve')
+  assert.equal(received[1].command, 'question-answer')
+  assert.equal(received[1].eventId, 'cbq-answer')
+})
+
 test('长轮询：offset cursor 持久化，重启后从上次位置继续（不重复消费）', async () => {
   const path = tempPath()
   const accepted = []

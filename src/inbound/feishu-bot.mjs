@@ -324,6 +324,23 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
     )
   }
 
+  /**
+   * v0.8.7：构造 Control Core 需要的稳定 eventId（approval/question spec 的 buildEvent 直取
+   * input.eventId，缺失即 missing_eventId 拒绝）。只用真实字段：open_message_id（同卡片的
+   * 重复投递事件应去重）+ operator.open_id（不同操作者各自独立事件）+ act（同一卡片上
+   * 批准/拒绝/选项按钮互不抢占）。空串兜底反而会被 normalize 拒绝（fail-closed），不会误放行。
+   */
+  function callbackEventIdOf(data, act) {
+    const messageId = String(
+      data?.context?.open_message_id
+      ?? data?.message_id
+      ?? data?.open_message_id
+      ?? '',
+    )
+    const operator = String(data?.operator?.open_id ?? data?.sender?.sender_id?.open_id ?? '')
+    return `feishu:${messageId}:${operator}:${String(act ?? '')}`
+  }
+
   /** 发一条普通文本（终态兜底 / 群聊降级通知共用；尽力而为，失败不抛）。 */
   function sendPlain(chatId, text) {
     if (client === null) return false
@@ -410,7 +427,7 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
         }
         const verdict = control !== null
           ? control.handle({
-            command: 'question-answer', qKey: questionAction.qKey, optIdx: questionAction.optIdx,
+            command: 'question-answer', eventId: callbackEventIdOf(data, raw), qKey: questionAction.qKey, optIdx: questionAction.optIdx,
             token: questionAction.token, via: 'feishu:button', channel: 'feishu',
             accountId: resolvedAccountId,
             userId: String(data?.operator?.open_id ?? ''), chatId: clickedChatOf(data),
@@ -436,7 +453,7 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
       }
       const verdict = control !== null
         ? control.handle({
-          command: 'approval', approvalKey: approvalAction.approvalKey, decision: approvalAction.decision,
+          command: 'approval', eventId: callbackEventIdOf(data, raw), approvalKey: approvalAction.approvalKey, decision: approvalAction.decision,
           token: approvalAction.token, via: 'feishu:button', channel: 'feishu',
           accountId: resolvedAccountId,
           userId: String(data?.operator?.open_id ?? ''), chatId: clickedChatOf(data),
