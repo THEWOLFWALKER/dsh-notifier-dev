@@ -28,6 +28,7 @@ import { createAgentRouter } from '../src/routing/agent-router.mjs'
 import { createStore } from '../src/inbound/store.mjs'
 import { createInboundBus } from '../src/inbound/bus.mjs'
 import { createTokenVault } from '../src/inbound/tokens.mjs'
+import { createControlEntry } from '../src/control/entry.mjs'
 
 function tempDir() {
   return mkdtempSync(join(tmpdir(), 'dsh-notifier-wiring-'))
@@ -447,10 +448,11 @@ test('状态清扫：act 孤儿 pending 回收，dedup 既有窗口行为不变'
 // ---------------------------------------------------------------- 审批分流（approval/router deps.router）
 
 /** 新契约假交互通道（approval.multi.test.mjs makeFake 同款，精简版）。 */
-function makeFakeInbound(channel, targets = []) {
+function makeFakeInbound(channel, targets = [], accountId = undefined) {
   const state = { cards: [], edits: [] }
   return {
     channel,
+    ...(accountId === undefined ? {} : { accountId }),
     state,
     notifyTargets: () => targets,
     async sendApprovalCard(payload) { state.cards.push(payload); return { messageId: `m${state.cards.length}` } },
@@ -472,6 +474,8 @@ function makeApprovalRig({ interactive = [], routerFactory = null, notifierChann
     notifyAll: async (msg, options) => { broadcasts.push({ msg, options }); return { ok: true, delivered: [], skipped: [], failed: [] } },
   }
   const router = routerFactory !== null ? routerFactory(store) : null
+  // v0.8.7：Control Core 必须接线——所有审批结算统一走 Control Core。
+  const control = createControlEntry()
   const dispose = registerApprovalHandler({
     ctx,
     notifier,
@@ -479,6 +483,7 @@ function makeApprovalRig({ interactive = [], routerFactory = null, notifierChann
     vault,
     store,
     interactive,
+    control,
     approvalConfig: { mode: 'answer', timeoutMs: 400 },
     ...(router !== null ? { router } : {}),
     ...(logger !== null ? { logger } : {}),
@@ -489,7 +494,7 @@ function makeApprovalRig({ interactive = [], routerFactory = null, notifierChann
 
 test('审批分流：request.agent 有 id 时 notifyAll 收到的 channelTypes 只含绑定通道；无关交互渠道不发卡片', async () => {
   const feishu = makeFakeInbound('feishu', [{ chatId: 'oc_chat001', userId: 'u1' }])
-  const qq = makeFakeInbound('qq', [{ chatId: 'opengrp01', userId: 'u2' }])
+  const qq = makeFakeInbound('qq', [{ chatId: 'opengrp01', userId: 'u2' }], 'QQ_APP')
   const rig = makeApprovalRig({
     interactive: [feishu, qq],
     notifierChannels: ['webhook', 'qq'],
@@ -510,7 +515,7 @@ test('审批分流：request.agent 有 id 时 notifyAll 收到的 channelTypes �
 })
 
 test('审批分流：request 无 agent 时回落全局广播（第二参空对象，卡片照发）', async () => {
-  const qq = makeFakeInbound('qq', [{ chatId: 'opengrp01', userId: 'u2' }])
+  const qq = makeFakeInbound('qq', [{ chatId: 'opengrp01', userId: 'u2' }], 'QQ_APP')
   const rig = makeApprovalRig({
     interactive: [qq],
     notifierChannels: ['webhook', 'qq'],
@@ -520,13 +525,13 @@ test('审批分流：request 无 agent 时回落全局广播（第二参空对�
   await new Promise((resolve) => setTimeout(resolve, 30))
   assert.deepEqual(rig.broadcasts[0].options, {}, '无 agent = 不分流，全局广播')
   assert.equal(qq.state.cards.length, 1, '全局广播下交互渠道照常收卡片')
-  rig.bus.accept({ channel: 'qq', userId: 'u2', chatId: 'opengrp01', messageId: 'msg:1:opengrp01', text: '1' })
+  rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', chatType: 'private', userId: 'u2', chatId: 'opengrp01', messageId: 'msg:1:opengrp01', text: '1' })
   assert.equal(await outcome, 'allowed-once')
   rig.dispose()
 })
 
 test('P1-2 审批分流：路由引擎抛异常时回落全局广播且必须告警（不再静默扩散）', async () => {
-  const qq = makeFakeInbound('qq', [{ chatId: 'opengrp01', userId: 'u2' }])
+  const qq = makeFakeInbound('qq', [{ chatId: 'opengrp01', userId: 'u2' }], 'QQ_APP')
   const warnings = []
   const rig = makeApprovalRig({
     interactive: [qq],
@@ -544,7 +549,7 @@ test('P1-2 审批分流：路由引擎抛异常时回落全局广播且必须告
   // P1-2 新增可见性：异常路径与空集路径对仗，必须 warn 而非静默
   const hit = warnings.find((message) => message.includes('审批分流解析异常') && message.includes('route engine exploded'))
   assert.ok(hit !== undefined, `路由异常必须告警（实际 warnings: ${JSON.stringify(warnings)}）`)
-  rig.bus.accept({ channel: 'qq', userId: 'u2', chatId: 'opengrp01', messageId: 'msg:1:opengrp01', text: '1' })
+  rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', chatType: 'private', userId: 'u2', chatId: 'opengrp01', messageId: 'msg:1:opengrp01', text: '1' })
   assert.equal(await outcome, 'allowed-once')
   rig.dispose()
 })

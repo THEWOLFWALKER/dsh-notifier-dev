@@ -65,7 +65,7 @@ function makeRig({ telegram = null, approvalConfig = {}, control = null, interac
 // When bus.wait throws (not returns null), the handler must catch it and
 // fall back to desktop without crashing or leaving pending state.
 test('decisionPromise rejection falls back to desktop without unhandled exception', async () => {
-  const tg = makeFake('telegram')
+  const tg = makeFake('telegram', { accountId: 'TG_APP' })
   const rig = makeRig({ telegram: tg })
 
   // Override bus.wait to throw on the next call
@@ -86,7 +86,7 @@ test('decisionPromise rejection falls back to desktop without unhandled exceptio
 // 2. Two concurrent qKeys don't interfere.
 // Two approval requests in flight: settling one must not affect the other.
 test('concurrent qKeys are isolated: settling one leaves the other pending', async () => {
-  const tg = makeFake('telegram')
+  const tg = makeFake('telegram', { accountId: 'TG_APP' })
   const rig = makeRig({ telegram: tg, approvalConfig: { timeoutMs: 10000 } })
 
   // Fire two concurrent requests
@@ -102,7 +102,7 @@ test('concurrent qKeys are isolated: settling one leaves the other pending', asy
   // Settle the first one via button (unique messageId to avoid dedup)
   const action1 = buildApprovalAction('allowed-once', card1.approvalKey, card1.token)
   rig.bus.accept({
-    channel: 'telegram', userId: 'u1', chatId: '10001', messageId: 'msg-1',
+    channel: 'telegram', accountId: 'TG_APP', userId: 'u1', chatId: '10001', messageId: 'msg-1',
     text: 'approve', approvalAction: parseApprovalAction(action1),
   })
   const result1 = await p1
@@ -111,7 +111,7 @@ test('concurrent qKeys are isolated: settling one leaves the other pending', asy
   // Settle the second one independently (with its own action and unique messageId)
   const action2 = buildApprovalAction('rejected', card2.approvalKey, card2.token)
   rig.bus.accept({
-    channel: 'telegram', userId: 'u1', chatId: '10001', messageId: 'msg-2',
+    channel: 'telegram', accountId: 'TG_APP', userId: 'u1', chatId: '10001', messageId: 'msg-2',
     text: 'reject', approvalAction: parseApprovalAction(action2),
   })
   const result2 = await p2
@@ -120,7 +120,7 @@ test('concurrent qKeys are isolated: settling one leaves the other pending', asy
 
 // 3. approval.parallel is off by default — must not accidentally enable.
 test('approval.parallel defaults to off: remote and desktop run sequentially', async () => {
-  const tg = makeFake('telegram')
+  const tg = makeFake('telegram', { accountId: 'TG_APP' })
   const rig = makeRig({ telegram: tg, approvalConfig: { parallel: undefined } })
   // parallel not set → default sequential behavior
   const outcome = rig.handle({ callId: 'seq-test' })
@@ -129,7 +129,7 @@ test('approval.parallel defaults to off: remote and desktop run sequentially', a
   // Settle from mobile
   const action = buildApprovalAction('allowed-once', card.approvalKey, card.token)
   rig.bus.accept({
-    channel: 'telegram', userId: 'u1', chatId: '10001',
+    channel: 'telegram', accountId: 'TG_APP', userId: 'u1', chatId: '10001',
     text: 'approve', approvalAction: parseApprovalAction(action),
   })
   const result = await outcome
@@ -156,7 +156,7 @@ test('buttonless channels still receive card but not listed in button note; text
 
 // 5. Expired token is rejected.
 test('replay of consumed approval action is rejected (single-use token)', async () => {
-  const tg = makeFake('telegram')
+  const tg = makeFake('telegram', { accountId: 'TG_APP' })
   const rig = makeRig({ telegram: tg })
   const outcome = rig.handle({ callId: 'replay-test' })
   await new Promise((r) => setTimeout(r, 50))
@@ -165,13 +165,13 @@ test('replay of consumed approval action is rejected (single-use token)', async 
   // First accept succeeds
   const action = buildApprovalAction('allowed-once', card.approvalKey, card.token)
   const first = rig.bus.accept({
-    channel: 'telegram', userId: 'u1', chatId: '10001',
+    channel: 'telegram', accountId: 'TG_APP', userId: 'u1', chatId: '10001',
     text: 'approve', approvalAction: parseApprovalAction(action),
   })
   assert.equal(first.ok, true, 'first accept succeeds')
   // Replay the same action → should be rejected (already consumed)
   const replay = rig.bus.accept({
-    channel: 'telegram', userId: 'u1', chatId: '10001',
+    channel: 'telegram', accountId: 'TG_APP', userId: 'u1', chatId: '10001',
     text: 'replay', approvalAction: parseApprovalAction(action),
   })
   // The replay might succeed at bus level but the approval handler detects already-resolved
