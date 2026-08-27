@@ -1,6 +1,6 @@
 # Project state
 
-Snapshot date: 2026-08-27. Current release-candidate branch: `codex/stage5-wechat-ilink-hardening`. Package version authority is `0.9.0`; the branch is not yet published.
+Snapshot date: 2026-08-27. Current release branch: `codex/stage5-wechat-ilink-hardening`. Package version authority is `0.9.0`; the public GitHub source mirror is synced, while npm registry publication remains pending account 2FA/authorization.
 
 - Current development validation: `npm test` = **1352** total, **1351 pass + 1 skip**.
 - Historical npm `0.8.6` artifact carried contract count **909**; the `0.9.0` candidate uses the current **1352** test count.
@@ -21,4 +21,4 @@ Snapshot date: 2026-08-27. Current release-candidate branch: `codex/stage5-wecha
 
 ## Next release gate
 
-Run the full validation, `npm pack --dry-run --json`, and registry-artifact disposable-profile smoke after npm authentication. Validate startup, one outbound test, one inbound command, and the `ask_user` assembly boundary; publish only after explicit approval. Real-device, provider, and DSH-host validation remains an external gate; see [risks.md](risks.md).
+Run `npm pack --dry-run --json` and registry-artifact disposable-profile smoke after npm authentication. Validate startup, one outbound test, one inbound command, and the `ask_user` assembly boundary; npm publication is pending the account's 2FA/authorization step. Real-device, provider, and DSH-host validation remains an external gate; see [risks.md](risks.md).

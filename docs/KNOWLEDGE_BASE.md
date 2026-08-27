@@ -4,7 +4,7 @@
 
 ## 当前基线
 
-- 当前发布候选线：`codex/stage5-wechat-ilink-hardening`，包版本字段 `0.9.0`，尚未发布。
+- 当前发布线：`codex/stage5-wechat-ilink-hardening`，包版本字段 `0.9.0`；公共 GitHub 源码镜像已推送，npm registry 发布仍待 2FA/认证完成。
 - 当前测试：`1352`（1351 pass + 1 skip）。历史 npm `0.8.6` 契约为 909；两者按版本区分。
 - 私有 `dsh-notifier-dev` 是工程协作仓库；公共 GitHub 仓库只是发布/源码镜像。
 - Node.js ESM、Node `>=22`、无生产依赖、无构建步骤；27 个出站渠道，Telegram/Feishu/QQ Bot/WxPusher/WeChat iLink/DingTalk 六个入站控制通道。
