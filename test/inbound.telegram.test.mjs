@@ -424,8 +424,8 @@ test('C1 TG 来源比对：origin 缺 chatId（旧卡）→ 兼容放行 + 显�
   assert.ok(logger.lines.some((line) => /缺少来源会话元数据/.test(line)), `兼容放行必须 warn（实际：${logger.lines.join(' | ')}）`)
 })
 
-// v0.6.2 注册表单元：单次核销 / TTL / 容量 FIFO（时钟注入，零真实等待）
-test('v0.6.2 callback-refs：mint/take 单次核销、TTL 过期、容量 FIFO 淘汰', async () => {
+// v0.6.2 注册表单元：单次核销 / TTL / 容量拒绝（时钟注入，零真实等待）
+test('v0.6.2 callback-refs：mint/take 单次核销、TTL 过期、容量满拒绝新引用', async () => {
   const { createCallbackRefs } = await import('../src/inbound/callback-refs.mjs')
   let clock = 1000
   const refs = createCallbackRefs({ ttlMs: 60_000, max: 3, now: () => clock })
@@ -443,10 +443,11 @@ test('v0.6.2 callback-refs：mint/take 单次核销、TTL 过期、容量 FIFO �
   const r2 = refs.mint('x2')
   const r3 = refs.mint('x3')
   assert.equal(refs.size, 3)
-  const r4 = refs.mint('x4') // 容量 3 → 淘汰最旧
-  assert.equal(refs.take(r1), null, '容量满 FIFO 淘汰最旧')
+  const r4 = refs.mint('x4') // 容量 3 → 拒绝新引用，保留存活条目
+  assert.equal(r4, null)
+  assert.equal(refs.take(r1), 'x1', '容量满不驱逐仍存活引用')
   assert.equal(refs.take(r2), 'x2')
-  assert.equal(refs.take(r4), 'x4')
+  assert.equal(refs.take(r4), null)
 })
 
 // v0.8.3 SEC-1：短引用来源会话元数据 + 非核销读取（peek）。三态：正常带元数据、
@@ -474,14 +475,15 @@ test('v0.8.3 callback-refs：mint 带来源会话元数据，peek 非核销读�
   assert.equal(refs.peek(exp), null, 'TTL 过期后 peek 为 null')
   assert.equal(refs.take(exp), null)
 
-  // 容量淘汰：peek 对最旧被淘汰的条目也读不到
+  // 容量满拒绝：peek 对存活条目仍可读，新引用返回 null
   const a = refs.mint('z1', { chatId: 'a' })
   const b2 = refs.mint('z2', { chatId: 'b' })
   const c = refs.mint('z3', { chatId: 'c' })
-  const d = refs.mint('z4', { chatId: 'd' }) // 淘汰 a
-  assert.equal(refs.peek(a), null, '容量满 FIFO 淘汰后 peek 读不到')
+  const d = refs.mint('z4', { chatId: 'd' })
+  assert.equal(d, null, '容量满拒绝新引用')
+  assert.deepEqual(refs.peek(a).origin, { chatId: 'a' })
   assert.deepEqual(refs.peek(b2).origin, { chatId: 'b' })
-  assert.equal(refs.peek(d).data, 'z4')
+  assert.equal(refs.peek(d), null)
 })
 
 // ---------------------------------------------------------------- 长轮询

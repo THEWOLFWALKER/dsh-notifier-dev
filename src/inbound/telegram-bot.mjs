@@ -329,6 +329,14 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
         // ap:<decision>:<key>:<token> ≈ 131~165 字节，超 TG 64 字节硬限（真机 400
         // BUTTON_DATA_INVALID；mock fetch 不校验长度，单测测不出）。完整 data 存
         // 进程内注册表，点击时单次核销展开走既有解析，token 密码学与账本零改动。
+        const allowRef = refs.mint(`ap:allowed-once:${approvalKey}:${token}`, { chatId })
+        const rejectRef = refs.mint(`ap:rejected:${approvalKey}:${token}`, { chatId })
+        if (allowRef === null || rejectRef === null) {
+          if (allowRef !== null) refs.take(allowRef)
+          if (rejectRef !== null) refs.take(rejectRef)
+          warn('审批按钮引用容量已满，本次降级为文本通知')
+          return null
+        }
         const result = await api('sendMessage', {
           chat_id: chatId,
           // v0.6.3：去掉 parse_mode markdown——approvalKey（ap:<callId>:<n>，callId 常含 _）
@@ -339,8 +347,8 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
           text: clampTelegramText(`🔐 ${title}\n\n${content}\n\n_decision: ${approvalKey}_`),
           reply_markup: {
             inline_keyboard: [[
-              { text: '✅ 批准（本次）', callback_data: `r:${refs.mint(`ap:allowed-once:${approvalKey}:${token}`, { chatId })}` },
-              { text: '❌ 拒绝', callback_data: `r:${refs.mint(`ap:rejected:${approvalKey}:${token}`, { chatId })}` },
+              { text: '✅ 批准（本次）', callback_data: `r:${allowRef}` },
+              { text: '❌ 拒绝', callback_data: `r:${rejectRef}` },
             ]],
           },
         })
@@ -363,7 +371,11 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
             && typeof button.label === 'string' && button.label.trim() !== ''
             && typeof button.data === 'string' && button.data !== '')
           // v0.6.2：同审批卡——ac:<key>:<token> 同样超限，一律经短引用压缩
-          .map((button) => ({ text: button.label, callback_data: `r:${refs.mint(button.data, { chatId })}` }))
+          .map((button) => {
+            const ref = refs.mint(button.data, { chatId })
+            return ref === null ? null : { text: button.label, callback_data: `r:${ref}` }
+          })
+          .filter(Boolean)
         if (rows.length === 0) return null
         const result = await api('sendMessage', {
           chat_id: chatId,
@@ -388,10 +400,14 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
       try {
         // v0.6.2 同审批卡：callback_data 只放短引用 r:<ref>（TG 64 字节硬限，P7）
         const rows = options
-          .map((label, idx) => ({
-            text: `${idx + 1}. ${String(label).slice(0, 60)}`,
-            callback_data: `r:${refs.mint(buildQuestionAction(qKey, String(idx), token), { chatId })}`,
-          }))
+          .map((label, idx) => {
+            const ref = refs.mint(buildQuestionAction(qKey, String(idx), token), { chatId })
+            return ref === null ? null : {
+              text: `${idx + 1}. ${String(label).slice(0, 60)}`,
+              callback_data: `r:${ref}`,
+            }
+          })
+          .filter(Boolean)
         if (rows.length === 0) return null
         const result = await api('sendMessage', {
           chat_id: chatId,

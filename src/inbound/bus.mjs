@@ -53,7 +53,8 @@ export function createInboundBus(options = {}) {
   const fifo = new Set()
   const dedupKeyOf = (envelope) => `dedup:${envelope.channel}:${envelope.messageId}`
 
-  // 拒绝回执节流表：userId -> lastReplyAt
+  // 拒绝回执节流表：(channel,userId) -> lastReplyAt；相同平台用户号在
+  // 不同渠道属于不同身份，不能互相节流。
   const replyThrottle = new Map()
 
   const waiters = new Map() // approvalKey -> { resolve, timer, settled }
@@ -87,10 +88,11 @@ export function createInboundBus(options = {}) {
   }
 
   /** 节流判定：窗口内已回执过则吞掉本次（返回 false 表示应回执）。 */
-  function shouldReply(userId, now = Date.now()) {
-    const last = replyThrottle.get(String(userId)) ?? 0
+  function shouldReply(channel, userId, now = Date.now()) {
+    const key = JSON.stringify([String(channel ?? ''), String(userId ?? '')])
+    const last = replyThrottle.get(key) ?? 0
     if (now - last < REPLY_THROTTLE_MS) return false
-    replyThrottle.set(String(userId), now)
+    replyThrottle.set(key, now)
     if (replyThrottle.size > 1024) { // 有界：防长期运行内存无限涨
       const oldest = replyThrottle.keys().next().value
       replyThrottle.delete(oldest)
@@ -183,7 +185,7 @@ export function createInboundBus(options = {}) {
       // 同一 messageId 每次重投都重走判定链——60s 节流只兜回执不兜 warn 刷屏）
       remember(envelope)
       // 拒绝回执（引导态文案带配对指引；普通态带联系管理员指引）
-      if (identity !== null && shouldReply(envelope.userId)) {
+      if (identity !== null && shouldReply(envelope.channel, envelope.userId)) {
         const idLine = `你的${getChannelName(envelope.channel)}身份是 ${envelope.userId}。`
         const reply = guided
           ? `${idLine}\n当前为引导模式（白名单为空）。发送 /pair <配对码> 完成绑定（首位绑定者成为 owner），配对码见宿主启动日志；/whoami 查看你的身份。`
