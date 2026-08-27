@@ -1,8 +1,8 @@
 # dsh-notifier 当前交接快照
 
-更新时间：2026-08-27。当前发布线是 `codex/stage5-wechat-ilink-hardening`，包版本字段为 `0.9.0`。公共 GitHub 源码镜像已推送；npm registry 发布仍待账户 2FA/授权。最新完整测试为 `1352`（1351 pass + 1 skip）；历史 npm `0.8.6` 契约为 909。
+更新时间：2026-08-27。当前发布线是 `codex/stage5-wechat-ilink-hardening`，包版本字段为 `0.9.0`。公共 GitHub 源码镜像已推送，npm `latest` 已发布为 `0.9.0`；公开仓库描述与发现主题已同步，Awesome DSH 更新已提交 PR #3490，dshfind 等待下一轮自动同步。最新完整测试为 `1352`（1351 pass + 1 skip）；历史 npm `0.8.6` 契约为 909。
 
-| 测试 | `npm test`：**1352 tests**（1351 pass + 1 skip，v0.9.0 发布候选） |
+| 测试 | `npm test`：**1352 tests**（1351 pass + 1 skip，v0.9.0 发布线） |
 
 ## 下一位开发者从这里开始
 
@@ -50,7 +50,7 @@ node --check src/index.mjs
 npm pack --dry-run --json
 ```
 
-确认干净工作树、版本/测试数与 [docs/VERSIONING.md](docs/VERSIONING.md) 一致后，在 disposable DSH profile 安装 registry artifact，验证启动装配、一次出站测试和一次入站命令；公共 GitHub 镜像已同步，npm 仍需账户 2FA/授权完成后发布。不要从公共镜像继续开发。
+确认干净工作树、版本/测试数与 [docs/VERSIONING.md](docs/VERSIONING.md) 一致后，在 disposable DSH profile 安装已发布的 `dsh-notifier@0.9.0` registry artifact，验证启动装配、一次出站测试和一次入站命令。不要从公共镜像继续开发。
 
 ## 当前提交入口
 
