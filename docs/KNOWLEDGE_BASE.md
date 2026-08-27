@@ -25,6 +25,7 @@ This is the navigation page for humans and agents. It deliberately points to one
 9. `docs/RELAY_BOOTSTRAP_PROMPT.md` for the copy-paste first message sent to a new relay agent.
 10. `CHANGELOG.md` for chronological changes; it is not a substitute for current rules.
 11. `docs/security/PLUGIN_ATTACK_REVIEW.md` and `docs/security/PLUGIN_SECURITY_FIX_PLAN.md` for the hostile-plugin threat model and staged remediation ownership.
+12. `docs/compatibility-matrix.md` for the assessed legacy `allowUsers` migration and optional SDK lifecycle seams.
 
 ## Audience Map
 

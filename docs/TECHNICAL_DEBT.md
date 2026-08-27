@@ -26,8 +26,8 @@ Every item follows the same loop: write a short plan, reproduce or measure the p
 ### P2: Bounded Structural Debt
 
 - **P2-1 Callback reference capacity**: measure whether the 256-entry FIFO can evict in-flight action/question references under realistic concurrency. Change the bound only if evidence shows user-visible loss, and add a bounded-memory test first.
-- **P2-2 Legacy configuration migration**: assess when the deprecated YAML `allowUsers` import path can be removed or further isolated. Do not remove compatibility until migration behavior and upgrade impact are documented.
-- **P2-3 Optional SDK lifecycle matrix**: verify supported Feishu/QQ/QR dependency shapes, missing-package diagnostics, reconnect/dispose behavior, and version drift in a small compatibility matrix.
+- **P2-2 Legacy configuration migration [assessed 2026-08-27]**: retain the deprecated YAML `allowUsers` import path. `createIdentity().migrate()` is one-shot (`inbound:migrated`), composite-key scoped, and covered by config/identity/inbound tests; later starts do not resurrect members removed through admin/pairing. Upgrade impact and the retained compatibility contract are documented in `docs/compatibility-matrix.md`. Removal remains deferred until a release migration plan exists.
+- **P2-3 Optional SDK lifecycle matrix [assessed 2026-08-27]**: documented in `docs/compatibility-matrix.md`. Feishu and QQ QR loaders are lazy and normalize missing/old exports, timeout, SDK failure, and incomplete credentials; Feishu WS has idempotent start/stop with underlying socket termination fallback, while QQ gateway uses bounded reconnect/heartbeat and stop/restart cleanup. Evidence is seam/contract tests only; real provider lifecycle validation remains open.
 
 ## Explicitly Deferred
 
