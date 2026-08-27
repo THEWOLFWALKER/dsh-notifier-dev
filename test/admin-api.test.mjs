@@ -611,6 +611,18 @@ test('putChannel：双域通道写机器人凭证键（appId/appKey）合法（U
   assert.deepEqual(store.get('dingtalk:account'), { appKey: 'k', appSecret: 's' })
 })
 
+test('wxpusher accountId：管理台允许非密账号标识并与既有凭证合并', () => {
+  const { api, store } = makeApi({ state: { 'wxpusher:account': { appToken: 'tok', uids: ['u1'] } } })
+  const rows = api.getChannels()
+  const outbound = rows.find((row) => row.type === 'wxpusher' && row.direction === 'outbound')
+  const inbound = rows.find((row) => row.type === 'wxpusher' && row.direction === 'inbound')
+  assert.equal(outbound.fields.accountId.secret, false)
+  assert.equal(inbound.fields.accountId.required, false)
+  assert.match(inbound.fields.accountId.desc, /多账号/)
+  assert.deepEqual(api.putChannel('wxpusher', { accountId: 'primary' }), { type: 'wxpusher', saved: true })
+  assert.deepEqual(store.get('wxpusher:account'), { appToken: 'tok', uids: ['u1'], accountId: 'primary' })
+})
+
 test('putChannel：字段级合并（patch 语义）——只提交部分字段，其余既有键保留不丢失', () => {
   const { api, store } = makeApi()
   api.putChannel('telegram', { botToken: 't1', chatId: 'c1' })

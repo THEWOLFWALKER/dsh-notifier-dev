@@ -177,6 +177,7 @@ const INBOUND_FIELDS = {
   },
   wxpusher: {
     appToken: { required: true, desc: 'WxPusher 应用 APP_TOKEN（回调鉴权即凭证）' },
+    accountId: { required: false, desc: '本地账号标识（多账号/多应用时建议填写；不要填 APP_TOKEN）' },
   },
   wechat: {},
   dingtalk: {

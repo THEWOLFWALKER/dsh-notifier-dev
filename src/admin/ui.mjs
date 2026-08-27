@@ -712,9 +712,17 @@ function settleQuestionClick(ref, action, opt) {
   var target = undefined
   var refS = String(ref || '')
   if (action === 'choose' && opt !== undefined && opt !== null) {
-    target = document.querySelector('[data-ref="' + refS + '"][data-opt="' + opt + '"]')
+    // Ref values come from the server but are still untrusted DOM data. Avoid
+    // interpolating them into a CSS selector (a malformed quote would throw
+    // before the request and leave the button stuck in an indeterminate state).
+    target = $all('button[data-ref]').find(function (el) {
+      return el.getAttribute('data-ref') === refS && el.getAttribute('data-opt') === String(opt)
+    })
   } else {
-    target = document.querySelector('[data-ref="' + refS + '"]' + (action === 'reject' ? '.q-reject' : '.q-choose'))
+    target = $all('button[data-ref]').find(function (el) {
+      return el.getAttribute('data-ref') === refS
+        && el.classList.contains(action === 'reject' ? 'q-reject' : 'q-choose')
+    })
   }
   var msgBox = null
   if (target) {
@@ -726,7 +734,10 @@ function settleQuestionClick(ref, action, opt) {
   var body = { action: action }
   if (action === 'choose') body.options = [Number(opt)]
   api('/api/questions/' + encodeURIComponent(refS) + '/settle', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    // api()/request() serializes object bodies exactly once. Passing a
+    // pre-stringified payload here would double-encode JSON and make the
+    // server spread a string, dropping action/options and returning 422.
+    method: 'POST', body: body
   })
     .then(function (d) { if (msgBox) setStatus(msgBox, d.message || '已结算', 'ok') })
     .catch(function (e) { if (msgBox) setStatus(msgBox, '未生效：' + errText(e), 'err') })
@@ -1242,6 +1253,7 @@ function onMembersClick(ev) {
   }
   var dismissKey = memberKeyOf(btn, 'data-pdismiss')
   if (dismissKey) {
+    if (!window.confirm('忽略待确认绑定 ' + dismissKey + '？当前请求将被删除，之后需要对方重新触发订阅/扫码。')) return
     api('/api/members/' + encodeURIComponent(dismissKey) + '/dismiss', { method: 'POST' })
       .then(function () { flash('已忽略 ' + dismissKey, 'ok'); return loadMembersOnly() })
       .catch(function (e) { flash('操作失败：' + errText(e), 'err') })

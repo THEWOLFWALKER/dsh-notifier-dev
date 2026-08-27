@@ -561,6 +561,29 @@ test('危险操作确认：撤销配对码必须二次确认，避免误触造�
   assert.match(block, /立即失效|无法恢复/, '确认文案应说明不可逆影响')
 })
 
+test('危险操作确认：忽略待确认绑定需明确确认，避免误删待接入身份', () => {
+  const script = extractScript(ADMIN_UI_HTML)
+  const marker = "var dismissKey = memberKeyOf(btn, 'data-pdismiss')"
+  const start = script.indexOf(marker)
+  assert.ok(start >= 0, '成员页应包含忽略待确认绑定处理')
+  const end = script.indexOf("api('/api/members/'", start)
+  assert.ok(end > start, '忽略请求应位于处理分支中')
+  const block = script.slice(start, end)
+  assert.match(block, /window\.confirm\(/, '忽略待确认绑定前必须调用 confirm')
+  assert.match(block, /重新触发|当前请求将被删除/, '确认文案应说明忽略影响')
+})
+
+test('远程提问结算：POST 传对象避免 api 层二次 JSON 编码', () => {
+  const script = extractScript(ADMIN_UI_HTML)
+  const start = script.indexOf("api('/api/questions/'")
+  assert.ok(start >= 0, '应存在远程提问结算请求')
+  const end = script.indexOf(".then(function (d)", start)
+  const block = script.slice(start, end > start ? end : start + 500)
+  assert.match(block, /method:\s*'POST'/)
+  assert.match(block, /body:\s*body\b/, '结算请求应把对象交给 api() 统一序列化')
+  assert.doesNotMatch(block, /body:\s*JSON\.stringify\(body\)/, '禁止预序列化导致服务端收到 JSON 字符串')
+})
+
 test('首访卡：无 token 时可见，验证 token 后自动收起并保留 loopback 入口', () => {
   const rig = boot()
   rig.renderEntryPoint()

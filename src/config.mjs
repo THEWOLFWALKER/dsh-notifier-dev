@@ -83,6 +83,7 @@ const FIELD_HINTS = {
   },
   wxpusher: {
     appToken: { required: true, secret: true, desc: 'WxPusher 应用 APP_TOKEN（wxpusher.zjiecode.com）' },
+    accountId: { required: false, secret: false, desc: '本地账号标识（多账号/多应用时建议填写；不要填 APP_TOKEN）' },
     uids: { required: false, secret: true, desc: '接收者 UID 数组，如 ["UID_xxx"]（与 topicIds 至少一项）' },
     topicIds: { required: false, secret: false, desc: '主题 ID 数组（群发用）' },
   },

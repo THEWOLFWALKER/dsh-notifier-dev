@@ -126,14 +126,16 @@ test('wxpusher：显式 appToken → ok + 密径首铸落盘 store.set；已持�
 
 test('wxpusher store 凭证启用信号 + YAML 显式键覆盖 store（合并次序）', () => {
   const store = fakeStore({
-    'wxpusher:account': { appToken: 'store-tok', webhookPath: '/store-path' },
+    'wxpusher:account': { appToken: 'store-tok', webhookPath: '/store-path', accountId: 'store-account' },
   })
   const r = call({ store, adminEnabled: true })
   assert.equal(r.wxOk, true, 'admin 开启 + store 账号即启用')
   assert.equal(r.wxResolved.config.appToken, 'store-tok')
+  assert.equal(r.wxResolved.config.accountId, 'store-account', 'store accountId 应进入入站 Control Core 来源绑定')
 
-  const r2 = call({ inboundRaw: { wxpusher: { appToken: 'yaml-tok' } }, store, adminEnabled: true })
+  const r2 = call({ inboundRaw: { wxpusher: { appToken: 'yaml-tok', accountId: 'yaml-account' } }, store, adminEnabled: true })
   assert.equal(r2.wxResolved.config.appToken, 'yaml-tok', 'YAML 显式键优先覆盖 store')
+  assert.equal(r2.wxResolved.config.accountId, 'yaml-account', 'YAML 显式 accountId 应覆盖 store')
 })
 
 test('approvalWanted：mode answer/observe → true，其它/缺省 → false', () => {
