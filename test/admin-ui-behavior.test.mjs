@@ -549,6 +549,18 @@ test('Task 04：测试通知成功/失败均给出下一步与重试文案', () 
   assert.ok(html.includes('测试失败：'), '异常响应需可见')
 })
 
+test('危险操作确认：撤销配对码必须二次确认，避免误触造成不可恢复失效', () => {
+  const script = extractScript(ADMIN_UI_HTML)
+  const marker = "var revokeId = memberKeyOf(btn, 'data-prevoke')"
+  const start = script.indexOf(marker)
+  assert.ok(start >= 0, '成员页应包含撤销配对码处理')
+  const end = script.indexOf("api('/api/pairing/'", start)
+  assert.ok(end > start, '撤销请求应位于处理分支中')
+  const block = script.slice(start, end)
+  assert.match(block, /window\.confirm\(/, '撤销配对码前必须调用 confirm')
+  assert.match(block, /立即失效|无法恢复/, '确认文案应说明不可逆影响')
+})
+
 test('首访卡：无 token 时可见，验证 token 后自动收起并保留 loopback 入口', () => {
   const rig = boot()
   rig.renderEntryPoint()

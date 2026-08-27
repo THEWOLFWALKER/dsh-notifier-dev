@@ -1224,6 +1224,10 @@ function onMembersClick(ev) {
   }
   var revokeId = memberKeyOf(btn, 'data-prevoke')
   if (revokeId) {
+    // Revoking a pairing code is destructive: the one-shot code becomes unusable
+    // immediately and cannot be recovered. Require an explicit confirmation so a
+    // fat-fingered click on a narrow/mobile layout does not strand the invitee.
+    if (!window.confirm('撤销配对码 ' + revokeId + '？该码将立即失效，且无法恢复。')) return
     api('/api/pairing/' + encodeURIComponent(revokeId), { method: 'DELETE' })
       .then(function () { flash('已撤销配对码 ' + revokeId, 'ok'); return loadMembersOnly() })
       .catch(function (e) { flash('撤销失败：' + errText(e), 'err') })
