@@ -1,5 +1,7 @@
 # dsh-notifier 交接文档（HANDOFF）
 
+> 2026-08-27 final maintenance (Luna): public facade A3/A4 hardening is landed (frozen consumer surface, private idempotent teardown, finite instance-shared budgets and safe source labels); callback-reference capacity now rejects new refs instead of evicting live buttons, and inbound reject throttling is isolated by `(channel,userId)`. Package root is narrowed to `{ name, inject, apply }`, with constructors available only via explicit `dsh-notifier/internal`. Focused coverage is contract/mock only; no real-device, tenant, or OS-isolation evidence.
+
 > 写给下一个 agent。本文档是完整的工作上下文快照：设计理念、军规约定、架构地图、
 > 版本脉络、审查记录、已知坑、待办清单。读完这一份即可无缝接手。
 > 当前快照：2026-08-27，协议预审落地后的渠道适配安全收尾。按 `docs/protocol-preflight/` 事实边界（不改协议猜测）完成代码层修复并同步测试契约：wxpusher 入站注入本地 accountId（修复 WxPusher 审批/提问编号回复自来源绑定硬化后全部失效）；移除 conversation 路由与 Control Core `pendingMeta` 的「channel 当 accountId」兜底（缺账号一律 `missing_accountId` fail-closed），并让 `actions.dispatch` 把传输层本地 accountId 原样转发进 Control Core；**telegram/飞书直接按钮回调把提供方真实 eventId 传入 Control Core**（此前 `ap:`/`aq:` 直接回调缺 eventId，被 `missing_eventId` 拒绝——按钮在 Control Core 接线下全部失效）；questions 缺 chatId 分支补 accountId 消费、编号作答成功回执答案从已结算账本行回读。测试契约对齐生产恒接线：approval/questions/phase-2 rig 补 Control Core、`contract.spec` 跳过协议形状 fixture。当前开发线 `npm test` = **1339**（1338 pass + 1 skip）；已发布 v0.8.6 契约仍为 909，当前线未发布、无真机验证。

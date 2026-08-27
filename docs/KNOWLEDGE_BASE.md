@@ -9,7 +9,7 @@ This is the navigation page for humans and agents. It deliberately points to one
 - The public repository's `main` history is unrelated to the current hardening line; do not merge or force-push it implicitly. Public synchronization is a deliberate release operation.
 - Public issue snapshot (2026-08-25): #16/#15/#14/#13/#10/#7/#6/#5/#4/#3/#2/#1 open; #11/#8 closed. PR #12 is open reference material only; PR #9 is merged in the public mirror. These statuses are not claims that the private tree fixes every open issue.
 - Runtime: Node.js ESM, Node `>=22`, no build step, no production dependencies.
-- Test baseline: `1339` total on the current development line (`codex/stage5-wechat-ilink-hardening`, 1338 pass + 1 skip after the protocol-adaptation security closure). The published v0.8.6 release retains `909` as its documented test count until a release cycle updates version and count together.
+- Test baseline: `1346` total on the current development line (`codex/stage5-wechat-ilink-hardening`, 1345 pass + 1 skip after final maintenance hardening). The published v0.8.6 release retains `909` as its documented test count until a release cycle updates version and count together.
 - The attached npm archive is a release artifact. The engineering archive is the source authority.
 
 ## Read Order
@@ -51,6 +51,7 @@ The product, UX, planning, review-loop, and DSH GUI consistency contract is main
 - Agent integration: `notify`, `notify_test`, optional `ask_user`, public `ctx.notifier` facade, and `dsh-notifier/sent` events.
 - Operations: JSON state store with key-level merge, cross-process lock, convergence reads, JSONL ledger, local admin API/UI, SSE event stream, route CLI, and channel login/test CLIs.
 - Security posture: installed DSH plugins share the host process and must currently be treated as trusted code; notifier-specific leakage, audit, identity, and resource-bound fixes are tracked separately from DSH host isolation requirements.
+- Public/plugin boundary (2026-08-27): `ctx.notifier` is a frozen facade with finite instance-shared call/UTF-8-byte/concurrency/queue budgets; source labels are display-only. Callback references reject new entries at capacity (live refs are never evicted), and inbound reject-reply throttling is keyed by `(channel,userId)`. Package root exports only `{ name, inject, apply }`; internal constructors require `dsh-notifier/internal`. These are contract-tested controls, not an OS isolation boundary.
 - Control status: QQ C2C native approval/question buttons and QQ GROUP text fallback are contract-tested only; GROUP, missing `chatType`, and unknown source metadata fail closed, and conversation `routeUnsafe` cannot bypass the gate. The loopback Web/admin now has a 阶段 2A `ask_user` settlement entry (masked snapshot + choose/reject through Control Core, Bearer-gated; desktop still has none), so dual-end sharing is not claimed. Real-device/provider and host-protocol validation remains pending.
 
 ## Authority Rules
