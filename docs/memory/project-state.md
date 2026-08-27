@@ -1,9 +1,9 @@
 # Project state
 
-Snapshot date: 2026-08-27. Current development branch: `codex/stage5-wechat-ilink-hardening`. Package version authority remains `0.8.6`; the branch is unreleased.
+Snapshot date: 2026-08-27. Current release-candidate branch: `codex/stage5-wechat-ilink-hardening`. Package version authority is `0.9.0`; the branch is not yet published.
 
 - Current development validation: `npm test` = **1352** total, **1351 pass + 1 skip**.
-- Published npm `0.8.6` artifact: historical contract count **909**. Keep this separate from the current unreleased development line.
+- Historical npm `0.8.6` artifact carried contract count **909**; the `0.9.0` candidate uses the current **1352** test count.
 - Canonical engineering repository is private `dsh-notifier-dev`; the public GitHub repository is a release/source mirror and is not a development relay.
 - Runtime is Node.js ESM, Node `>=22`, no production dependencies, no build step. There are 27 outbound adapters and six inbound control channels.
 - Inbound identity is composite and source-bound: `(channel,userId)` plus exact `accountId`/`chatId` when present. Unknown or missing source authority fails closed; channel names are never used as account IDs.
@@ -16,7 +16,7 @@ Snapshot date: 2026-08-27. Current development branch: `codex/stage5-wechat-ilin
 ## Validation evidence
 
 - `npm test`: 1352 total (1351 pass + 1 skip), 2026-08-27.
-- `node scripts/verify-release.mjs`: release guard still compares package `0.8.6` with its documented 909-test contract.
+- `node scripts/verify-release.mjs`: release guard compares package `0.9.0` with its documented 1352-test contract.
 - `node scripts/gen-channel-matrix.mjs --check` and `node --check src/index.mjs`: required shape/syntax gates.
 
 ## Next release gate

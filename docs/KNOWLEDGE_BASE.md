@@ -4,8 +4,8 @@
 
 ## 当前基线
 
-- 当前开发线：`codex/stage5-wechat-ilink-hardening`，包版本字段 `0.8.6`，尚未发布。
-- 当前测试：`1352`（1351 pass + 1 skip）。已发布 npm `0.8.6` 的历史契约为 909；两者不可混写。
+- 当前发布候选线：`codex/stage5-wechat-ilink-hardening`，包版本字段 `0.9.0`，尚未发布。
+- 当前测试：`1352`（1351 pass + 1 skip）。历史 npm `0.8.6` 契约为 909；两者按版本区分。
 - 私有 `dsh-notifier-dev` 是工程协作仓库；公共 GitHub 仓库只是发布/源码镜像。
 - Node.js ESM、Node `>=22`、无生产依赖、无构建步骤；27 个出站渠道，Telegram/Feishu/QQ Bot/WxPusher/WeChat iLink/DingTalk 六个入站控制通道。
 - Web 管理台是唯一控制台，绑定 `127.0.0.1` 并使用 Bearer token；YAML 是高级/自动化入口。个人模式流程是配置通道 → 配对/扫码 → 测试发送 → 日常审批与 `ask_user`。

@@ -1,8 +1,8 @@
 # dsh-notifier 当前交接快照
 
-更新时间：2026-08-27。当前开发线是 `codex/stage5-wechat-ilink-hardening`，包版本字段仍为 `0.8.6`，但这条线尚未发布。最新完整测试为 `1352`（1351 pass + 1 skip）；已发布的 npm `0.8.6` 契约仍记录为 909，不能把两个基线混写。
+更新时间：2026-08-27。当前发布候选线是 `codex/stage5-wechat-ilink-hardening`，包版本字段为 `0.9.0`。最新完整测试为 `1352`（1351 pass + 1 skip）；历史 npm `0.8.6` 契约为 909。
 
-| 测试 | `npm test`：**909 tests**（已发布契约）；当前开发线：1352 tests（1351 pass + 1 skip） |
+| 测试 | `npm test`：**1352 tests**（1351 pass + 1 skip，v0.9.0 发布候选） |
 
 ## 下一位开发者从这里开始
 

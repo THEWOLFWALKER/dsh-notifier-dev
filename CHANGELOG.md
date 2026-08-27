@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## [0.9.0] - 2026-08-27
 
-- 2026-08-27 文档收尾：统一当前 `0.8.6` 未发布开发线与 `1352`（1351 pass + 1 skip）测试事实，压缩 `HANDOFF.md` 与项目记忆，明确 Web 管理台为唯一控制台、desktop `ask_user` 没有安全宿主接口，并归档已完成 taskpack/旧真机测试笔记。代码、版本字段和发布状态不变。
+- 2026-08-27 v0.9.0 release candidate：汇总维护、Control Core 安全收口、六条入站通道契约、个人模式管理台和文档整理；`npm test` 为 1352（1351 pass + 1 skip），版本/测试计数已统一到本候选发布线。
 
 - 2026-08-27 收尾修复：管理台远程提问结算改为传递对象给统一 `api()` 序列化（修复预序列化导致 POST 双重 JSON 编码、服务端丢失 action/options 的真实缺陷），并改用属性匹配查找按钮，恶意/畸形 ref 不再触发 CSS selector 异常。WxPusher 管理台出入站字段新增可选非敏感 `accountId`，支持多应用来源绑定且明确不得填写 APP_TOKEN；YAML/store 显式值覆盖关系保持不变。补充 focused 回归测试；无版本、协议或真机验证声明变更。
 
