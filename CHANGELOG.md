@@ -4,7 +4,7 @@
 
 - 2026-08-27 收尾修复：管理台远程提问结算改为传递对象给统一 `api()` 序列化（修复预序列化导致 POST 双重 JSON 编码、服务端丢失 action/options 的真实缺陷），并改用属性匹配查找按钮，恶意/畸形 ref 不再触发 CSS selector 异常。WxPusher 管理台出入站字段新增可选非敏感 `accountId`，支持多应用来源绑定且明确不得填写 APP_TOKEN；YAML/store 显式值覆盖关系保持不变。补充 focused 回归测试；无版本、协议或真机验证声明变更。
 
-- 2026-08-27 final maintenance rerun: admin pairing-code revocation now requires explicit confirmation before issuing the destructive DELETE. Focused admin UI coverage is 31/31; full `npm test` is 1349 total (1348 pass + 1 skip). No version or provider-support claims changed.
+ - 2026-08-27 final maintenance rerun: admin pairing-code revocation now requires explicit confirmation before issuing the destructive DELETE. Focused admin UI coverage is 33/33 after the settlement/accountId compatibility checks; full `npm test` is 1352 total (1351 pass + 1 skip). No version or provider-support claims changed.
 
 - 2026-08-27 compatibility closure for taskpack 07: retained YAML `inbound.allowUsers` as a documented one-shot `inbound:migrated` migration (no silent re-seeding after runtime deletions), added an optional Feishu/QQ SDK seam and lifecycle matrix, and documented the WxPusher multi-account residual when multiple apps omit explicit local `accountId`. Evidence is contract/seam tests only; no provider, tenant, or real-device support claim is added.
 

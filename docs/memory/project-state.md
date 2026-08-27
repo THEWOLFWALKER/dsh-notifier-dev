@@ -7,7 +7,7 @@ Planning decision (2026-08-25): after the current maintenance batch, the product
 - Canonical development repository: private `https://github.com/THEWOLFWALKER/dsh-notifier-dev`.
 - Public release/source mirror: `https://github.com/THEWOLFWALKER/dsh-notifier`.
 - Branch topology (2026-08-27): current development line `codex/stage5-wechat-ilink-hardening` includes the protocol-preflight evidence (docs/protocol-preflight/) plus this session's code-layer adaptation: (1) WxPusher inbound now injects a local `accountId` (config.accountId / literal 'default'), fixing WxPusher approval/question numbered replies that were silently non-settling after source-binding hardening; (2) the channel-as-accountId fallbacks were removed from the conversation route and `pendingMeta`, and `actions.dispatch` now forwards the transport's local accountId into Control Core; (3) Telegram/Feishu direct button callbacks now pass the provider's real eventId into Control Core (missing_eventId was rejecting every wired button callback); (4) questions numbered-reply missing-chatId consumption now carries accountId, and answered feedback reads labels from the ledger row. Regression suites were re-synced to the always-wired Control Core contract.
-- Current test baseline: **1349** total (1348 pass + 1 skip). The published v0.8.6 contract remains **909**; package/version stays `0.8.6`, and this development line is unreleased.
+- Current test baseline: **1352** total (1351 pass + 1 skip). The published v0.8.6 contract remains **909**; package/version stays `0.8.6`, and this development line is unreleased.
 - Compatibility closure (2026-08-27): P2-2 `allowUsers` is retained as a one-shot, composite-key migration (`inbound:migrated`) and documented; P2-3 optional Feishu/QQ SDK seams and lifecycle behavior are contract-tested only in `docs/compatibility-matrix.md`. WxPusher omitted `accountId` remains a documented shared-`default` residual for multi-app deployments.
 - QQ C2C single-chat native buttons and QQ GROUP text fallback are contract-tested. Missing `chatType` or unknown source metadata fail closed, and the conversation `routeUnsafe` bypass is blocked. QQ, WeChat iLink, and DingTalk image paths are wired and contract-tested; real provider/device and host protocol evidence is still absent. Web/admin now has a safe reusable `ask_user` settlement entry through Control Core; desktop still has none, so dual-end sharing is not claimed.
 - Earlier snapshot (2026-08-23, ox-alpha relay, second round):
@@ -25,7 +25,7 @@ Planning decision (2026-08-25): after the current maintenance batch, the product
 
 ## Validation Evidence
 
-- `npm test` (current development line, 2026-08-27): `1349 total` = `1348 pass + 1 skip`.
+- `npm test` (current development line, 2026-08-27): `1352 total` = `1351 pass + 1 skip`.
 - `node scripts/verify-release.mjs`: passed with documented tests = `909`.
 - `node scripts/verify-release.mjs`, `node scripts/gen-channel-matrix.mjs --check`, and `node --check src/index.mjs` remain release/shape checks against the published v0.8.6 count of 909; the development count must not alter `package.json`.
 
