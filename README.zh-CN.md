@@ -17,14 +17,19 @@
 ![license](https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square)
 ![awesome-dsh-plugin](https://img.shields.io/badge/awesome--dsh--plugin-%E5%AE%98%E6%96%B9%E6%94%B6%E5%BD%95-00B4D8?style=flat-square)
 ![omdsh workshop](https://img.shields.io/badge/omdsh-workshop-7C3AED?style=flat-square)
+[![dshfind](https://dshfind.com/api/badge/THEWOLFWALKER/dsh-notifier?lang=zh)](https://dshfind.com/zh/plugins/THEWOLFWALKER/dsh-notifier?ref=badge)
+[![dshfind 下载量](https://dshfind.com/api/badge/THEWOLFWALKER/dsh-notifier?metric=downloads&lang=zh)](https://dshfind.com/zh/plugins/THEWOLFWALKER/dsh-notifier?ref=badge)
+[![dshfind 展示卡](https://dshfind.com/api/card/THEWOLFWALKER/dsh-notifier?lang=zh)](https://dshfind.com/zh/plugins/THEWOLFWALKER/dsh-notifier?ref=badge)
 
 ![不漏](https://img.shields.io/badge/%E4%B8%8D%E6%BC%8F-%E4%BB%BB%E4%BD%95%E4%B8%80%E5%9B%9E%E5%90%88-00BFFF?style=flat-square)
 ![沉默](https://img.shields.io/badge/%E6%B2%89%E9%BB%98-%E6%B0%B8%E4%B8%8D%E6%89%B9%E5%87%86-9C27B0?style=flat-square)
 ![推送](https://img.shields.io/badge/push%20it-real%20good-FF4081?style=flat-square)
 
-包版本字段仍为 `dsh-notifier@0.8.6`；当前未发布开发线为 1352 个测试（1351 通过 + 1 个跳过）。已发布 registry 包的历史契约为 909 个测试；尚未完成真实设备/宿主协议验证。
+包元数据：`dsh-notifier@0.8.6` · 909 个自动化契约测试 · MIT 许可。
 
-面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的统一通知推送插件 —— 前端一个极简 `notify()` API，背后 27 个渠道。
+把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) agent 带到你平时使用的地方。dsh-notifier 用一个极简 `notify()` API 接住 27 个渠道，再提供手机审批、手机提问、会话控制和清爽的本机管理台——无需额外部署第二套运行时。
+
+[快速上手](docs/guide.md) · [升级指南](docs/upgrade-guide.md) · [插件接入契约](PLUGINS.md)
 
 你的 agent 和宿主本身都能经它推送：会话事件（`turn/end` · `approval/asked` · `agent/error`）自动通知，模型可直接调用 `notify` 工具，六条入站通道把审批与对话从手机带回。QQ 控制入站带来源标记：C2C 表示单聊，GROUP、缺失 `chatType` 或未知来源元数据均 fail-closed；`conversation` 的 `routeUnsafe` 旁路已堵。v0.3 加入本机网页控制台与多 agent 路由，v0.4 加入系统桌面通知，v0.5 把手机升级成指挥中心——长任务心跳、疑似卡住提醒、通知卡片自带停止按钮，v0.7 把「谁是家里人」从不透明 YAML 字符串升级为运行时身份体系——配对码准入、复合键绑定、管理台成员页，v0.8 让 agent 直接在手机上向你发起选择题（`ask_user`：选项卡片 + 编号兜底，超时永不代答）——全程零运行时依赖。
 
@@ -94,14 +99,14 @@ insert:
 | **双触发线** | 自动状态推送（`turn/end` · `approval/asked` · `agent/error`）+ 模型侧 `notify` 工具。 |
 | **27 个渠道** | Telegram / Slack / Discord / 飞书 / 钉钉 / 企微 / 企微应用 / QQ 机器人 / OneBot / Teams / Mattermost / Google Chat / Bark / Pushover / PushDeer / Chanify / ntfy / Gotify / iGot / WxPusher / PushPlus / Server酱 / Qmsg / 息知 / webhook / bell / 桌面通知 —— 零运行时依赖。 |
 | **分级路由** | `timeSensitive` / `active` / `passive` → 各渠道原生送达语义（静默推送、优先级标头、@提醒），配分档重试。 |
-| **远程审批** | 手机上回答审批 —— Telegram/飞书卡片、QQ 单聊原生按钮（群聊目标拒绝或回退文本），以及 WxPusher / 微信 iLink / 钉钉回复 `1`/`2`。沉默永不批准。 |
+| **远程审批** | 手机上回答审批 —— Telegram/飞书卡片、QQ 单聊原生按钮，以及无卡片渠道的编号回复兜底；群聊目标使用安全文本回退。沉默永不批准。 |
 | **远程会话** | 与 agent 对话：纯文本 → `followup`/`inject`，`!` 前缀中途纠偏，合并窗拼回手机碎片输入。 |
-| **远程提问**（v0.8.0） | 模型在手机上向你发起选择题：1-4 题 × 2-5 选项（支持多选）。飞书 / Telegram 及 QQ C2C 单聊推选项卡片；QQ GROUP 目标不可操作，无卡片渠道才走编号回复兜底；答错可重答、问题不作废；超时永不代答。与审批同一信任链（HMAC 一次性 token、首达采纳、30s/60s 催办）。本机 Web 管理台可经 Control Core choose/reject 脱敏待处理问题；desktop 没有安全宿主 `ask_user` 接口。 |
+| **远程提问**（v0.8.0） | 模型在手机上向你发起选择题：1-4 题 × 2-5 选项（支持多选）。飞书 / Telegram 及 QQ C2C 单聊推选项卡片；其他目标自动使用安全的编号回复兜底；答错可重答、问题不作废；超时永不代答。与审批同一信任链（HMAC 一次性 token、首达采纳、30s/60s 催办）。本机 Web 管理台提供脱敏待处理问题列表，并经 Control Core 进行 choose/reject 结算。 |
 | **移动指挥中心**（v0.5.0） | 长任务心跳（默认 15min 起）与疑似卡住提醒（默认 10min 无事件）；Telegram / 飞书卡片自带 ⏹ 停止按钮（HMAC 一次性 token，与审批同一信任链）；`/quiet`·`/unquiet` 在手机上静默/恢复会话推送。 |
 | **开放事件源**（v0.6.0） | 其他插件经 `notifier` 服务推送（`ctx.inject(['notifier'], …)`——共享配置、路由、账本、限流、flush），并可 `ctx.on('dsh-notifier/sent')` 订阅投递元数据。广播与定向推送各产生一次审计事件，事件绝不暴露正文；按源独立限流（默认 10/分钟）、2 万码点钳制、永不 reject 的 API；消费方契约见 [PLUGINS.md](PLUGINS.md)。 |
 | **身份体系**（v0.7.0） | 「谁能驱动入站」成为运行时对象：配对码准入（任意通道私聊 `/pair <码>`，首位核销者成为 owner）、复合键绑定（`channel:userId`——TG 绑定的 id 不再放行飞书消息）、角色管理（末位 owner 不可删不可降）、拒绝回执（未绑定者收到含自身身份与配对指引的回执）。空白名单引导态启动（bootstrap 码写本机 0600 文件 `<stateDir>/bootstrap-paircode.txt`，日志只印路径不印码面），不再拒绝启动。**从安装到日常使用的完整指南见 [docs/guide.md](docs/guide.md)**。 |
 | **多 agent 路由**（v0.3.2） | agent × 通道双向矩阵；会话创建即建档；`/agent` 命令族 + `route.mjs` CLI。 |
-| **Web 管理台**（v0.3.3） | 仅绑 127.0.0.1 + Bearer token；六页 —— 总览 / 通知 / 成员（v0.7）/ 绑定 / 会话 / 通道；v0.5 起 ≤768px 移动端自适应。 |
+| **Web 管理台**（v0.3.3） | 仅绑 127.0.0.1 + Bearer token；六页 —— 总览 / 通知 / 成员（v0.7）/ 绑定 / 会话 / 通道；v0.5 起 ≤768px 移动端自适应，并采用个人优先的渐进式引导。 |
 | **扫码授权**（v0.3.1） | QQ / 钉钉 / 飞书一条命令官方扫码授权（微信保持 iLink）。 |
 | **桌面通知**（v0.4.0） | `desktop` 原生渠道（`osascript` / `notify-send` / PowerShell toast）+ 管理台 SSE 实时流。 |
 | **长消息分段** | 超出预算的消息按序切成带 `（i/n）` 前缀的多段。 |
@@ -182,7 +187,7 @@ v0.5 状态上报线默认值：`longRunning` 与 `stall` **默认开**（15min 
 
 <!-- CHANNEL-MATRIX-END -->
 
-另有六个渠道开启入站（远程审批 + 远程会话）：`telegram`、`feishu`、`qq-bot`、`wxpusher`、`wechat`、`dingtalk` —— 长连接或长轮询，无需公网 IP（仅 WxPusher 回调需要公网可达）。Telegram/飞书及 QQ C2C 单聊支持原生控制按钮；QQ GROUP、缺失 `chatType` 或未知来源元数据均 fail-closed，回退为不可操作文本或拒绝，`conversation` 的 `routeUnsafe` 旁路不能绕过该闸门。QQ、微信 iLink、钉钉图片消息代码已接线并通过契约测试，但尚未做真实平台/设备验证；文件收发仍标记为 `declared`。本机 Web 管理台是唯一控制台，提供脱敏的待处理多选项提问列表，并经共享 Control Core 提供 choose/reject 结算；desktop 没有安全的 `ask_user` 宿主接口，故不宣称双端共享结算。v0.5 起 telegram 与 feishu 额外承载通知动作卡片（停止按钮）。v0.7 起每条入站通道响应 `/help` `/whoami` `/pair` `/unpair` 注册命令，出站卡片目标走三级优先解析（该通道绑定 → 通道配置清单 → 全局回落）并按渠道做 id 形状守卫。
+另有六个渠道开启入站（远程审批 + 远程会话）：`telegram`、`feishu`、`qq-bot`、`wxpusher`、`wechat`、`dingtalk` —— 长连接或长轮询，无需公网 IP（仅 WxPusher 回调需要公网可达）。Telegram/飞书及 QQ C2C 单聊使用原生控制按钮；其他目标自动获得安全的文本或编号回复兜底，`conversation` 的 `routeUnsafe` 旁路不能绕过来源安全闸门。QQ、微信 iLink、钉钉图片消息路径已接线；文件收发按能力矩阵标记。本机 Web 管理台是唯一控制台，提供脱敏的待处理多选项提问列表，并经共享 Control Core 提供 choose/reject 结算。v0.5 起 telegram 与 feishu 额外承载通知动作卡片（停止按钮）。v0.7 起每条入站通道响应 `/help` `/whoami` `/pair` `/unpair` 注册命令，出站卡片目标走三级优先解析（该通道绑定 → 通道配置清单 → 全局回落）并按渠道做 id 形状守卫。
 
 ## 架构
 
