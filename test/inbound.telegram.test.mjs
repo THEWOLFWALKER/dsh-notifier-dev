@@ -74,6 +74,24 @@ test('sendApprovalCard：API 失败返回 null（调用方降级为纯通知）'
   assert.equal(card, null)
 })
 
+test('callback-ref 容量中途耗尽：动作卡整卡降级并回收本次已铸引用', async () => {
+  const { fetchImpl, calls } = makeFetch({ sendMessage: { ok: true, result: { message_id: 8 } } }, { delayMs: 0 })
+  const tg = createTelegramInbound({ config: CONFIG, bus: makeBus(), vault: createTokenVault({ secret: 'k' }), fetchImpl })
+  // 默认注册表容量 256。先占满 255 个，再让双按钮卡在第二个引用处耗尽；
+  // 该卡不得发送缺按钮版本，且已铸出的第一个引用应被回收。
+  for (let i = 0; i < 255; i += 1) {
+    assert.deepEqual(await tg.sendActionCard({ chatId: 100, title: 't', content: 'c', actions: [{ label: `a${i}`, data: `ac:${i}` }] }), { messageId: 8 })
+  }
+  const before = calls.length
+  assert.equal(await tg.sendActionCard({
+    chatId: 100, title: 'partial', content: 'c',
+    actions: [{ label: 'a', data: 'ac:a' }, { label: 'b', data: 'ac:b' }],
+  }), null)
+  assert.equal(calls.length, before, '容量中途耗尽时不发送不完整卡片')
+  assert.deepEqual(await tg.sendActionCard({ chatId: 100, title: 'reclaimed', content: 'c', actions: [{ label: 'a', data: 'ac:a2' }] }), { messageId: 8 })
+  assert.equal(calls.length, before + 1, '失败卡已回收已铸 ref，下一张可正常发送')
+})
+
 // ---------------------------------------------------------------- P1-1 协议护栏
 // mock fetch 不校验协议形状（v0.6.2 BUTTON_DATA_INVALID / v0.6.3 legacy markdown 两次
 // 真机事故的共因）。以下测试让 mock 承担协议校验角色：TG sendMessage text 硬限
