@@ -716,7 +716,10 @@ export function createQuestionBridge(deps) {
 
     // 缺 chatId：fail-closed——消费裸编号但不裁决，不落回对话路由
     if (chatId === null) {
-      const anyPending = ledger.latestPendingFor(envelope.channel, envelope.userId, null)
+      // v0.8.7：accountId 一并传入——pushedTo/hintTargets 现携带本地 accountId（真实适配器
+      // 恒提供），裸用 (channel,userId) 会因 accountMatches 恒 false 漏过已绑定用户的回复，
+      // 使「缺 chatId → 消费但不裁决」的 fail-closed 语义失效（泄露进对话路由）。
+      const anyPending = ledger.latestPendingFor(envelope.channel, envelope.userId, null, envelope.accountId)
       if (anyPending === null) return false
       return true
     }
@@ -759,7 +762,11 @@ export function createQuestionBridge(deps) {
     }
     const verdict = deps.control.handle({ eventId: String(envelope.messageId ?? ''), command: 'question-answer', qKey: pending.key, channel: envelope.channel, accountId: envelope.accountId, chatId: envelope.chatId, chatType: envelope.chatType, userId: envelope.userId, via: `${envelope.channel}:reply`, optIdxes, trusted: true })
     if (verdict.ok === true || verdict.status === 'accepted') {
-      sendFeedback(`✅ 已作答：${(verdict.answers ?? []).join('、')}`)
+      // v0.8.7：Control Core 回执是通用形状，不携带结算明细——答案标签从已结算的账本行回读
+      //（settle → ledger.resolve 同步写入 answers），避免主数据回执出现「✅ 已作答：」空标签。
+      const row = ledger.get(pending.key)
+      const answers = Array.isArray(row?.answers) ? row.answers : []
+      sendFeedback(`✅ 已作答：${answers.join('、')}`)
       return true
     }
     // 罕见竞态（作答瞬间恰好超时）：回执说明，同样消费避免把裸编号漏进对话路由
