@@ -537,7 +537,9 @@ export function registerConversationRouter(deps) {
       eventId: String(envelope.messageId ?? ''),
       command,
       channel: envelope.channel,
-      accountId: String(envelope.accountId ?? envelope.channel ?? ''),
+      // v0.8.7：绝不把 channel 当 accountId 兜底（硬性规则）。accountId 缺失时这里得到空串，
+      // normalizeControlEvent 会以 missing_accountId fail-closed 拒绝——来源必须真实存在。
+      accountId: String(envelope.accountId ?? ''),
       userId: String(envelope.userId ?? ''),
       chatId: String(envelope.chatId ?? ''),
       chatType: envelope.chatType,

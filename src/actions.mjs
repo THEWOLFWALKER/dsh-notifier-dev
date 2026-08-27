@@ -145,22 +145,26 @@ export function createActionDispatcher({ vault = null, store = null, logger = nu
      *   （source-chat-mismatch）；缺点击会话（新卡必须带）→ 拒绝。缺来源元数据的
      *   升级在途旧卡（undefined/null）→ 仅升级宽限窗内放行（CRACK-001，10min 上界
      *   = token TTL），窗外 fail-closed 拒绝；放行与拒绝均显式 warn，绝不静默。
+     * @param {object} [opts.accountId] - v0.8.7 本地账号标识（通道 resolver 注入，如
+     *   telegram/feishu 的 resolved accountId）。必须原样转发进 Control Core 的 'stop'
+     *   载荷——缺失时按 missing_accountId fail-closed，绝不回退 channel 名。
      * @returns {{ ok: boolean, reason?: string, message: string }}
      *   ok = 本次点击是否生效（核销成功且 handler 已调用）；message 为给操作者的反馈文案。
      *   任何失败路径返回中文文案，绝不 throw。
      */
-    dispatch({ actionKey, token, via = 'unknown', userId = '(unknown)', chatId = undefined, chatType = undefined, __control = false } = {}) {
+    dispatch({ actionKey, token, via = 'unknown', userId = '(unknown)', chatId = undefined, chatType = undefined, accountId = undefined, __control = false } = {}) {
       try {
         if (control !== null && __control !== true) {
           let settlement = null
           const receipt = control.handle({
             command: 'stop', key: actionKey, actionKey, token,
             channel: String(via).split(':')[0], via,
+            accountId: accountId === undefined || accountId === null ? '' : String(accountId),
             userId: userId === undefined || userId === null ? '' : String(userId),
             chatId: chatId === undefined || chatId === null ? '' : String(chatId),
             chatType,
             settle: () => {
-              settlement = api.dispatch({ actionKey, token, via, userId, chatId, chatType, __control: true })
+              settlement = api.dispatch({ actionKey, token, via, userId, chatId, chatType, accountId, __control: true })
               return settlement
             },
           })

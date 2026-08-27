@@ -71,7 +71,11 @@ function pendingMeta(input, pending, policy, now) {
   const chatId = text(input.chatId) ?? text(meta.chatId)
   const userId = text(input.userId) ?? text(meta.userId)
   const sessionId = text(input.sessionId) ?? text(meta.sessionId) ?? text(row.sessionId) ?? text(row.agentId) ?? key
-  const accountId = text(input.accountId) ?? text(meta.accountId) ?? text(row.accountId) ?? channel
+  // v0.8.7：accountId 绝不回退到 channel 名（硬性规则「不允许把 channel 当 accountId」）。
+  // 事件/待决行都没声明真实账号时令其缺失，由 normalizeControlEvent 以 missing_accountId
+  // fail-closed 拒绝——适配器/装配必须提供本地配置派生或来源证明的账号标识（如 telegram/
+  // feishu/qq/wechat/dingtalk/wxpusher 的 resolved accountId）。
+  const accountId = text(input.accountId) ?? text(meta.accountId) ?? text(row.accountId)
   const policyVersion = text(input.policyVersion) ?? text(meta.policyVersion) ?? text(row.policyVersion) ?? text(policy.policyVersion) ?? '1'
   return {
     eventId: eventIdOf(input, command, key, now),

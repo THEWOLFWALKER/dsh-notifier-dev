@@ -82,6 +82,29 @@ test('personal default keeps converse disabled while private stop remains availa
   assert.equal(calls, 1)
 })
 
+test('Control Core：stop/action 载荷缺 accountId → missing_accountId fail-closed（channel 名绝不回退为账号）', () => {
+  const control = createControlEntry({ now: () => 150 })
+  // pending 行不带任何来源字段（channel/accountId 都不声明）——事件必须自证来源。
+  const barePending = {
+    status: 'pending', sessionId: 'session-1', agentId: 'session-1',
+    chatId: 'tg-chat', userId: 'user-1', policyVersion: '1', createdAt: 100, expiresAt: 1000,
+  }
+  const stop = control.handle({
+    eventId: 'stop-no-account', command: 'stop', channel: 'telegram',
+    userId: 'user-1', chatId: 'tg-chat', sessionId: 'session-1', policyVersion: '1',
+    pending: barePending, settle: () => { throw new Error('缺账号来源不得结算') },
+  })
+  assert.equal(stop.status, 'rejected')
+  assert.equal(stop.reason, 'missing_accountId')
+  // 携带本地账号标识的正常 stop 仍可裁决（正控）
+  const okStop = control.handle({
+    eventId: 'stop-with-account', command: 'stop', channel: 'telegram', accountId: 'tg-app',
+    userId: 'user-1', chatId: 'tg-chat', sessionId: 'session-1', policyVersion: '1',
+    pending: barePending, settle: () => true,
+  })
+  assert.equal(okStop.status, 'accepted')
+})
+
 test('QQ group and unknown-source controls fail closed for every command, while legacy C2C remains private', () => {
   const control = createControlEntry({
     policy: { mode: 'team', capabilities: { converse: true, groupChatControl: true } },
@@ -129,8 +152,10 @@ test('action callbacks from Telegram and Feishu settle through the shared entry'
   })
   const telegram = dispatcher.mintAction('turn/cancel', {}, { channel: 'telegram', chatId: 'tg-chat' })
   const feishu = dispatcher.mintAction('turn/cancel', {}, { channel: 'feishu', chatId: 'fs-chat' })
-  assert.equal(dispatcher.dispatch({ actionKey: telegram.key, token: telegram.token, via: 'telegram:action', userId: 7, chatId:  'tg-chat' }).message, '✅ 已停止任务')
-  assert.equal(dispatcher.dispatch({ actionKey: feishu.key, token: feishu.token, via: 'feishu:action', userId: 7, chatId: 'fs-chat' }).message, '✅ 已停止任务')
+  // 生产传输层（telegram/feishu inbound）总是把本地 resolved accountId 随 action 回调传入；
+  // Control Core 的 'stop' 载荷必须携带该账号标识（缺失 = missing_accountId fail-closed）。
+  assert.equal(dispatcher.dispatch({ actionKey: telegram.key, token: telegram.token, via: 'telegram:action', userId: 7, chatId: 'tg-chat', accountId: 'tg-app' }).message, '✅ 已停止任务')
+  assert.equal(dispatcher.dispatch({ actionKey: feishu.key, token: feishu.token, via: 'feishu:action', userId: 7, chatId: 'fs-chat', accountId: 'fs-app' }).message, '✅ 已停止任务')
   assert.deepEqual(calls, ['telegram:action', 'feishu:action'])
 })
 

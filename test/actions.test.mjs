@@ -44,6 +44,31 @@ test('register + mintAction + dispatch 正常链', async () => {
   assert.equal(row.outcome, 'done')
 })
 
+test('v0.8.7 dispatch：accountId 原样转发进 Control Core（stop 载荷），缺省空串由 CC fail-closed', () => {
+  const received = []
+  const store = memoryStore()
+  const vault = createTokenVault({ secret: 'actions-account-id' })
+  // 贴近真实 CC 入口：接受时调用 input.settle（真实链路在此执行动作）。
+  const control = { register: () => {}, handle: (input) => { received.push(input); return input.settle()?.ok === true ? { status: 'accepted' } : { status: 'rejected', reason: 'settlement_failed' } } }
+  const dispatcher = createActionDispatcher({ vault, store, control })
+  dispatcher.register('turn/cancel', () => ({ ok: true, message: '✅ 已停止任务' }))
+  const minted = dispatcher.mintAction('turn/cancel', {}, { channel: 'telegram', chatId: 'tg-chat' })
+  const ok = dispatcher.dispatch({ actionKey: minted.key, token: minted.token, via: 'telegram:action', userId: 7, chatId: 'tg-chat', accountId: 'tg-app' })
+  assert.equal(ok.message, '✅ 已停止任务')
+  assert.equal(received[0].command, 'stop')
+  assert.equal(received[0].accountId, 'tg-app', '传输层本地 accountId 必须进入 CC 载荷')
+
+  // 缺 accountId：载荷传空串（Control Core 以 missing_accountId fail-closed，绝不回退 channel 名）
+  const received2 = []
+  const control2 = { register: () => {}, handle: (input) => { received2.push(input); return { status: 'rejected', reason: 'missing_accountId' } } }
+  const dispatcher2 = createActionDispatcher({ vault, store, control: control2 })
+  dispatcher2.register('turn/cancel', () => ({ ok: true, message: '✅ 已停止任务' }))
+  const minted2 = dispatcher2.mintAction('turn/cancel', {}, { channel: 'telegram', chatId: 'tg-chat' })
+  const fail = dispatcher2.dispatch({ actionKey: minted2.key, token: minted2.token, via: 'telegram:action', userId: 7, chatId: 'tg-chat' })
+  assert.equal(received2[0].accountId, '')
+  assert.equal(fail.ok, false)
+})
+
 test('首达采纳：同 token 二次 dispatch 拒绝（already-resolved）', () => {
   const { dispatcher } = setup()
   dispatcher.register('turn/cancel', () => ({ ok: true, message: 'done' }))
