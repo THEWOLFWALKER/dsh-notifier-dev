@@ -9,7 +9,7 @@ node scripts/gen-channel-matrix.mjs --check
 node --check src/index.mjs
 ```
 
-The current development baseline is `1200` tests (`1199` pass + `1` skip). The published v0.8.6 contract remains `909`; do not change `package.json`'s release count on an unreleased development line. Desktop/host and provider protocol behavior still require real-device validation where noted below.
+The current development baseline is `1339` tests (`1338` pass + `1` skip). The published v0.8.6 contract remains `909`; do not change `package.json`'s release count on an unreleased development line. Desktop/host and provider protocol behavior still require real-device validation where noted below.
 
 The project has no install step for runtime tests. Optional packages are needed only for the corresponding real inbound flows: Feishu SDK, QQ connector, or QR terminal rendering.
 

@@ -47,3 +47,41 @@
 ## Commit
 
 - Owned files only: `src/channels/wechat-ilink/legacy-core.mjs`, `test/channels/wechat-ilink.test.mjs`, `test/inbound.wechat.test.mjs`, this workstream. No assembly/routing/admin/docs/CHANGELOG/package-version touched. No public push.
+
+---
+
+## Second slice: protocol-preflight code adaptation (2026-08-27, same branch)
+
+- Agent: Claude Code (Opus 4.8) | shared Windows workspace | branch `codex/stage5-wechat-ilink-hardening`.
+- Scope: turn `docs/protocol-preflight/` evidence into code-layer channel adaptation + security closure, per the strict rules (no channel-as-accountId, no Control Core bypass, fail-closed on missing source fields, declared capabilities stay declared). Protocol docs are the only boundary; no real-device verification.
+
+### Source fixes (each a separate commit)
+
+1. **WxPusher local accountId** (`src/inbound/wxpusher-callback.mjs`): the only inbound among the six interactive channels whose envelope lacked an accountId. After Control-Core source-binding hardening, WxPusher approval/question numbered replies were consumed but never settled, and conversation routing used channel-as-accountId. Now `resolveWxpusherInboundConfig` carries optional `accountId`; `createWxpusherInbound` resolves `config.accountId ?? 'default'`, includes it in the envelope and the returned instance; never from the callback's `data.appId`.
+2. **Remove channel-as-accountId fallbacks** (`src/inbound/conversation.mjs` route, `src/control/entry.mjs` `pendingMeta`) and forward the transport's local accountId from `actions.dispatch` into Control Core (was dropped). Missing accountId now fails closed with `missing_accountId`.
+3. **Telegram/Feishu button callbacks pass provider eventId into Control Core** (`src/inbound/telegram-bot.mjs`, `src/inbound/feishu-bot.mjs`): the `ap:`/`aq:` direct branches called `control.handle` without `eventId`; approval/question `buildEvent` reads `input.eventId` verbatim → `missing_eventId` rejected every wired button callback (tests had only covered the unwired legacy path). Telegram uses `callback_query.id`; Feishu composes `feishu:<open_message_id>:<operator.open_id>:<act>`.
+4. **Questions numbered-reply real defects** (`src/questions/router.mjs`): missing-chatId fail-closed branch dropped `envelope.accountId` (bare numbers leaked to the conversation router instead of being consumed); accepted-reply confirmation read a non-existent `verdict.answers` (empty `✅ 已作答：`) and now reads labels from the resolved ledger row.
+
+### Test synchronization (HEAD had 7 pre-existing failures)
+
+- `test/approval.test.mjs`, `test/approval-phase2-hardening.test.mjs`: rigs wire `createControlEntry()` by default; phase2 accepts carry a messageId (eventId). E-2 race test now reflects wired behavior (reply consumed, ledger settles once, no extra receipt).
+- `test/questions.test.mjs`: two standalone bridges got `control: createControlEntry()`; hintTargets assertions carry the local accountId.
+- `test/questions-admin-settlement.test.mjs`: phone-late receipt allows accepted/desktop_fallback (first-arrival is the ledger, not the receipt status).
+- `test/contract.spec.mjs`: only runs contract-shaped fixtures; the preflight protocol-shape fixtures (`feishu.json`/`telegram.json`/`wechat-ilink.json`/`qq-bot-protocol.json`, no `type`) in `test/fixtures/channels/` are skipped.
+- New focused tests: wxpusher accountId (config/default/never-from-event), wxpusher numbered-approval binding (correct / wrong / missing account fail-closed), actions accountId forwarding, conversation control-gated route (converse off / on / missing accountId / QQ group), control-entry stop missing-accountId fail-closed, telegram/feishu button eventId forwarding.
+
+### Validation
+
+- Focused suites green (494 tests); `npm test` = **1339 (1338 pass + 1 skip / 0 fail)**; `node scripts/verify-release.mjs` ok (0.8.6 / 909); `node scripts/gen-channel-matrix.mjs --check` ok (27); `node --check src/index.mjs` SYNTAX_OK; `git diff --check` ok.
+- No real-device/protocol verification performed. QQ INTERACTION_CREATE field shapes, Feishu callback ids, Telegram 429 retry_after parsing, QQ msg_id+msg_seq receiving-side dedup, and provider payload limits remain on the real-device handoff list. QQ, Telegram, Feishu, iLink declared file/signature/CardKit capabilities stay declared.
+
+### Commits (new, in order)
+
+- (list filled at handoff below)
+
+### Not done / residual (out of scope this session)
+
+- QQ receiving-side `msg_id+msg_seq` dedup shape (preflight guidance) — needs device evidence, left on the candidate list.
+- Telegram 429 `retry_after` honored instead of a fixed backoff — robustness improvement, mock cannot verify the response shape.
+- Persisted control-overlay wiring into `createControlEntry` (`policyForSession` resolver) — pre-existing Stage-4 slice boundary, already documented in `task-07-policy-persistence.md`.
+- Multi-account WxPusher disambiguation without explicit `config.accountId` (shared `'default'`) — acceptable because accountId is always paired with `channel` in comparisons.
