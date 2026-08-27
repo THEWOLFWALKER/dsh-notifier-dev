@@ -39,7 +39,7 @@ function makeFake(channel, { targets = [], failCards = false, accountId = undefi
   }
 }
 
-function makeRig({ telegram = null, approvalConfig = {}, control = null, interactive = undefined } = {}) {
+function makeRig({ telegram = null, approvalConfig = {}, control = undefined, interactive = undefined } = {}) {
   const store = createStore(tempPath())
   const vault = createTokenVault({ secret: 'phase2-secret' })
   const bus = createInboundBus({ allowUsers: ['u1', 'u2', 'u3'], store, vault })
@@ -50,10 +50,12 @@ function makeRig({ telegram = null, approvalConfig = {}, control = null, interac
   const notifier = {
     notifyAll: async () => ({ ok: true, delivered: [], skipped: [], failed: [] }),
   }
+  // v0.8.7：按钮/编号裁决一律经 Control Core（production 装配恒接线）；rig 缺省接线，
+  // 否则 fail-closed 路径（「Control Core 未接线」）被误当正常路径测。
   const dispose = registerApprovalHandler({
     ctx, notifier, bus, vault, store,
     ...(telegram !== null ? { telegram } : { interactive }),
-    ...(control !== null ? { control } : {}),
+    control: control !== undefined ? control : createControlEntry(),
     approvalConfig: { mode: 'answer', timeoutMs: 300, ...approvalConfig },
   })
   const handle = (request = { toolName: 'bash', callId: 'call-1' }) =>
@@ -126,10 +128,10 @@ test('approval.parallel defaults to off: remote and desktop run sequentially', a
   const outcome = rig.handle({ callId: 'seq-test' })
   await new Promise((r) => setTimeout(r, 30))
   const card = tg.state.cards[0]
-  // Settle from mobile
+  // Settle from mobile（真实回调携带消息标识 → eventId）
   const action = buildApprovalAction('allowed-once', card.approvalKey, card.token)
   rig.bus.accept({
-    channel: 'telegram', accountId: 'TG_APP', userId: 'u1', chatId: '10001',
+    channel: 'telegram', accountId: 'TG_APP', userId: 'u1', chatId: '10001', messageId: 'msg-pp-1',
     text: 'approve', approvalAction: parseApprovalAction(action),
   })
   const result = await outcome
@@ -162,16 +164,16 @@ test('replay of consumed approval action is rejected (single-use token)', async 
   await new Promise((r) => setTimeout(r, 50))
   const card = tg.state.cards[0]
   assert.ok(card, 'card pushed')
-  // First accept succeeds
+  // First accept succeeds（真实回调携带消息标识 → eventId）
   const action = buildApprovalAction('allowed-once', card.approvalKey, card.token)
   const first = rig.bus.accept({
-    channel: 'telegram', accountId: 'TG_APP', userId: 'u1', chatId: '10001',
+    channel: 'telegram', accountId: 'TG_APP', userId: 'u1', chatId: '10001', messageId: 'msg-rp-1',
     text: 'approve', approvalAction: parseApprovalAction(action),
   })
   assert.equal(first.ok, true, 'first accept succeeds')
   // Replay the same action → should be rejected (already consumed)
   const replay = rig.bus.accept({
-    channel: 'telegram', accountId: 'TG_APP', userId: 'u1', chatId: '10001',
+    channel: 'telegram', accountId: 'TG_APP', userId: 'u1', chatId: '10001', messageId: 'msg-rp-2',
     text: 'replay', approvalAction: parseApprovalAction(action),
   })
   // The replay might succeed at bus level but the approval handler detects already-resolved

@@ -12,6 +12,7 @@ import { createInboundBus } from '../src/inbound/bus.mjs'
 import { createTokenVault } from '../src/inbound/tokens.mjs'
 import { createStore } from '../src/inbound/store.mjs'
 import { createIdentity } from '../src/inbound/identity.mjs'
+import { createControlEntry } from '../src/control/entry.mjs'
 
 function tempPath() {
   return join(mkdtempSync(join(tmpdir(), 'dsh-notifier-ap-')), 'state.json')
@@ -124,8 +125,11 @@ function makeRig({ approvalConfig = {}, chatIds = ['100'], mode = 'answer', send
     editResolved: async (chatId, messageId, text) => { edits.push({ chatId, messageId, text }) },
   }
   if (typeof sendText === 'function') telegram.sendText = sendText
+  // v0.8.7：编号回复/按钮裁决一律经 Control Core（production 装配恒接线）；rig 必须同步
+  // 接线，否则 fail-closed 路径（「Control Core 未接线」）会被误当正常路径测。
+  const control = createControlEntry()
   const dispose = registerApprovalHandler({
-    ctx, notifier, bus, vault, store, telegram,
+    ctx, notifier, bus, vault, store, telegram, control,
     ...(identity !== null ? { identity } : {}),
     ...(logger !== null ? { logger } : {}),
     counterStart: 0, // v0.6.4 生产随机化 counter 起点；测试固定 0 保住 ap:<callId>:<n> 确定性断言
@@ -366,11 +370,9 @@ test('router：numberedReply: false 关闭编号回复降级', async () => {
 
 // v0.8.3 E-2：审批编号回复对已决竞态（首达采纳/超时已 settle、账本暂未翻终态）消费 + 回执，
 // 对齐 questions/router.mjs:316-318 既有姿态——不把裸 '1'/'2' 漏进对话路由。
-test('router：E-2 已决竞态编号回复 → 消费 + 回执「该审批已被处理」', async () => {
-  const texts = []
+test('router：E-2 已决竞态编号回复 → 消费且不重结（Control Core 接线下竞态只输在时序，账本只结一次）', async () => {
   const rig = makeRig({
     approvalConfig: { timeoutMs: 5000, escalation: { enabled: false } },
-    sendText: async (chatId, text) => { texts.push({ chatId, text }); return true },
   })
   const seen = []
   rig.bus.onMessage((envelope) => { seen.push(envelope.text); return false })
@@ -390,12 +392,11 @@ test('router：E-2 已决竞态编号回复 → 消费 + 回执「该审批已�
   rig.bus.accept({ channel: 'telegram', accountId: 'TG_APP', userId: '100', chatId: '100', messageId: 'msg:t:2', text: '1' })
   // 已决竞态 → 消费：后注册观察者看不到该消息（不进对话路由）
   assert.equal(seen.length, 0, '已决竞态的裸编号被消费，不落回对话路由')
-  // 回执送达：含「已被处理」/「首达采纳」核心语义
-  assert.equal(texts.length, 1)
-  assert.equal(texts[0].chatId, '100')
-  assert.match(texts[0].text, /已被处理/)
-  assert.match(texts[0].text, /首达采纳/)
+  // Control Core 接线下：该编号回复是 valid（来源/证据通过），但 settle 回调如实报
+  // already-resolved——绝不产生第二次结算。用户早先从按钮已获确认，这里不再追加回执。
   assert.equal(await pending, 'allowed-once')
+  const row = rig.store.get(card.approvalKey)
+  assert.equal(row.decision, 'allowed-once', '账本只结一次（按钮首达）')
   rig.dispose()
 })
 

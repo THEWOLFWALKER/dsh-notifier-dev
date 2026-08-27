@@ -85,9 +85,11 @@ test('admin 先答 → ok；同一问题后续手机/再次 admin 均 already-ha
   assert.deepEqual(rowAfterAdmin.decision, 'answered')
   assert.deepEqual(rowAfterAdmin.answers, ['生产'], '账本只记 admin 首达的答案')
 
-  // 手机晚到 → 首达采纳；账本答案不变（仍是 admin 的 '生产'）
+  // 手机晚到 → 首达采纳；账本答案不变（仍是 admin 的 '生产'）。
+  // v0.8.7 仲裁语义：settle 如实报 { ok:false }（already-resolved）→ 收尾为 desktop_fallback
+  //（不新结算），不再被误记为 accepted——用户端文案与账本语义不变。
   const phone = phoneAnswer(rig, key, [0], 'phone-late')
-  assert.equal(phone.reason === 'expired' || phone.status === 'accepted', true, '晚到 phone 不推翻已有裁决')
+  assert.equal(['accepted', 'desktop_fallback'].includes(phone.status), true, '晚到 phone 不推翻已有裁决（首达采纳由 admin 锁账）')
   assert.deepEqual(rig.store.get(key).answers, ['生产'], '手机晚到不覆盖 admin 裁决')
 
   await p.catch(() => {})

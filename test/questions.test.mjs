@@ -207,7 +207,10 @@ test('P4 卡片投递失败（异常）也走编号兜底：normalizeInbound 吞
     editResolved: async () => {},
     sendText: async () => true,
   }
-  const bridge = createQuestionBridge({ bus, vault, store, notifier, identity, interactive: () => [raw], config: { timeoutMs: 800, escalation: { enabled: false } } })
+  const bridge = createQuestionBridge({
+    bus, vault, store, notifier, identity, control: createControlEntry(), interactive: () => [raw],
+    config: { timeoutMs: 800, escalation: { enabled: false } },
+  })
   bridge.attach()
   const pending = bridge.askQuestions({ questions: [SINGLE] })
   await sleep(30)
@@ -369,7 +372,10 @@ test('SEC-2 多 pending 定向隔离：telegram 回复只命中 telegram 定向�
     async editResolved() {},
     async sendText() { return true },
   }
-  const bridge = createQuestionBridge({ bus, vault, store, notifier, interactive: () => [feishu, telegram], config: { timeoutMs: 800, escalation: { enabled: false } } })
+  const bridge = createQuestionBridge({
+    bus, vault, store, notifier, control: createControlEntry(), interactive: () => [feishu, telegram],
+    config: { timeoutMs: 800, escalation: { enabled: false } },
+  })
   bridge.attach()
   // 问题 A：只推 feishu（channelTypes=['feishu']）→ hintChannels=[]
   const pendingA = bridge.askQuestions({ questions: [SINGLE] })
@@ -439,7 +445,7 @@ test('issue #11 QQ：qq-bot 出站 ↔ qq 入站异名 → 逐 chat hintTargets 
   assert.equal(rig.broadcasts.length, 1, '编号话术经出站 qq-bot 广播')
   assert.deepEqual(rig.broadcasts[0].opts, { channelTypes: ['qq-bot'] })
   const row = rig.store.get(rig.store.keys('aq:')[0])
-  assert.deepEqual(row.hintTargets, [{ channel: 'qq', chatId: 'qquser42', userId: '42' }], '只记录 qq 目标 chat 的逐目标送达证据')
+  assert.deepEqual(row.hintTargets, [{ channel: 'qq', accountId: 'QQ_APP', chatId: 'qquser42', userId: '42' }], '只记录 qq 目标 chat 的逐目标送达证据（真实适配器恒携带本地 accountId）')
   assert.equal(rig.instances[0].texts.length, 1, 'qq 入站 sendText 送达一次，不重复广播')
   // qq 用户 42 回复编号 → hint 命中（异名通道回复生效）
   rig.bus.accept({ channel: 'qq', accountId: 'QQ_APP', chatType: 'private', userId: '42', chatId: 'qquser42', messageId: 'm1', text: '1' })
@@ -462,7 +468,7 @@ test('issue #11 微信 iLink 纯入站：hintTargets 记录 sendText 送达，we
   assert.equal(rig.instances[0].cards.length, 0, 'wechat 无卡片能力')
   assert.deepEqual(rig.broadcasts[0].opts, { channelTypes: ['telegram'] }, '出站广播照常只发 telegram')
   const row = rig.store.get(rig.store.keys('aq:')[0])
-  assert.deepEqual(row.hintTargets, [{ channel: 'wechat', chatId: 'wxuser42', userId: '42' }], 'hintTargets 含纯入站 wechat 目标')
+  assert.deepEqual(row.hintTargets, [{ channel: 'wechat', accountId: 'WX_APP', chatId: 'wxuser42', userId: '42' }], 'hintTargets 含纯入站 wechat 目标（含本地 accountId）')
   assert.equal(rig.instances[0].texts.length, 1, '纯入站通道经 sendText 收到编号话术')
   assert.match(rig.instances[0].texts[0].text, /回复编号/, '编号话术在场')
   // wechat 用户回 1 → hint 命中
@@ -526,7 +532,7 @@ test('issue #11 fail-closed：未绑定目标用户的入站通道不补入 hint
   const pending = rig.bridge.askQuestions({ questions: [SINGLE] })
   await sleep(30)
   const row = rig.store.get(rig.store.keys('aq:')[0])
-  assert.deepEqual(row.hintTargets, [{ channel: 'qq', chatId: 'qquser42', userId: '42' }], 'feishu 无绑定目标不入 hintTargets')
+  assert.deepEqual(row.hintTargets, [{ channel: 'qq', accountId: 'QQ_APP', chatId: 'qquser42', userId: '42' }], 'feishu 无绑定目标不入 hintTargets（含本地 accountId）')
   // feishu 白名单用户 100 回 1 → 不命中（feishu 未收到话术），落回对话路由
   rig.bus.accept({ channel: 'feishu', accountId: 'FS_APP', chatType: 'private', userId: '100', chatId: 'oc_100', messageId: 'm1', text: '1' })
   assert.deepEqual(seen, ['1'], '无关通道裸编号不被消费')
