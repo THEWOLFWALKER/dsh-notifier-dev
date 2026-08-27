@@ -162,7 +162,7 @@ export function registerApprovalHandler(deps) {
         return {
           eventId: input.eventId,
           sessionId: String(row.agentId ?? input.approvalKey ?? input.key), source: 'mobile', channel,
-          accountId: String(exact?.accountId ?? input.accountId ?? channel), userId: String(exact?.userId ?? input.userId ?? ''), chatId,
+          accountId: String(exact?.accountId ?? input.accountId ?? ''), userId: String(exact?.userId ?? input.userId ?? ''), chatId,
           policyVersion: String(row.policyVersion ?? policy.policyVersion ?? '1'), command: 'approval',
           chatType: input.chatType, createdAt: Number(row.createdAt ?? now - 1),
           expiresAt: Number(row.expiresAt ?? now + timeoutMs),
@@ -353,22 +353,21 @@ export function registerApprovalHandler(deps) {
       reply('仅审批接收人可点击裁决')
       return true
     }
+    // v0.8.7：accountId 缺失时不得用 channel 名伪造——fail-closed 交还桌面。
+    // 旧客户端回调可能不含 accountId，此时无法证明来源账号，不能放行。
+    if (envelope.accountId === undefined || envelope.accountId === null || String(envelope.accountId) === '') {
+      reply('审批回调缺少账号来源，无法裁决（请升级客户端）')
+      return true
+    }
     const verdict = deps.control !== null && deps.control !== undefined
       ? deps.control.handle({
         eventId: String(envelope.messageId ?? ''), command: 'approval', approvalKey: key, decision,
         token: typeof action.token === 'string' ? action.token : undefined,
         via: `${envelope.channel}:button`, channel: envelope.channel,
-        accountId: String(envelope.accountId ?? envelope.channel ?? ''), userId: envelope.userId,
+        accountId: String(envelope.accountId), userId: envelope.userId,
         chatId: envelope.chatId, chatType: envelope.chatType,
       })
-      : bus.decide({
-      approvalKey: key,
-      decision,
-      token: typeof action.token === 'string' ? action.token : undefined,
-      via: `${envelope.channel}:button`,
-      userId: envelope.userId,
-      chatId: envelope.chatId,
-    })
+      : { ok: false, message: 'Control Core 未接线，审批不可用' }
     if (!(verdict.ok === true || verdict.status === 'accepted')) reply(verdict.message ?? '该审批已被处理或已失效，此次点击无效')
     return true
   }
@@ -396,9 +395,15 @@ export function registerApprovalHandler(deps) {
       return true
     }
     const decision = choice === '1' ? OUTCOME_ALLOWED : OUTCOME_REJECTED
+    // v0.8.7：编号回复同样要求 accountId 来源——缺失时 fail-closed。
+    if (envelope.accountId === undefined || envelope.accountId === null || String(envelope.accountId) === '') {
+      const inbound = interactiveByChannel.get(envelope.channel)
+      if (inbound !== undefined) void inbound.sendText(envelope.chatId, '审批回复缺少账号来源，无法裁决').catch(() => {})
+      return true
+    }
     const verdict = deps.control !== null && deps.control !== undefined
-      ? deps.control.handle({ eventId: String(envelope.messageId ?? ''), command: 'approval', approvalKey: pending.key, channel: envelope.channel, accountId: String(envelope.accountId ?? envelope.channel ?? ''), chatId: envelope.chatId, chatType: envelope.chatType, userId: envelope.userId, via: `${envelope.channel}:reply`, decision, trusted: true })
-      : bus.decideTrusted({ approvalKey: pending.key, decision, via: `${envelope.channel}:reply`, userId: envelope.userId })
+      ? deps.control.handle({ eventId: String(envelope.messageId ?? ''), command: 'approval', approvalKey: pending.key, channel: envelope.channel, accountId: String(envelope.accountId), chatId: envelope.chatId, chatType: envelope.chatType, userId: envelope.userId, via: `${envelope.channel}:reply`, decision, trusted: true })
+      : { ok: false, message: 'Control Core 未接线，审批不可用' }
     if (verdict.ok === true || verdict.status === 'accepted') {
       warn(`编号回复裁决 ${pending.key} → ${decision}（user ${envelope.userId}）`)
       return true

@@ -130,10 +130,12 @@ export function chatScopeOf(event) {
 }
 
 function isGroupChat(event) {
-  if (chatScopeOf(event) === 'group') return true
+  const scope = chatScopeOf(event)
+  if (scope === 'group') return true
+  if (scope === 'private') return false
+  // chatScopeOf returned neither 'group' nor 'private' (e.g. QQ unknown chatType).
+  // Only apply the deny-side chatId shape hint when chatType is truly absent.
   const chatId = String(event?.chatId ?? '')
-  // Provider-neutral shape guards: these are only a deny-side hint. A provider
-  // with an unknown shape remains subject to its explicit chatType metadata.
   return chatId.startsWith('oc_') || chatId.startsWith('group_') || chatId.startsWith('grp_')
 }
 

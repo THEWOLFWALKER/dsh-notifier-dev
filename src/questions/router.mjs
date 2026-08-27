@@ -177,7 +177,7 @@ export function createQuestionBridge(deps) {
         const exact = (Array.isArray(row.pushedTo) ? row.pushedTo : []).find((target) => String(target.channel) === channel && String(target.chatId) === chatId && (target.accountId === undefined || String(target.accountId) === String(input.accountId ?? '')))
         return {
           eventId: input.eventId, sessionId: String(row.agentId ?? input.qKey ?? input.key), source: 'mobile', channel,
-          accountId: String(exact?.accountId ?? input.accountId ?? ''), userId: String(exact?.userId ?? input.userId ?? ''), chatId,
+          accountId: exact?.accountId ?? input.accountId, userId: String(exact?.userId ?? input.userId ?? ''), chatId,
           policyVersion: String(row.policyVersion ?? policy.policyVersion ?? '1'), command: 'question-answer',
           chatType: input.chatType, createdAt: Number(row.createdAt ?? now - 1),
           expiresAt: Number(row.expiresAt ?? now + defaultTimeoutMs),
@@ -448,9 +448,12 @@ export function createQuestionBridge(deps) {
     if (sourceRow === undefined || sourceChat === null) { feedback('请到原会话操作'); return true }
     const sourceTargets = Array.isArray(sourceRow.pushedTo) ? sourceRow.pushedTo.filter((target) => String(target.channel) === String(envelope.channel) && String(target.chatId) === sourceChat && (target.accountId === undefined || String(target.accountId) === String(envelope.accountId ?? ''))) : []
     if (sourceTargets.length === 0 || !sourceTargets.some((target) => String(target.userId) === String(envelope.userId))) { feedback('请到原会话操作'); return true }
-    const verdict = deps.control !== null && deps.control !== undefined
-      ? deps.control.handle({ eventId: String(envelope.messageId ?? ''), command: 'question-answer', qKey, optIdx, token: String(action.token ?? ''), via: `${envelope.channel}:button`, channel: envelope.channel, accountId: envelope.accountId, userId: envelope.userId, chatId: envelope.chatId, chatType: envelope.chatType })
-      : decide({ qKey, optIdx, token: String(action.token ?? ''), via: `${envelope.channel}:button`, userId: envelope.userId, chatId: envelope.chatId })
+    // v0.8.7：Control Core 缺失时 fail-closed，不直结——防止无授权即放行按钮作答。
+    if (deps.control === null || deps.control === undefined) {
+      feedback('该提问已被作答（首达采纳）')
+      return true
+    }
+    const verdict = deps.control.handle({ eventId: String(envelope.messageId ?? ''), command: 'question-answer', qKey, optIdx, token: String(action.token ?? ''), via: `${envelope.channel}:button`, channel: envelope.channel, accountId: envelope.accountId, userId: envelope.userId, chatId: envelope.chatId, chatType: envelope.chatType })
     feedback(verdict.message ?? '该提问已回答或已过期')
     return true
   }
@@ -749,9 +752,12 @@ export function createQuestionBridge(deps) {
       sendFeedback(`❓ ${why}\n${numberedHint(row.options, row.multiSelect === true)}`)
       return true // 发错了可以再发：问题保持待决，上面的选项已重发
     }
-    const verdict = deps.control !== null && deps.control !== undefined
-      ? deps.control.handle({ eventId: String(envelope.messageId ?? ''), command: 'question-answer', qKey: pending.key, channel: envelope.channel, accountId: envelope.accountId, chatId: envelope.chatId, chatType: envelope.chatType, userId: envelope.userId, via: `${envelope.channel}:reply`, optIdxes, trusted: true })
-      : decideTrusted({ qKey: pending.key, optIdxes, via: `${envelope.channel}:reply`, userId: envelope.userId })
+    // v0.8.7：Control Core 缺失时 fail-closed，不直结——防止无授权即放行编号作答。
+    if (deps.control === null || deps.control === undefined) {
+      sendFeedback('该提问已被作答（首达采纳）')
+      return true
+    }
+    const verdict = deps.control.handle({ eventId: String(envelope.messageId ?? ''), command: 'question-answer', qKey: pending.key, channel: envelope.channel, accountId: envelope.accountId, chatId: envelope.chatId, chatType: envelope.chatType, userId: envelope.userId, via: `${envelope.channel}:reply`, optIdxes, trusted: true })
     if (verdict.ok === true || verdict.status === 'accepted') {
       sendFeedback(`✅ 已作答：${(verdict.answers ?? []).join('、')}`)
       return true
