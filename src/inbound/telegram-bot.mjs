@@ -366,16 +366,21 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
      */
     async sendActionCard({ chatId, title, content, actions: buttons = [] }) {
       try {
-        const rows = (Array.isArray(buttons) ? buttons : [])
+        const rowEntries = (Array.isArray(buttons) ? buttons : [])
           .filter((button) => button !== null && typeof button === 'object'
             && typeof button.label === 'string' && button.label.trim() !== ''
             && typeof button.data === 'string' && button.data !== '')
           // v0.6.2：同审批卡——ac:<key>:<token> 同样超限，一律经短引用压缩
           .map((button) => {
             const ref = refs.mint(button.data, { chatId })
-            return ref === null ? null : { text: button.label, callback_data: `r:${ref}` }
+            return ref === null ? { failed: true, ref: null } : { failed: false, ref, row: { text: button.label, callback_data: `r:${ref}` } }
           })
-          .filter(Boolean)
+        if (rowEntries.some((entry) => entry.failed === true)) {
+          for (const entry of rowEntries) if (entry.ref !== null) refs.take(entry.ref)
+          warn('动作按钮引用容量已满，本次降级为文本通知')
+          return null
+        }
+        const rows = rowEntries.map((entry) => entry.row)
         if (rows.length === 0) return null
         const result = await api('sendMessage', {
           chat_id: chatId,
@@ -399,15 +404,20 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
       if (multiSelect === true) return null
       try {
         // v0.6.2 同审批卡：callback_data 只放短引用 r:<ref>（TG 64 字节硬限，P7）
-        const rows = options
+        const rowEntries = options
           .map((label, idx) => {
             const ref = refs.mint(buildQuestionAction(qKey, String(idx), token), { chatId })
-            return ref === null ? null : {
+            return ref === null ? { failed: true, ref: null } : { failed: false, ref, row: {
               text: `${idx + 1}. ${String(label).slice(0, 60)}`,
               callback_data: `r:${ref}`,
-            }
+            } }
           })
-          .filter(Boolean)
+        if (rowEntries.some((entry) => entry.failed === true)) {
+          for (const entry of rowEntries) if (entry.ref !== null) refs.take(entry.ref)
+          warn('提问按钮引用容量已满，本次降级为编号通知')
+          return null
+        }
+        const rows = rowEntries.map((entry) => entry.row)
         if (rows.length === 0) return null
         const result = await api('sendMessage', {
           chat_id: chatId,
