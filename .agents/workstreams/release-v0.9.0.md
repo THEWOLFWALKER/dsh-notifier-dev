@@ -9,4 +9,5 @@
 - Validation already observed: `npm test` 1352 total / 1351 pass / 1 skip; release guard, channel matrix check, syntax check, diff check, and npm pack dry-run pass.
 - Private relay: pushed successfully on 2026-08-27; `private/main` and `private/codex/stage5-wechat-ilink-hardening` now point to `ae382a6`.
 - Public staging: local branch `codex/public-v0.9.0-mirror` at `1415d7d` is based on `origin/main`, contains the v0.9.0 allowlisted source/test/docs mirror, and has no forbidden internal files. It is not pushed yet.
+- Cleanup: superseded `docs/v0.5-design.md` and `docs/v0.6-design.md` were removed from the private tree and public staging; `architecture.md` and `architecture-roadmap.md` are the maintained design references.
 - External actions pending review: public mirror push, GitHub Issue/PR replies or closures, Awesome DSH fork PR, and dshfind correction request.
