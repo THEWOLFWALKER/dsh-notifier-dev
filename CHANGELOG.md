@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.9.1] - 2026-08-28
+
+R1「正确性第一线」修复列车（20 轮审查 80 项清单的第一批 18 项）。全部为 mock/contract 证据，协议类修复未经真机验证（真机缺口已登记 `docs/memory/risks.md`）；`npm test` 为 1414（1414 pass）。
+
+### ⚠️ 破坏性语义变化（迁移说明）
+
+- **`/stop` 收紧为无参命令（G-04）**：此前 `/stop 任意文字` 会误触发任务取消——用户一句「/stop 一下别急」就把长任务杀了。现仅裸 `/stop` 命中取消；`/stop 附言` 回执「未识别的命令」且附言按普通文本投递。**依赖「/stop + 文字」取消的用户须改发裸 `/stop`**。
+- **未知 `/` 命令现在有回执**（G-04 副作用）：此前静默按普通文本投递；现在先回执「未识别的命令」（文本仍会送达 agent）。
+- **裸编号多选消费面扩大（G-52）**：`1 3`、`1、3`、`1;3`、`1, 3`（分隔符混用）现在按多选裁决；此前被当普通文本喂给 agent。授权闸不变（fail-closed 语义不变）。`1, 1` 在单选题直接按 1 作答（去重）。
+- **`/agent use` 支持含空格名（G-33）**：`/agent use my space` 整体作为目标名；此前只用首词。
+
+### W1 钉钉 Stream 协议修正（G-01/02/10/23/24/42，P1×2）
+
+- **G-01 ack 回执三重偏差**：messageId 改读 `frame.headers.messageId`（顶层无该字段，旧实现读顶层恒为空）；回执头字段名 `requestId`→`messageId`；`data:'ack'`→`JSON.stringify('OK')`。仲裁源：dingtalk-stream 2.1.4/2.1.6-beta.1/2.1.7-beta.1 三版 SDK 源码核对，证据沉淀 `docs/protocol-preflight/dingtalk.md`。旧测试 mock 把错误契约钉死成基线，已重写（headers.messageId 形态钉契约）。
+- **G-02 SYSTEM/ping 零应答**：新增 SYSTEM 帧分支——ping 原样回显 headers+data（含必须回显的 opaque），disconnect/KEEPALIVE/REGISTERED 记 debug 后不进业务。应用层 SYSTEM ping 与传输层 WS 心跳是两码事，注释写明不得合并。
+- **G-10 建连字段名**：`uesrAgent`→`ua`，删除「官方 SDK 拼写错误照抄勿改」的错误注释（三版源码核对查无实据，全系 `ua: this.config.ua`）。
+- **G-42 data 二次 parse 失败静默**：warn（含 messageId/type/前 64 字符）后仍丢弃——ack 已发则服务端不重推，丢消息至少可观测。
+- **G-23 richText 归一**：richText 消息遍历内容模块，text 段拼接、图片段走既有管线；downloadCode-only 图片段 fail-closed 丢弃（换 URL 需另调文件下载接口，超出本批次）。纯文本/纯图行为不变。
+- **G-24 被动回复 messageId 碰撞**：hash6(content) 合成改 `dt:reply-<ts36>-<seq36>` 模块级单调序，同会话同内容两次回复不再同 ID。
+
+### W2 码点安全分段统一（G-03/22/40）
+
+- **G-03+G-22 同根**：新增 `splitByCodePoints` helper（`Array.from` 码点语义），微信 iLink 发送、QQ 文本分段（2000 码点）、QQ Markdown 截断（3000 码点）三处 UTF-16 码元切片全部改用——星体平面字符（emoji/生僻字）跨块不再产生孤立代理项。ZWJ 序列拆为多个完整码点属可接受降级（注释说明）。
+- **G-40 stripMention 白名单化**：仅剥已证实形态（`<@!数字>`/`<@数字>`/行首 `@名字+空格`），未命中但形似提及保留原文并 debug 出声——@ 残片污染 agent 语境从「静默漏剥」变「日志可见」。
+- **G-22 被动回复配额 warn**：QQ c2c 4 条/群 5 条配额常量 + 超限 warn（平台静默丢弃，先让丢弃可见），不硬阻塞。
+
+### W3 命令解析矩阵修正（G-04/06/25/33/43/52/65）
+
+- **G-06 `/cmd@botname` 支持**：命令词 @ 后缀贪心剥除（涵盖含点号 botname）；TG 群聊/钉钉入站 @ 剥离同修。`/pair@bot code` 剥离后 args 干净。
+- **G-65 全角斜杠**：`／pair` 规范化为 `/pair`（仅首字符）；命令附言保留在 args。
+- **G-43 缺 chatId 裸编号黑洞**：fail-closed 消费后补指路回执（「请回到原卡片回复或使用管理台裁决」），裁决结果不受影响。
+- **G-25 飞书 @提及还原**：依据事件 mentions 映射把 `@_user_N` 占位符还原为 `@名字`（非删空），双空格消失；事件无 mentions 时退回旧行为。三渠道 @ 策略差异（TG/钉钉剥离、飞书还原、QQ 白名单）注释写明。
+
+### W4 管理台裁决审计隔离（G-05/41）
+
+- **G-05 审计失败不再翻转为 500**：本文件全部 9 处 `appendAudit` 调用点经统一 `auditGuard` 兜底——审计写失败只 warn（host logger + stderr），已生效的裁决结果照常返回。取舍：审计是可观测性副作用，裁决已生效的事实不能被磁盘满推翻；降级经 warn 可观测。
+- **G-41 裁决接收人校验去门控**：删除 `targets.length > 0 &&` 前置——pushedTo 空表同样执行 userId 比对并 fail-closed 回拒（「未找到该审批的投递记录，无法核验回复来源，请回桌面处理」）。空表意味着无法证明投递对象；临时空表退化为「拒绝直到账本一致」，方向与 fail-closed 一致，只收紧不放宽。
+
+### W5 合并窗与身份路由键（G-51/48/49）
+
+- **G-51 合并窗跨 chat 串台**：pending/flush 键从 `(channel,userId)` 加宽为 `(channel,userId,chatId)`——同一用户私聊+群不再并线成一条混合投递。chatId 缺失仍聚合（现状语义）。内存上界分析：键基数=窗口内活跃 chat 元组数，每条配对冲刷 timer，无无界增长路径。
+- **G-48 覆盖绑定摘旧挂钩**：`/bind`、`/agent use` 覆盖绑定前先经 registry 既有 `detachInbound` 摘旧会话入站挂钩（幂等），`/route` 不再一 user 双挂。
+- **G-49 身份键归一**：新增单一 `bindingKey(channel, userId)`（trim + channel 小写收敛，userId 保持大小写敏感——wxpusher/飞书 ID 大小写语义真实），conversation/agent-router/identity/registry 四处键构造改引。现网行为零变化（休眠边界封口），回归测试保护。
+
 ## [0.9.0] - 2026-08-27
 
 - 2026-08-27 v0.9.0 release candidate：汇总维护、Control Core 安全收口、六条入站通道契约、个人模式管理台和文档整理；`npm test` 为 1352（1351 pass + 1 skip），版本/测试计数已统一到本候选发布线。
