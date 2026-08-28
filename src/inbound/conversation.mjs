@@ -482,9 +482,22 @@ export function registerConversationRouter(deps) {
 
   // 合并窗：手机上打长句常拆多条；窗口内的连续消息合并为一条再投递。
   // `..` 结尾立即冲刷；`!!` 结尾立即冲刷并按 steer 投递。
-  const pending = new Map() // `${channel}:${userId}` -> { parts: string[], timer, forceSteer }
+  // G-51：键必须带 chatId 维度——`${channel}:${userId}:${String(chatId ?? '')}`。
+  // 旧键 `${channel}:${userId}` 把同一用户「私聊 + 群」两个 chat 的碎片并进同一条合并线：
+  // 私聊窗的半句被群窗的 terminator 顺手冲掉，或两个 chat 的碎片交叉拼接成一条混合投递
+  // （跨 chat 串台）。加维度后：同 channel:userId:chatId 内照旧合并；同用户私聊 + 群
+  // = 两条独立合并线、各自投递、回执回各自 chat。
+  //   - chatId 缺失（undefined/null）→ String(chatId ?? '') = ''，仍聚合进同一 '' 维度
+  //     （现状语义保持：无 chat 概念的适配器不会因本修裂窗）；
+  //   - '' 与任何显式 chatId 是不同维度（缺维度的碎片不会并进显式 chat 的窗）。
+  // 改这行键时三个分量一个都不能删：去 chatId 复活跨 chat 串台，去 userId 跨用户串台，
+  // 去 channel 跨渠道串台。timer 回调闭包持有的就是设置它的那个 envelope，flush 用同一
+  // 键函数反查，绝不找错窗。
+  const pending = new Map() // `${channel}:${userId}:${String(chatId ?? '')}` -> { parts, timer, forceSteer }
+  const mergeWindowKeyOf = (envelope) =>
+    `${envelope.channel}:${envelope.userId}:${String(envelope.chatId ?? '')}`
   function flush(envelope) {
-    const key = `${envelope.channel}:${envelope.userId}`
+    const key = mergeWindowKeyOf(envelope)
     const entry = pending.get(key)
     if (entry === undefined) return
     clearTimeout(entry.timer)
@@ -575,7 +588,7 @@ export function registerConversationRouter(deps) {
       route(envelope, text)
       return
     }
-    const key = `${envelope.channel}:${envelope.userId}`
+    const key = mergeWindowKeyOf(envelope) // G-51：与 flush 同一键（含 chatId 维度）
     if (text.endsWith('..') || text.endsWith('!!')) {
       // 终止符：先并入再立即冲刷（!! 追加 steer 前缀）
       const entry = pending.get(key) ?? { parts: [], timer: null, forceSteer: false }

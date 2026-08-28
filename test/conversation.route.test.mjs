@@ -100,8 +100,8 @@ function makeRig(options = {}) {
     channelTypes,
     ...(control === undefined ? {} : { control }),
   })
-  const userSays = (text, { userId = '42' } = {}) =>
-    bus.accept({ channel: 'telegram', userId, chatId: userId, messageId: `m${Math.random()}`, text })
+  const userSays = (text, { userId = '42', chatId = userId } = {}) =>
+    bus.accept({ channel: 'telegram', userId, chatId, messageId: `m${Math.random()}`, text })
   const flush = async (text) => { userSays(text); await sleep(FLUSH_MS) } // 文本：等合并窗冲刷后再断言
   const fire = (event, payload) => (handlers[event] ?? []).forEach((h) => h(payload))
   return {
@@ -402,6 +402,61 @@ test('mergeWindowMs: 0 = 关闭合并（README 契约回归）：每条消息立
   assert.equal(agent.calls.followup[1].content[0].text, '第二条')
   await sleep(FLUSH_MS) // 等满一个旧默认窗口，确认没有迟到的第三次投递
   assert.equal(agent.calls.followup.length, 2, '不应有窗口到期后的追加投递')
+  rig.dispose()
+})
+
+// ---------------------------------------------------------------- G-51 合并窗跨 chat 串台
+
+test('G-51：同 userId 双 chat（私聊+群）窗口交替发言 → 两条独立投递、各自回执', async () => {
+  const older = makeAgent(ALPHA_1, 'idle', '/home/u/proj/alpha')
+  const newer = makeAgent(ALPHA_2, 'idle', '/home/u/proj/alpha')
+  const rig = makeRig({ agents: [older, newer] })
+  rig.fire('agent/created', older)
+  rig.advance(100)
+  rig.fire('agent/created', newer)
+  // 通道默认指向双活跃 workspace → 每次投递带消歧回执（回执去向 = 各自 chatId）
+  rig.router.setChannelDefault('telegram', 'alpha')
+
+  // 窗口内交替发言：私聊两条 + 群两条。旧键 `${channel}:${userId}` 无 chat 维度，
+  // 四条会并进同一条合并线，拼成「私聊碎片一\n群碎片一\n私聊碎片二\n群碎片二」混合投递
+  // 且只有一条回执（落在最后一条消息的 chat）——跨 chat 串台。
+  rig.userSays('私聊碎片一', { chatId: '42' })
+  rig.userSays('群碎片一', { chatId: 'grp-1' })
+  rig.userSays('私聊碎片二', { chatId: '42' })
+  rig.userSays('群碎片二', { chatId: 'grp-1' })
+  await sleep(FLUSH_MS)
+
+  // 两条独立投递：私聊窗只并私聊碎片、群窗只并群碎片，绝不交叉拼接
+  assert.equal(newer.calls.followup.length, 2, '两条独立投递（旧键下是 1 条混合投递）')
+  assert.deepEqual(
+    newer.calls.followup.map((m) => m.content[0].text).sort(),
+    ['私聊碎片一\n私聊碎片二', '群碎片一\n群碎片二'],
+    '各窗只合并本 chat 的碎片',
+  )
+  assert.equal(older.calls.followup.length, 0)
+  // 各自回执：私聊窗的投递回执回私聊 chat，群窗的回群 chat（不串台）
+  assert.ok(rig.replies.some((r) => r.chatId === '42' && r.text.includes('已投')), '私聊投递回执回到私聊 chat')
+  assert.ok(rig.replies.some((r) => r.chatId === 'grp-1' && r.text.includes('已投')), '群投递回执回到群 chat')
+  rig.dispose()
+})
+
+test('G-51：chatId 缺失（undefined）仍聚合进 "" 维度——现状语义保持 + 不并入显式 chat 窗', async () => {
+  const agent = makeAgent(ALPHA_1, 'idle', '/home/u/proj/alpha')
+  const rig = makeRig({ agents: [agent] })
+  rig.fire('agent/created', agent)
+
+  // 不带 chatId 的信封（无 chat 概念的适配器 / 旧装配）：碎片仍并进同一条 '' 窗
+  rig.bus.accept({ channel: 'telegram', userId: '42', messageId: 'm-g51-miss-1', text: '碎片一' })
+  rig.bus.accept({ channel: 'telegram', userId: '42', messageId: 'm-g51-miss-2', text: '碎片二' })
+  await sleep(FLUSH_MS)
+  assert.equal(agent.calls.followup.length, 1, 'chatId 缺失仍合并（现状语义不被本修裂窗）')
+  assert.equal(agent.calls.followup[0].content[0].text, '碎片一\n碎片二')
+
+  // '' 维度与显式 chat 维度是不同键：带 chatId 的碎片单独成窗，不并进 '' 窗
+  rig.bus.accept({ channel: 'telegram', userId: '42', chatId: '42', messageId: 'm-g51-explicit', text: '带维度的碎片' })
+  await sleep(FLUSH_MS)
+  assert.equal(agent.calls.followup.length, 2, '显式 chat 维度独立成窗')
+  assert.equal(agent.calls.followup[1].content[0].text, '带维度的碎片')
   rig.dispose()
 })
 
