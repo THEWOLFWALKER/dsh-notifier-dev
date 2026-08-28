@@ -652,14 +652,16 @@ export function createQuestionBridge(deps) {
   }
 
   /**
-   * 编号回复兜底（P4）：白名单用户回复 '2' / '1,3'（中英文逗号均可）作答最近一条待决提问。
+   * 编号回复兜底（P4）：白名单用户回复 '2' / '1,3' 作答最近一条待决提问。
+   * G-52：分隔符宽容化——{, ， 、 ; ； 空白} 任意混用（'1, 3' '1、3' '1 3' 均按多选），
+   * 重复编号去重；任一词非 1-2 位数字仍整条不认（fail-closed 落回对话路由）。
    * 发错了不作废——无效编号：消费该消息（不进对话路由）+ 回执提示 + 把选项重发一遍，
    * 问题保持待决，用户直接再答即可；有效作答后回执确认。
    * 消费语义与审批一致：返回 true = bus 停止扇出（不进对话路由）。
    * 注意：审批的编号处理器先注册（'1'/'2' 且有待决审批时审批优先消费）。
    *
    * Control Core Step 1：chat 来源隔离
-   *  - 缺 chatId → fail-closed：消费消息但不裁决（不落回对话路由）
+   *  - 缺 chatId → fail-closed：消费消息但不裁决（不落回对话路由）；G-43 补指路回执
    *  - onChannel 证据（同用户错误 chat）→ 消费 + 回执「请到原会话操作」+ 不裁决
    *  - exact/hint 证据（chat 匹配）→ 正常作答流程
    */
@@ -702,9 +704,16 @@ export function createQuestionBridge(deps) {
       }
       return true
     }
-    if (!/^\d{1,2}([,，]\d{1,2})*$/.test(text)) return false
-    const nums = text.split(/[,，]/).map(Number)
-    if (nums.length === 0) return false
+    // G-52：分词式裸编号识别。旧整条正则 ^\d{1,2}([,，]\d{1,2})*$ 只认「紧邻的中/英文逗号」，
+    // '1, 3'（逗号后空格）、'1、3'（顿号）、'1 3'（纯空格）全部不匹配 → return false 落回
+    // 对话路由——用户明明在作答，裸编号却被当普通文本喂给 agent，等到超时才发现没生效。
+    // 改为按多分隔符分词后逐词校验：分隔符集 {, ， 、 ; ； 空白} 任意混用均可；任一词不是
+    // 1-2 位数字即整条不认。fail-closed 语义不变——不匹配仍 return false 落回对话路由，
+    // 越界号校验维持既有回执（下方 outOfRange 分支）。
+    const tokens = text.split(/[,，、;；\s]+/).filter(Boolean)
+    if (tokens.length === 0 || tokens.some((t) => !/^\d{1,2}$/.test(t))) return false
+    // 去重：'1, 1' 与 '1' 同义（重复勾选同一项不二次落账）；Set 保序去重
+    const nums = [...new Set(tokens.map(Number))]
 
     const chatId = envelope.chatId !== undefined && envelope.chatId !== null && String(envelope.chatId) !== ''
       ? String(envelope.chatId) : null
@@ -721,6 +730,12 @@ export function createQuestionBridge(deps) {
       // 使「缺 chatId → 消费但不裁决」的 fail-closed 语义失效（泄露进对话路由）。
       const anyPending = ledger.latestPendingFor(envelope.channel, envelope.userId, null, envelope.accountId)
       if (anyPending === null) return false
+      // G-43：消费黑洞补回执。此前该路径吃掉裸编号后静默 return true——消息被消费（不进
+      // 对话路由）、问题不裁决，用户端零反馈，要等超时才知道作答没生效。补一条指路回执，
+      // 裁决结果不受影响（仍不落账、问题保持待决），仅消除黑洞。回执走该渠道普通回复路径
+      // （best-effort：chatId 本就缺失，适配器 sendText 拿不到有效目标时自行失败吞掉，
+      // 不影响消费语义）。
+      sendFeedback('该回复未能定位到提问卡片（缺少会话上下文），请回到原卡片回复或使用管理台裁决')
       return true
     }
 
