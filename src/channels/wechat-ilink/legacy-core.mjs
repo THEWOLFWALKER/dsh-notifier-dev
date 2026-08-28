@@ -5,7 +5,7 @@
 //  - 游标 wechat:sync_buf 必须持久化（丢失/回退会重复收消息）
 //  - context_token：入站消息永远最新（收到即缓存 wechat:ctx:<uid>），发送回显最新值。
 //    v0.8.7：写入前做形状校验（≤512 字符、无空白/控制字符）+ 键族 256 上限淘汰最旧（宪法#4）
-//  - 发送分块（默认 2000 字/块，块间 2s 降密度）
+//  - 发送分块（默认 2000 码点/块，块间 2s 降密度；码点切分不产生孤立代理项，G-03）
 //  - 错误语义：
 //      会话过期（-14 / 伪装的 -2 unknown error）→ 剥 context_token 重试一次；
 //        仍失败 → 清 ctx tokens + 游标 + 凭证，通道停用，中文告警「重新扫码登录」
@@ -24,6 +24,7 @@ import {
 import { createBreaker } from '../../inbound/_breaker.mjs'
 import { createThrottledWarn } from '../../inbound/_bounded.mjs'
 import { resolveNotifyTargets } from '../../inbound/target-guard.mjs'
+import { splitByCodePoints } from '../../inbound/segment.mjs'
 import { DEFAULT_INBOUND_MEDIA_TIMEOUT_MS, MAX_INBOUND_IMAGE_BYTES } from '../../inbound/message.mjs'
 import { normalizeInboundMessage, normalizeUpdateBatch, boundedCursor, validAccountId } from './protocol.mjs'
 
@@ -371,13 +372,14 @@ export function createWechatIlinkInbound(options = {}) {
     }
   }
 
-  /** 分块发送文本；任一块失败即返回 false（已发块不撤回）。 */
+  /** 分块发送文本；任一块失败即返回 false（已发块不撤回）。
+   *  G-03：块按 Unicode 码点切（splitByCodePoints）——旧 content.slice 是 UTF-16 码元
+   *  语义，跨块的 emoji/生僻字会被切成孤立代理项，微信端显示乱码或拒收。ZWJ 序列
+   *  仍可能在块边界拆成多个完整码点（显示为两个符号，无非法序列），属可接受降级。 */
   async function sendTextInternal(chatId, text) {
     const content = String(text ?? '').trim()
     if (content === '') return true
-    const size = config.chunkSize
-    const chunks = []
-    for (let i = 0; i < content.length; i += size) chunks.push(content.slice(i, i + size))
+    const chunks = splitByCodePoints(content, config.chunkSize)
     for (let i = 0; i < chunks.length; i += 1) {
       if (i > 0) await sleep(config.sendChunkDelayMs) // 块间降密度，防主动消息限频
       await sendChunk(chatId, chunks[i])

@@ -12,6 +12,10 @@ const INTENT_GROUP_AND_C2C = 1 << 25
 const INTENT_INTERACTION = 1 << 26 // 按钮化审批：INTERACTION_CREATE 回调（v0.8.4）
 const DEFAULT_INTENTS = INTENT_GROUP_AND_C2C | INTENT_INTERACTION
 
+// 孤立代理项探测器（实现无关，纯 Unicode 断言）：高代理后无低代理 / 低代理前无高代理。
+// 注意第二个字符类区间是 \uDC00-\uDFFF（低代理区）。
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
 // ---------------------------------------------------------------- fakes
 
 /** mock fetch：token / gateway / 消息发送三路由；发送可脚本化失败。 */
@@ -678,6 +682,32 @@ test('发送失败：sendApprovalCard 返回 null 降级；sendText 返回 false
   const card = await rig.inbound.sendApprovalCard({ chatId: 'u_open', title: 't', content: 'c', approvalKey: 'k', token: 'tk' })
   assert.equal(card, null)
   assert.equal(await rig.inbound.sendText('u_open', 'x'), false)
+  await rig.inbound.stop()
+})
+
+test('G-22 同根（码点安全）：超长星体平面回复按码点分段，逐段无孤立代理项且 msg_seq 递增', async () => {
+  const rig = makeRig()
+  await driveReady(rig)
+  // 4500 码点（9000 个 UTF-16 码元）→ 3 段。旧码元 slice(0, 2000) 第 2000 码元恰落
+  // 在代理对中间 → 孤立代理项（JSON 载荷非法，平台拒收或乱码）
+  const long = '🀄'.repeat(4500)
+  // rateGate 固定 1050ms 节流：本用例要连发 3 段，压掉真实等待（仅本用例内，finally 还原）
+  const realSetTimeout = globalThis.setTimeout
+  globalThis.setTimeout = (fn, ms, ...rest) => realSetTimeout(fn, ms > 0 ? 0 : ms, ...rest)
+  try {
+    assert.equal(await rig.inbound.sendText('u_open', long, 'msg_cp'), true)
+  } finally {
+    globalThis.setTimeout = realSetTimeout
+  }
+  const sends = rig.calls.filter((entry) => entry.url === `${API}/v2/users/u_open/messages`)
+  assert.equal(sends.length, 3, '4500 码点按 2000 码点/段应切 3 段（不再静默截断丢尾）')
+  assert.equal(sends.map((entry) => entry.body.content).join(''), long, '分段拼接无损（跨段 emoji 不丢字）')
+  assert.deepEqual(sends.map((entry) => entry.body.msg_seq), [1, 2, 3], '每段独立 msg_seq（msg_id+msg_seq 去重契约）')
+  assert.ok(sends.every((entry) => entry.body.msg_id === 'msg_cp'), '被动回复逐段携带原 msg_id')
+  for (const [index, entry] of sends.entries()) {
+    assert.equal(LONE_SURROGATE.test(entry.body.content), false, `第 ${index + 1} 段含孤立代理项`)
+    assert.ok(Array.from(entry.body.content).length <= 2000, `第 ${index + 1} 段超码点预算`)
+  }
   await rig.inbound.stop()
 })
 

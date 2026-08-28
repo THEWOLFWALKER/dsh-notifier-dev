@@ -22,12 +22,17 @@ import { setBounded, createThrottledWarn } from './_bounded.mjs'
 import { resolveNotifyTargets } from './target-guard.mjs'
 import { buildApprovalAction, parseApprovalAction, buildQuestionAction, parseQuestionAction } from './_contract.mjs'
 import { parseQQImageMessage } from './message.mjs'
+import { splitByCodePoints } from './segment.mjs'
 
 const TOKEN_URL = 'https://bots.qq.com/app/getAppAccessToken'
 const DEFAULT_API_BASE = 'https://api.sgroup.qq.com'
 const INTENT_GROUP_AND_C2C = 1 << 25
 const INTENT_INTERACTION = 1 << 26 // INTERACTION_CREATE：消息按钮点击回调（v0.8.4 按钮化）
 const CHAT_STATE_MAX = 1024
+// 出站单条上限按 Unicode 码点计（非 UTF-16 码元）：文本 2000 / Markdown 3000（官方限制）。
+// 码点语义经 splitByCodePoints 保证——码元切片会把星体平面字符切成孤立代理项（G-22 同根）。
+const QQ_TEXT_MAX_CODEPOINTS = 2000
+const QQ_MARKDOWN_MAX_CODEPOINTS = 3000
 
 // WS op codes（QQ 网关协议）
 const OP_DISPATCH = 0
@@ -408,29 +413,39 @@ export function createQqInbound(options = {}) {
     ws.addEventListener('error', () => { /* close 会跟着来，重连在 close 里统一调度 */ })
   }
 
+  /** 发文本：超长按码点分段逐条发送（每段独立 msg_seq，服务端按 msg_id+msg_seq 去重）。
+   *  G-22 同根修复：旧 slice(0, 2000) 是 UTF-16 码元语义，第 2000 码元恰落在星体平面
+   *  字符（emoji/生僻字）中间时产生孤立代理项（JSON 载荷非法，平台拒收或乱码）。
+   *  任一段失败即抛错（已发段不撤回，与 iLink 分块语义一致）。 */
   async function postMessage(chatId, content, msgId = undefined) {
     if (fetchImpl === undefined) return null
     const token = await tokens.get()
-    await rateGate.gate()
     const target = String(chatId)
-    const seq = (msgSeqs.get(target) ?? 0) + 1
-    setBounded(msgSeqs, target, seq, CHAT_STATE_MAX, onEvict)
     const kind = targetKindOf(target)
     const url = kind === 'group'
       ? `${apiBase}/v2/groups/${target}/messages`
       : `${apiBase}/v2/users/${target}/messages`
-    const body = { content: String(content ?? '').slice(0, 2000), msg_type: 0, msg_seq: seq }
-    if (msgId !== undefined) body.msg_id = msgId
-    const response = await fetchImpl(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `QQBot ${token}` },
-      body: JSON.stringify(body),
-    })
-    const payload = await response.json().catch(() => null)
-    if (!response.ok || (typeof payload?.code === 'string' && payload.code !== '')) {
-      throw new Error(`QQ 发送失败（HTTP ${response.status}${payload?.code ? ` code ${payload.code}` : ''}: ${payload?.message ?? ''}）`)
+    const chunks = splitByCodePoints(String(content ?? ''), QQ_TEXT_MAX_CODEPOINTS)
+    const pieces = chunks.length > 0 ? chunks : ['']
+    let lastId = null
+    for (const piece of pieces) {
+      await rateGate.gate()
+      const seq = (msgSeqs.get(target) ?? 0) + 1
+      setBounded(msgSeqs, target, seq, CHAT_STATE_MAX, onEvict)
+      const body = { content: piece, msg_type: 0, msg_seq: seq }
+      if (msgId !== undefined) body.msg_id = msgId
+      const response = await fetchImpl(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `QQBot ${token}` },
+        body: JSON.stringify(body),
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || (typeof payload?.code === 'string' && payload.code !== '')) {
+        throw new Error(`QQ 发送失败（HTTP ${response.status}${payload?.code ? ` code ${payload.code}` : ''}: ${payload?.message ?? ''}）`)
+      }
+      lastId = typeof payload?.id === 'string' && payload.id !== '' ? payload.id : `qq:${target}:${seq}`
     }
-    return typeof payload?.id === 'string' && payload.id !== '' ? payload.id : `qq:${target}:${seq}`
+    return lastId
   }
 
   /** 互动事件回执（PUT /interactions/{id}，50QPS）：3 秒窗口内告知平台已受理，
@@ -457,7 +472,10 @@ export function createQqInbound(options = {}) {
     const url = kind === 'group'
       ? `${apiBase}/v2/groups/${target}/messages`
       : `${apiBase}/v2/users/${target}/messages`
-    const body = { msg_type: 2, msg_seq: seq, markdown: { content: String(markdownContent).slice(0, 3000) }, keyboard }
+    // Markdown+键盘是单张卡片：超长只按码点截断（取首块），不拆多卡——键盘必须与卡片
+    // 同体，拆卡会重复按钮/permission；码点截断同样不产生孤立代理项（G-22 同根）。
+    const markdownText = splitByCodePoints(String(markdownContent ?? ''), QQ_MARKDOWN_MAX_CODEPOINTS)[0] ?? ''
+    const body = { msg_type: 2, msg_seq: seq, markdown: { content: markdownText }, keyboard }
     const response = await fetchImpl(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `QQBot ${token}` },
