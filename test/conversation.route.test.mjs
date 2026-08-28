@@ -405,6 +405,79 @@ test('mergeWindowMs: 0 = 关闭合并（README 契约回归）：每条消息立
   rig.dispose()
 })
 
+// ---------------------------------------------------------------- G-48 覆盖绑定摘旧挂钩
+
+test('G-48：/bind 覆盖绑定摘旧挂钩——registry 不再一 user 双挂，/route 仅显示新会话', () => {
+  const alpha = makeAgent(ALPHA_1, 'idle', '/home/u/proj/alpha')
+  const beta = makeAgent(BETA_1, 'idle', '/home/u/proj/beta')
+  const rig = makeRig({ agents: [alpha, beta] })
+  rig.fire('agent/created', alpha)
+  rig.fire('agent/created', beta)
+
+  rig.userSays(`/bind ${ALPHA_1}`)
+  assert.deepEqual(rig.registry.getSession(ALPHA_1).inbound, [{ channel: 'telegram', userId: '42' }])
+
+  // 覆盖绑定：旧实现只 attach 新 sid，旧 sid 的反查挂钩永久残留（一 user 双挂）
+  rig.userSays(`/bind ${BETA_1}`)
+  assert.equal(rig.store.get('bind:telegram:42'), BETA_1, 'store 键已指向新会话')
+  assert.equal(rig.registry.getSession(ALPHA_1).inbound, undefined, '旧会话挂钩被摘除（不再双挂）')
+  assert.deepEqual(rig.registry.getSession(BETA_1).inbound, [{ channel: 'telegram', userId: '42' }], '新会话挂钩在位')
+  assert.deepEqual(rig.calls.detach, [{ sid: ALPHA_1, binding: { channel: 'telegram', userId: '42' } }],
+    '覆盖前对旧 sid 先 detach（与 /unbind 的摘挂同一契约）')
+
+  // /route 视图与台账一致：只解析/展示新会话
+  rig.userSays('/route')
+  const text = rig.replies.at(-1).text
+  assert.ok(text.includes(BETA_1), '/route 显示新会话')
+  assert.ok(!text.includes(ALPHA_1), '/route 不得再出现旧会话')
+  rig.dispose()
+})
+
+test('G-48：/agent use 覆盖绑定同样摘旧挂钩（workspace 切换不双挂）；重绑同目标不摘不挂写放大', () => {
+  const alpha = makeAgent(ALPHA_1, 'idle', '/home/u/proj/alpha')
+  const beta = makeAgent(BETA_1, 'idle', '/home/u/proj/beta')
+  const rig = makeRig({ agents: [alpha, beta] })
+  rig.fire('agent/created', alpha)
+  rig.fire('agent/created', beta)
+
+  rig.userSays('/agent use alpha')
+  assert.ok(rig.registry.getSession(ALPHA_1).inbound !== undefined)
+  rig.userSays('/agent use beta')
+  assert.equal(rig.store.get('bind:telegram:42'), BETA_1)
+  assert.equal(rig.registry.getSession(ALPHA_1).inbound, undefined, '旧 workspace 会话挂钩摘除')
+  assert.deepEqual(rig.registry.getSession(BETA_1).inbound, [{ channel: 'telegram', userId: '42' }])
+  assert.deepEqual(rig.calls.detach, [{ sid: ALPHA_1, binding: { channel: 'telegram', userId: '42' } }])
+
+  // 幂等重绑同目标：不做摘挂（detach 不追加），registry attach 去重后挂钩不翻倍
+  rig.userSays('/agent use beta')
+  assert.equal(rig.store.get('bind:telegram:42'), BETA_1)
+  assert.equal(rig.calls.detach.length, 1, '重绑同目标不触发 detach')
+  assert.deepEqual(rig.registry.getSession(BETA_1).inbound, [{ channel: 'telegram', userId: '42' }],
+    '重复 attach 由 registry 去重，挂钩不翻倍')
+  rig.dispose()
+})
+
+test('G-48：registry.detachInbound 幂等契约——重复摘除/无记录/分量不匹配均安全无操作', () => {
+  const alpha = makeAgent(ALPHA_1, 'idle', '/home/u/proj/alpha')
+  const rig = makeRig({ agents: [alpha] })
+  rig.fire('agent/created', alpha)
+  rig.userSays(`/bind ${ALPHA_1}`)
+  const binding = { channel: 'telegram', userId: '42' }
+
+  // 第一次摘除 → 挂钩消失
+  assert.equal(rig.registry.detachInbound(ALPHA_1, binding).inbound, undefined)
+  // 第二次（已摘）→ 无异常、无变更（幂等：detached 不存在也成功）
+  assert.equal(rig.registry.detachInbound(ALPHA_1, binding).inbound, undefined)
+  // 记录不存在的 sid → undefined 不抛
+  assert.equal(rig.registry.detachInbound('no-such-sid', binding), undefined)
+  // 分量不匹配的摘除 → 无操作，他人挂钩不受牵连
+  rig.registry.attachInbound(ALPHA_1, { channel: 'feishu', userId: 'ou_x' })
+  rig.registry.detachInbound(ALPHA_1, { channel: 'telegram', userId: '42' })
+  assert.deepEqual(rig.registry.getSession(ALPHA_1).inbound, [{ channel: 'feishu', userId: 'ou_x' }],
+    '不匹配分量不得误摘他人挂钩')
+  rig.dispose()
+})
+
 // ---------------------------------------------------------------- G-51 合并窗跨 chat 串台
 
 test('G-51：同 userId 双 chat（私聊+群）窗口交替发言 → 两条独立投递、各自回执', async () => {

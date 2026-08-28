@@ -229,7 +229,16 @@ export function registerConversationRouter(deps) {
         say(`会话 ${target} 不存在（用 /status 查看活跃会话）`)
         return true
       }
+      // G-48：覆盖绑定先摘旧会话的入站挂钩。否则 store 换了目标，registry 反查表里同一
+      // (channel,userId) 却同时挂在旧 sid 与新 sid 上（一 user 双挂）——旧会话看似仍
+      // 挂着本对话，/route 与管理台会话视图永久失真。旧值 === 新目标时跳过（幂等重绑
+      // 不做摘挂写放大）；旧值缺失（首绑）无钩可摘。registry.detachInbound 幂等：旧 sid
+      // 无记录/无该挂钩时安全无操作，不抛。
+      const previous = store.get(bindingKey(envelope))
       store.set(bindingKey(envelope), target)
+      if (typeof previous === 'string' && previous !== '' && previous !== target) {
+        registryCall('detachInbound', previous, inboundBindingOf(envelope))
+      }
       // v0.3.2：同步维护台账入站挂钩与活跃信号（防御壳内降级，不影响绑定本身）
       registryCall('attachInbound', target, inboundBindingOf(envelope))
       registryCall('touch', target)
@@ -400,7 +409,8 @@ export function registerConversationRouter(deps) {
 
   /**
    * /agent use <target>：智能绑定（§0.5-5 解析顺序，匹配逻辑见 matchSessionByNeedle）。
-   * 成功后 store 写 bind 键 + registry.attachInbound + touch，回执确认 workspace 与 sid。
+   * 成功后 store 写 bind 键 + 摘旧会话挂钩（G-48，覆盖绑定防双挂）+ registry.attachInbound
+   * + touch，回执确认 workspace 与 sid。
    */
   function handleAgentUse(envelope, target, say) {
     if (typeof target !== 'string' || target.trim() === '') {
@@ -411,7 +421,12 @@ export function registerConversationRouter(deps) {
     if (matched.sid === null) { say(matched.message); return }
     const sid = matched.sid
     const workspace = workspaceOfSid(sid)
+    // G-48：同 /bind——覆盖绑定先摘旧会话挂钩（防一 user 双挂；旧值 === 新目标跳过）
+    const previous = store.get(bindingKey(envelope))
     store.set(bindingKey(envelope), sid)
+    if (typeof previous === 'string' && previous !== '' && previous !== sid) {
+      registryCall('detachInbound', previous, inboundBindingOf(envelope))
+    }
     registryCall('attachInbound', sid, inboundBindingOf(envelope))
     registryCall('touch', sid)
     say(`已绑定 ${workspace === '' ? '(未知 workspace)' : workspace} / ${sid}（${matched.matchedBy}；/agent back 回通道默认）`)
