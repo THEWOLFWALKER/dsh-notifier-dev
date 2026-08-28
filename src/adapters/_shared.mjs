@@ -10,6 +10,8 @@ export const ERROR_CODES = Object.freeze({
   TIMEOUT: 'TIMEOUT',
   NETWORK_ERROR: 'NETWORK_ERROR',
   BAD_UPSTREAM_RESPONSE: 'BAD_UPSTREAM_RESPONSE',
+  // S-02（CWE-918）：SSRF 防护拦截（私网/保留段/scheme 非法），见 _urlguard.mjs
+  UNSAFE_TARGET: 'UNSAFE_TARGET',
 })
 
 /**
@@ -139,17 +141,38 @@ function networkError(channel, cause) {
   })
 }
 
+/**
+ * S-02（CWE-918）：所有出站 fetch 一律 redirect:'manual'，3xx 视为失败。
+ * 重定向可把「已校验的公网 URL」绕到任意内网地址——任何未来加的 URL 校验都会被
+ * 一次 302 穿透，故重定向面在这里统一关闭（竞品 telegram-api/dingtalk-api 客户端
+ * 同样 redirect:'error'，显式拒绝有先例）。Location 只进 detail（日志），不回显。
+ */
+function redirectError(channel, response) {
+  const location = (() => { try { return response.headers?.get?.('location') ?? '' } catch { return '' } })()
+  const name = channelNameOf(channel)
+  return new NotifyError(`${name}推送失败（HTTP ${response.status} 重定向，已拒绝跟随）`, ERROR_CODES.HTTP_ERROR, {
+    detail: `${channel}返回 HTTP ${response.status} → ${location === '' ? '(无 Location 头)' : location.slice(0, 512)}`,
+  })
+}
+
+/** S-02：统一注入 redirect:'manual' 并对 3xx 显式报错（见 redirectError 注释）。 */
+async function guardedFetch(url, init, channel) {
+  const response = await fetch(url, { ...init, redirect: 'manual' })
+  if (response.status >= 300 && response.status < 400) throw redirectError(channel, response)
+  return response
+}
+
 /** 统一 JSON POST：AbortController 超时、非 2xx 抛 HTTP_ERROR（附响应现场）。 */
 export async function postJson(url, payload, { headers = {}, timeoutMs = 10000, channel = '渠道' } = {}) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetch(url, {
+    const response = await guardedFetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json; charset=utf-8', ...headers },
       body: JSON.stringify(payload),
       signal: controller.signal,
-    })
+    }, channel)
     if (!response.ok) {
       throw httpError(channel, response, await readTextCapped(response, 2048))
     }
@@ -173,12 +196,12 @@ export async function postForm(url, payload, { timeoutMs = 10000, channel = '渠
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetch(url, {
+    const response = await guardedFetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded; charset=utf-8' },
       body,
       signal: controller.signal,
-    })
+    }, channel)
     if (!response.ok) {
       throw httpError(channel, response, await readTextCapped(response, 2048))
     }
@@ -200,7 +223,7 @@ export async function getJson(url, { headers = {}, timeoutMs = 10000, channel = 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetch(url, { method: 'GET', headers, signal: controller.signal })
+    const response = await guardedFetch(url, { method: 'GET', headers, signal: controller.signal }, channel)
     if (!response.ok) {
       throw httpError(channel, response, await readTextCapped(response, 2048))
     }
@@ -220,12 +243,12 @@ export async function postText(url, text, { headers = {}, timeoutMs = 10000, cha
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetch(url, {
+    const response = await guardedFetch(url, {
       method: 'POST',
       headers,
       body: String(text ?? ''),
       signal: controller.signal,
-    })
+    }, channel)
     if (!response.ok) {
       throw httpError(channel, response, await readTextCapped(response, 2048))
     }

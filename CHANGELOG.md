@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.3] - 2026-08-28
+
+R3「安全中危加固」列车（80 项清单 W9：S-02/S-05/S-06/S-07 四项）。全部为 mock/contract 证据，协议行为未经真机验证（真机缺口登记 `docs/memory/risks.md`）；`npm test` 为 1478（1478 pass）。
+
+### 🔒 Security
+
+- **S-02（CWE-918）SSRF 防护**：新增 `src/adapters/_urlguard.mjs`——用户可配 URL 的渠道（webhook / slack / discord / wecom / mattermost / gchat / teams / ntfy / gotify / chanify / pushdeer）发送前三道闸：scheme 白名单（http/https）、私网/保留段拦截（IPv4 十五段直查 + IPv6 窗口比较 + `::ffff:` v4-mapped 与 NAT64 内嵌递归）、域名 `dns.lookup({all:true})` 全地址校验（60s 短 TTL 缓存）。`0x7f000001` 这类非常规四进制写法经 DNS 路径同样拦截。**逃生口**：`allowPrivateNetwork: true` 显式放行内网自托管接收端；onebot（`ssrfGuard: 'private-ok'`）因渠道本质是本机服务（文档默认 `http://127.0.0.1:3000`）默认放行。重定向绕过面同步关闭：`_shared.mjs` 全部出站 fetch 改 `redirect:'manual'`，3xx 显式报错拒绝跟随。
+- **S-05（CWE-200）出站片段脱敏**：新增 `src/redact.mjs`——自动状态推送（不是用户显式 notify）默认 `redaction: 'minimal'`：宿主会话摘录 200→80 字符（尾沿截断，结论通常在最后）+ 密钥形态打码（JWT/sk-/ghp_/xox/AKIA/Bearer/32+ hex/40+ base64 → `***`）；审批推送 reason 同打码。`redaction: 'extended'` 显式维持原文（README 已声明数据流向）。拼错值一律回落 minimal——安全配置的非法值不配得到宽松解释。
+- **S-06（CWE-352/942）admin Origin/Host 闸**：Bearer 模型下补第二道纵深——浏览器跨站请求必带的 Origin 头不在白名单 → 403（先于鉴权与路由，不泄露路由存在性）；Host 头校验挡 DNS rebinding（受害者浏览器被解析到 127.0.0.1 时 Host 是攻击者域名）。回环绑定自动放行 127.0.0.1/localhost/[::1] 三形态（实际端口、http/https 双 scheme、无端口形态）；公网反代场景用 `allowedOrigins`/`allowedHosts` 显式注入。非浏览器客户端（curl 无 Origin）放行，由 Bearer 鉴权兜底。
+- **S-07（CWE-74）回答内容边界**：ask_user 自定义回答（`答：...`）入口补与身份链正交的内容闸——2000 Unicode 码点上限（码点计数，非 UTF-16 单元；emoji/中文按人类感知计），超长 fail-closed 拒绝（绝不静默截断——半句话的回答比没有回答更危险）+ 回执指引；控制/零宽/bidi 不可见字符剥离（对人类不可见，却是注入载体；`\n\t\r` 保留）。前置检查在 Control Core 之前回执（不白跑一轮裁决），`settleText` 内同闸兜底。
+
+### 已知残留（登记 `docs/memory/risks.md`）
+
+- **SSRF DNS rebinding 竞态**：urlguard 校验与 fetch 建连之间存在理论竞态窗口（校验后 DNS 记录被换到内网地址）。完全闭合需自定义 dispatcher 钉死 IP，超出零依赖约束；60s 短 TTL 缓存压观测窗口，中危定级下属可接受残留。
+- **单 token 模型固有边界**：持有 admin token 的攻击者可同时改 URL 与 `allowPrivateNetwork` 开关——urlguard 挡的是默认路径与配置被钓后的低成本内网跳板，不防已持 token 者（S-09 范畴）。
+
 ## [0.9.2] - 2026-08-28
 
 R2「投递与凭证可靠性」修复列车（80 项清单第二批 13 项：W6/W7/W8）。全部为 mock/contract 证据，协议类修复未经真机验证（真机缺口已登记 `docs/memory/risks.md`）；`npm test` 为 1447（1447 pass）。

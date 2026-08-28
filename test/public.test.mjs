@@ -469,7 +469,7 @@ test('redactAuditRecord：只投影 source 标量字段，不泄露或冻结嵌�
 
 test('装配：宿主有 provide → ctx.provide("notifier", facade) 注册服务（spike 配方）', async () => {
   const state = bootCtx({ provide: true })
-  const resolved = apply(state.ctx, { channels: [{ type: 'webhook', url: 'http://127.0.0.1:1/hook' }] })
+  const resolved = apply(state.ctx, { channels: [{ type: 'webhook', url: 'http://public-hook.test/hook' }] })
   assert.equal(resolved.public.enabled, true)
   assert.equal(state.provided.length, 1)
   assert.equal(state.provided[0].name, 'notifier')
@@ -478,7 +478,7 @@ test('装配：宿主有 provide → ctx.provide("notifier", facade) 注册服�
 
 test('装配：无 provide（测试桩宿主）→ 回退直接赋值 ctx.notifier', async () => {
   const state = bootCtx()
-  apply(state.ctx, { channels: [{ type: 'webhook', url: 'http://127.0.0.1:1/hook' }] })
+  apply(state.ctx, { channels: [{ type: 'webhook', url: 'http://public-hook.test/hook' }] })
   assert.equal(typeof state.ctx.notifier?.push, 'function')
   assert.equal(state.ctx.notifier.version, '0.7')
 })
@@ -499,7 +499,7 @@ test('装配：顶层 enabled:false → 仍提供 no-op stub（服务缺失会�
 test('装配：public.enabled:false → 真 notifier 在场也注入 stub（push 返回 (disabled)）', async () => {
   const state = bootCtx({ provide: true })
   apply(state.ctx, {
-    channels: [{ type: 'webhook', url: 'http://127.0.0.1:1/hook' }],
+    channels: [{ type: 'webhook', url: 'http://public-hook.test/hook' }],
     public: { enabled: false },
   })
   const stub = state.provided[0].value
@@ -510,7 +510,7 @@ test('装配：public.enabled:false → 真 notifier 在场也注入 stub（push
 
 test('装配 + emit：push 一次 → dsh-notifier/sent 收到冻结的 metadata-only record', async () => {
   const state = bootCtx({ provide: true, emit: true })
-  apply(state.ctx, { channels: [{ type: 'webhook', url: 'http://127.0.0.1:1/hook' }] })
+  apply(state.ctx, { channels: [{ type: 'webhook', url: 'http://public-hook.test/hook' }] })
   const facade = state.provided[0].value
   await withFetch(true, async () => {
     const result = await facade.push({ title: 'et', content: 'ec' }, { sourceName: 'emit-test' })
@@ -537,7 +537,7 @@ test('装配 + emit：push 一次 → dsh-notifier/sent 收到冻结的 metadata
 
 test('装配 + emit：定向成功只发一条 metadata-only 事件并保留目标渠道', async () => {
   const state = bootCtx({ provide: true, emit: true })
-  apply(state.ctx, { channels: [{ type: 'webhook', url: 'http://127.0.0.1:1/hook' }] })
+  apply(state.ctx, { channels: [{ type: 'webhook', url: 'http://public-hook.test/hook' }] })
   const facade = state.provided[0].value
   await withFetch(true, async () => {
     const result = await facade.push({ title: 'directed', content: 'body' }, { channel: 'webhook', sourceName: 'directed-test' })
@@ -554,7 +554,7 @@ test('装配 + emit：定向成功只发一条 metadata-only 事件并保留目�
 test('装配 + emit：public.emit:false → 整链不发射（零开销家训）', async () => {
   const state = bootCtx({ provide: true, emit: true })
   apply(state.ctx, {
-    channels: [{ type: 'webhook', url: 'http://127.0.0.1:1/hook' }],
+    channels: [{ type: 'webhook', url: 'http://public-hook.test/hook' }],
     public: { emit: false },
   })
   const facade = state.provided[0].value
@@ -566,7 +566,7 @@ test('装配 + emit：public.emit:false → 整链不发射（零开销家训）
 
 test('装配 + emit：宿主无 ctx.emit → push 照常成功，仅 warn 一次（可观测降级）', async () => {
   const state = bootCtx({ provide: true }) // 无 emit
-  apply(state.ctx, { channels: [{ type: 'webhook', url: 'http://127.0.0.1:1/hook' }] })
+  apply(state.ctx, { channels: [{ type: 'webhook', url: 'http://public-hook.test/hook' }] })
   const facade = state.provided[0].value
   await withFetch(true, async () => {
     const result = await facade.push({ title: 't', content: 'c' }, { sourceName: 'A' })
@@ -601,3 +601,6 @@ test('PLUGINS.md：代码块可被 node --check（防文档腐烂）', async () 
     }
   }
 })
+
+// S-02：urlguard DNS 恒公网夹具（假域名不打真网，见 helpers/urlguard-public.mjs）
+import './helpers/urlguard-public.mjs'

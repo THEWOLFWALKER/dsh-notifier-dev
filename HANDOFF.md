@@ -1,8 +1,8 @@
 # dsh-notifier 当前交接快照
 
-更新时间：2026-08-28。当前发布线是 R2 修复列车（`main`，v0.9.2）：按 2026-08 审查线 80 项问题清单累计完成 31 项修复。R1（v0.9.1，18 项）：W1 钉钉 Stream 协议 G-01/02/10/23/24/42、W2 码点分段 G-03/22/40、W3 命令矩阵 G-04/06/25/33/43/52/65、W4 管理台审计 G-05/41、W5 合并窗路由键 G-51/48/49。R2（v0.9.2，13 项）：W6 出站投递语义 G-50/08/09/56（超时不重试、429 retry_after、Server酱 SC3、qq-bot 2xx 非 JSON）、W7 错误可见性 G-53/54（publicMessage/detail 分层 + 渠道名映射）、W8 token 与网关生命周期 G-11/55/29/07/21/12（代际守卫、TTL 归一、动态余量、QQ 关闭码分支表、INVALID_SESSION d 标志、iLink 假死看门狗）。全部为 mock/contract 证据，协议类修复未经真机验证（缺口记 `docs/memory/risks.md`）。后续列车：R3 安全加固（W9，0.9.3）→ R4 配置生命周期（W10/11/12，0.9.4）→ R5 测试文档（W13，0.9.5）。
+更新时间：2026-08-28。当前发布线是 R3 安全加固列车（`main`，v0.9.3）：按 2026-08 审查线 80 项问题清单累计完成 35 项修复。R1（v0.9.1，18 项）：W1 钉钉 Stream 协议 G-01/02/10/23/24/42、W2 码点分段 G-03/22/40、W3 命令矩阵 G-04/06/25/33/43/52/65、W4 管理台审计 G-05/41、W5 合并窗路由键 G-51/48/49。R2（v0.9.2，13 项）：W6 出站投递语义 G-50/08/09/56（超时不重试、429 retry_after、Server酱 SC3、qq-bot 2xx 非 JSON）、W7 错误可见性 G-53/54（publicMessage/detail 分层 + 渠道名映射）、W8 token 与网关生命周期 G-11/55/29/07/21/12（代际守卫、TTL 归一、动态余量、QQ 关闭码分支表、INVALID_SESSION d 标志、iLink 假死看门狗）。R3（v0.9.3，4 项）：W9 安全中危 S-02 SSRF 防护（urlguard 三道闸 + redirect 关闭 + allowPrivateNetwork 逃生口）、S-05 出站脱敏（redact.mjs，minimal 默认 80 字符摘录 + 密钥形态打码）、S-06 admin Origin/Host 闸（CSRF/DNS rebinding 纵深）、S-07 回答内容边界（2000 码点上限 + 不可见字符剥离）。全部为 mock/contract 证据，协议类修复未经真机验证（缺口记 `docs/memory/risks.md`）。后续列车：R4 配置生命周期（W10/11/12，0.9.4）→ R5 测试文档（W13，0.9.5）。
 
-| 测试 | `npm test`：**1447 tests**（1447 pass，v0.9.2 发布线） |
+| 测试 | `npm test`：**1478 tests**（1478 pass，v0.9.3 发布线） |
 
 ## 下一位开发者从这里开始
 

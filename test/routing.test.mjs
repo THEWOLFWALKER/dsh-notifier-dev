@@ -225,3 +225,6 @@ test('notifyAll 集成：timeSensitive 渠道失败按策略重试（指数退�
     delete globalThis.fetch
   }
 })
+
+// S-02：urlguard DNS 恒公网夹具（假域名不打真网，见 helpers/urlguard-public.mjs）
+import './helpers/urlguard-public.mjs'

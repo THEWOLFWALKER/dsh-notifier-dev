@@ -16,6 +16,8 @@ import { createInteractionLedger } from '../interaction/ledger.mjs'
 import { workspaceOf } from '../routing/session-registry.mjs'
 // 维护批 6 前置：跨渠道能力矩阵作为单一事实来源
 import { displayNameOf } from '../inbound/capability-matrix.mjs'
+// S-05：审批推送 reason 脱敏（minimal 默认）
+import { maskSecrets, normalizeRedaction } from '../redact.mjs'
 
 const OUTCOME_ALLOWED = 'allowed-once'
 const OUTCOME_REJECTED = 'rejected'
@@ -67,6 +69,9 @@ export function registerApprovalHandler(deps) {
   const approvalConfig = deps.approvalConfig ?? {}
   const mode = approvalConfig.mode === 'answer' ? 'answer' : 'observe'
   const timeoutMs = Math.max(1000, Number(approvalConfig.timeoutMs) || 120000)
+  // S-05（CWE-200）：审批推送到第三方 IM 的 reason 是 agent 生成文本，minimal（默认）
+  // 下对密钥形态打码——不影响裁决所需信息（看到 sk-*** 足以判断，无需真实密钥值）。
+  const redaction = normalizeRedaction(deps.redaction)
   const warn = (message) => {
     try { deps.logger?.warn?.('[dsh-notifier/approval]', message) } catch { /* 日志失败绝不致命 */ }
   }
@@ -240,7 +245,10 @@ export function registerApprovalHandler(deps) {
 
   async function pushApproval(key, token, request, channelTypes, targetsByChannel) {
     const title = `需要批准：${request.toolName}`
-    const content = `${request.reason ?? 'agent 请求执行一个需要授权的操作'}\n\n批准将仅对本次调用生效（token 单次核销）。`
+    // S-05：reason 是 agent 生成文本，minimal（默认）打码密钥形态后外发
+    const rawReason = typeof request.reason === 'string' && request.reason !== '' ? request.reason : 'agent 请求执行一个需要授权的操作'
+    const reason = redaction === 'minimal' ? maskSecrets(rawReason) : rawReason
+    const content = `${reason}\n\n批准将仅对本次调用生效（token 单次核销）。`
     const pushedTo = []
     const hintTargets = []
     const buttonChannels = []

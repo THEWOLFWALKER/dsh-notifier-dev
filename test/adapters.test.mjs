@@ -391,3 +391,6 @@ test('postJson: 超时抛 noRetry 错误（结果未知，不盲目重试，G-50
     globalThis.fetch = originalFetch
   }
 })
+
+// S-02：urlguard DNS 恒公网夹具（假域名不打真网，见 helpers/urlguard-public.mjs）
+import './helpers/urlguard-public.mjs'

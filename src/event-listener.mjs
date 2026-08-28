@@ -10,6 +10,8 @@ import { createHostEventRegistrar, normalizeSessionEventArgs } from './host-even
 import { createTurnTracker } from './status/turn-tracker.mjs'
 import { normalizeInbound, buildActionPayload } from './inbound/_contract.mjs'
 import { guardTargets } from './inbound/target-guard.mjs'
+// S-05（CWE-200）出站片段脱敏：minimal（默认）打码密钥形态 + 摘录降为 80 字符
+import { maskSecrets, normalizeRedaction, MINIMAL_EXCERPT_CHARS } from './redact.mjs'
 
 /** 取会话所属工作区名：cwd 末段，否则 session id。 */
 export function workspaceNameOf(session) {
@@ -90,12 +92,24 @@ export function intentOfAgentError(payload = {}) {
   return { event: 'agent/error', kind: 'error', headline: '❌ Agent 执行出错', level: 'timeSensitive', detail }
 }
 
-/** 组装最终通知消息：标题前缀 + 正文截断（summaryMaxChars）。 */
+/**
+ * 组装最终通知消息：标题前缀 + 正文截断（summaryMaxChars）。
+ * S-05：redaction: 'minimal'（默认）下，宿主会话数据片段（assistantText 摘录 / 错误全文）
+ * 先打码密钥形态、摘录压到 MINIMAL_EXCERPT_CHARS（80）；'extended' 维持原行为。
+ * 摘录上限只作用于「宿主数据片段」，intent.detail（自家文案）不额外截短——
+ * 总正文仍受 summaryMaxChars（默认 500）钳制。
+ */
 export function intentToMessage(intent, { assistantText = '', config = {} } = {}) {
   const prefix = typeof config.titlePrefix === 'string' ? config.titlePrefix.trim() : ''
   const title = `${prefix.length > 0 ? `${prefix} ` : ''}${intent.headline}`
+  const minimal = normalizeRedaction(config.redaction) === 'minimal'
+  let excerpt = assistantText
+  if (minimal && excerpt.length > MINIMAL_EXCERPT_CHARS) {
+    excerpt = excerpt.slice(-MINIMAL_EXCERPT_CHARS) // 尾沿：结论通常在最后
+  }
   let content = intent.detail
-  if (assistantText.length > 0) content = content.length > 0 ? `${content}\n\n---\n${assistantText}` : assistantText
+  if (excerpt.length > 0) content = content.length > 0 ? `${content}\n\n---\n${excerpt}` : excerpt
+  if (minimal) content = maskSecrets(content)
   const maxChars = typeof config.summaryMaxChars === 'number' && Number.isFinite(config.summaryMaxChars)
     ? Math.max(0, Math.trunc(config.summaryMaxChars))
     : 500
@@ -302,7 +316,11 @@ export function createEventListener(ctx, notifier, resolvedConfig, wiring = {}) 
     if (intent.event === 'stall') {
       lines.push('长工具执行可能误报；可回复 /stop 取消，或调大 events.stall.afterMs')
     } else {
-      const excerpt = lastAssistantText(session).slice(-200).trim()
+      // S-05：minimal（默认）摘录 200→80 + 密钥形态打码；extended 维持原文
+      const minimal = normalizeRedaction(resolvedConfig.redaction) === 'minimal'
+      const cap = minimal ? MINIMAL_EXCERPT_CHARS : 200
+      let excerpt = lastAssistantText(session).slice(-cap).trim()
+      if (minimal) excerpt = maskSecrets(excerpt)
       if (excerpt !== '') lines.push(`最近输出：${excerpt}`)
       lines.push('回复 /stop 取消')
     }
