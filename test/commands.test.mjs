@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseCommand } from '../src/inbound/commands.mjs'
+import { parseCommand, stripCommandMention, stripLeadingMention } from '../src/inbound/commands.mjs'
 import { createInboundBus } from '../src/inbound/bus.mjs'
 import { createIdentity } from '../src/inbound/identity.mjs'
 import { createPairing } from '../src/inbound/pairing.mjs'
@@ -121,4 +121,35 @@ test('矩阵边界：/stopwatch 不是 /stop；非注册面斜杠消息落回对
   const result = rig.accept('/stopwatch')
   assert.equal(result.reply, undefined)
   assert.deepEqual(rig.fellThrough, ['/stopwatch'], '未知命令落回扇出（由会话路由按普通文本处理）')
+})
+
+// ------------------------------------------------- adapter 入站 @ 剥离（G-06 配套）
+
+test('stripCommandMention：TG 群聊命令词 @ 后缀剥除矩阵', () => {
+  assert.equal(stripCommandMention('/pair@MyNotifierBot ABCD-1234'), '/pair ABCD-1234', '码面不含 @ 残片')
+  assert.equal(stripCommandMention('/status@My.Notifier_Bot'), '/status', '含点号 botname 贪心剥除')
+  assert.equal(stripCommandMention('/pair@张三 code'), '/pair code', '中文 bot 名')
+  assert.equal(stripCommandMention('  /stop@bot  '), '/stop', '首尾空白一并归一')
+  // 不该剥的形态
+  assert.equal(stripCommandMention('/status'), '/status')
+  assert.equal(stripCommandMention('看这个 /etc/passwd@host 一下'), '看这个 /etc/passwd@host 一下', '正文里的 @ 不动')
+  assert.equal(stripCommandMention('/@bot code'), '/@bot code', '命令词剥完为空 → 保留原文交 parseCommand 判非命令')
+  assert.equal(stripCommandMention(''), '')
+  assert.equal(stripCommandMention(null), '')
+  // 与 parseCommand 的命令名一致性：剥后同名
+  assert.equal(parseCommand(stripCommandMention('/pair@bot code')).name, 'pair')
+})
+
+test('stripLeadingMention：钉钉行首 @提及剥除矩阵', () => {
+  assert.equal(stripLeadingMention('@我的机器人 /status 跑一下'), '/status 跑一下')
+  assert.equal(stripLeadingMention('@机器人 /pair@bot ABCD-1234'), '/pair@bot ABCD-1234', '命令词后缀由 stripCommandMention 二次处理')
+  assert.equal(stripLeadingMention('@我的机器人'), '', '纯提及无正文 → 空串（调用方按空消息处理）')
+  assert.equal(stripLeadingMention('  @机器人  你好'), '你好', '前导空白容忍')
+  // 不该剥的形态
+  assert.equal(stripLeadingMention('帮我看下 @同事 的排期'), '帮我看下 @同事 的排期', '正文中间的 @ 不动')
+  assert.equal(stripLeadingMention('@ 大家好'), '@ 大家好', "'@' 后紧跟空白（无名字）不是提及")
+  assert.equal(stripLeadingMention('普通文本'), '普通文本')
+  assert.equal(stripLeadingMention(''), '')
+  // 已知取舍：整条单个 '@词'（无任何空白）按纯提及剥空——行首 @词 本就无法与提及区分
+  assert.equal(stripLeadingMention('@x/y是个路径'), '')
 })

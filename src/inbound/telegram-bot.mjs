@@ -11,6 +11,7 @@
 import { createCallbackRefs } from './callback-refs.mjs'
 import { resolveNotifyTargets } from './target-guard.mjs'
 import { buildQuestionAction } from './_contract.mjs'
+import { stripCommandMention } from './commands.mjs'
 
 const DEFAULT_API_BASE = 'https://api.telegram.org'
 const POLL_TIMEOUT_S = 25
@@ -237,6 +238,9 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
     const message = update.message
     if (message?.text !== undefined) {
       // v0.7：chatType 透传（/pair 私聊判定）；accept 返回值消费——拒绝/命令回执不再已读不回
+      // G-06：群聊命令 '/cmd@BotName args' 在 envelope 构造处剥掉命令词 @ 后缀——
+      // parseCommand 只覆盖注册面命令，会话路由命令（/stop /status 等）自行分词，
+      // 不剥的话 '/stop@bot' 会落成未知命令；args 与正文里的 @ 原样保留。
       const envelope = {
         channel: 'telegram',
         accountId: resolvedAccountId,
@@ -244,7 +248,7 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
         chatId: String(message.chat?.id ?? ''),
         chatType: String(message.chat?.type ?? ''),
         messageId: `msg:${message.message_id}:${message.chat?.id ?? ''}`,
-        text: String(message.text),
+        text: stripCommandMention(String(message.text)),
       }
       const result = bus.accept(envelope)
       if (result?.reply !== undefined) {

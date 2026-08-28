@@ -38,6 +38,51 @@ export function parseCommand(text) {
 }
 
 /**
+ * G-06：命令词 @ 后缀剥离（adapter 入站 envelope 构造处调用）。
+ * TG 群聊对指定机器人发命令的规范形态是 '/cmd@BotName args'——parseCommand 已在解析层
+ * 剥除（注册面命令可用），但会话路由（conversation.mjs）自行分词不走 parseCommand，
+ * '/stop@bot' 会在那里落成未知命令。入站处先剥一次，让注册面 / 会话路由 / 裸编号回复
+ * 等所有下游看到同一份干净的 '/cmd args'。
+ * 只动首个 '/' 开头 token 上的 @ 后缀（贪心到词尾，与 parseCommand 的 /@.+$/ 同源，
+ * 含点号 botname 一并覆盖）；args 与正文原样保留。'/@bot'（命令词剥完为空）与不以
+ * '/' 开头的文本原样返回（交由 parseCommand 判非命令）。
+ * @param {string} text - 原始消息文本
+ * @returns {string} 剥离后的文本（非命令形态仅做 trim）
+ */
+export function stripCommandMention(text) {
+  const raw = String(text ?? '').trim()
+  if (!raw.startsWith('/')) return raw
+  const spaceAt = raw.indexOf(' ')
+  const head = spaceAt === -1 ? raw : raw.slice(0, spaceAt)
+  const rest = spaceAt === -1 ? '' : raw.slice(spaceAt)
+  const at = head.indexOf('@')
+  // at <= 1：命令词上无 @，或 '/@bot' 形态（剥完命令词为空，保留原样）
+  if (at <= 1) return raw
+  return `${head.slice(0, at)}${rest}`
+}
+
+/**
+ * G-06：行首 @提及剥离（adapter 入站 envelope 构造处调用）。
+ * 钉钉群 @ 机器人：机器人只收到 @ 它的消息，content 行首带 '@机器人名 ' 字面提及，
+ * 不剥会污染 agent 语境与 /pair 参数（与 QQ 侧 stripMention 白名单（G-40）同目的；
+ * QQ 是官方占位形态 + 白名单，此处是钉钉的字面文本形态）。两种形态：
+ *  1. '@名字 后续内容'（名字后随空白分隔）→ '后续内容'
+ *  2. 整条只剩 '@名字'（纯提及无正文）→ ''（调用方按空消息处理，与 QQ 侧一致）
+ * 只剥行首一处；正文中间的 @（提及他人）一律不动。行首 '@词 ' 后跟正文的形态
+ * 一律按提及剥（'@/etc/hosts 路径' 会被误剥——与 QQ 白名单纯文本形态同一取舍，
+ * 文本级剥离无渠道元数据可裁决，钉钉机器人只收 @ 它的消息，误剥面收窄到行首）。
+ * @param {string} text - 原始消息文本
+ * @returns {string} 剥离后 trim 的文本
+ */
+export function stripLeadingMention(text) {
+  const raw = String(text ?? '').replace(/^\s+/, '')
+  const withRest = raw.match(/^@\S+\s+/)
+  if (withRest !== null) return raw.slice(withRest[0].length).trim()
+  if (/^@\S+$/.test(raw)) return ''
+  return raw.trim()
+}
+
+/**
  * 私聊判定（/pair 仅私聊受理——群里发码会被同群所有人看见，单次核销下先到先得）。
  * 判定不了的通道按渠道默认形态处理并 warn（计划书 §3.3）。
  * @param {object} envelope - { channel, userId, chatId, chatType? }

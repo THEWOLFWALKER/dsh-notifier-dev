@@ -41,6 +41,7 @@ import { createBreaker } from './_breaker.mjs'
 import { setBounded, createThrottledWarn } from './_bounded.mjs'
 import { resolveNotifyTargets } from './target-guard.mjs'
 import { normalizeImageAttachment } from './message.mjs'
+import { stripCommandMention, stripLeadingMention } from './commands.mjs'
 
 const DEFAULT_API_BASE = 'https://api.dingtalk.com'
 const DEFAULT_OAPI_BASE = 'https://oapi.dingtalk.com'
@@ -337,7 +338,12 @@ export function createDingtalkInbound(options = {}) {
     const image = rich !== null && rich.image !== null
       ? { kind: 'image', image: rich.image }
       : parseDingtalkImageMessage(msg)
-    const text = (rich === null ? String(msg.text?.content ?? '') : rich.text).trim()
+    // G-06：@ 机器人剥离（钉钉群消息行首 '@机器人名 ' 字面提及；命令词 @ 后缀一并剥）。
+    // 不剥会污染 agent 语境与 /pair 参数。行首只剥一处 '@名字'（名字后须有空白分隔），
+    // 正文中间的 @ 不动；剥完为空 → 走下方既有空消息分支（不投递）。
+    const text = stripCommandMention(stripLeadingMention(
+      (rich === null ? String(msg.text?.content ?? '') : rich.text).trim(),
+    ))
     if (text === '' && image === null) return
     // v0.7：conversationType 透传（'1' 单聊 / '2' 群聊，/pair 私聊判定）；
     // accept 返回值消费——拒绝/命令回执不再已读不回
