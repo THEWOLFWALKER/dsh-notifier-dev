@@ -671,8 +671,10 @@ test('v0.5 动作卡片：stall 触发时对交互通道 mint + sendActionCard�
   }
   const cards = []
   const rawChannel = {
-    channel: 'mock',
-    notifyTargets: () => [{ chatId: 'c1', userId: 'u1' }],
+    // S-12：形状守卫对未登记渠道整体拒绝——测试替身也用真实渠道名（telegram），
+    // 既过了闸，也比自造 'mock' 键更贴近真实路径。
+    channel: 'telegram',
+    notifyTargets: () => [{ chatId: '10086', userId: 'u1' }],
     sendActionCard: async (payload) => { cards.push(payload); return { messageId: 'm1' } },
   }
   const dispose = createEventListener(ctx, notifier, {

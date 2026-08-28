@@ -42,7 +42,11 @@ export function makeSpecAdapter(type, spec) {
       const raw = cfg[key]
       let value
       if (field.type === 'number') {
-        value = typeof raw === 'number' && Number.isFinite(raw) ? raw : field.default
+        // 数值字段双形态：数字字面量直收；数字字符串（YAML/JSON 里 QQ 号常被引号包裹）
+        // Number() 归一——非数字（含空串）回落 default，绝不当 0 灌进请求体。
+        if (typeof raw === 'number' && Number.isFinite(raw)) value = raw
+        else if (typeof raw === 'string' && raw.trim() !== '' && Number.isFinite(Number(raw))) value = Number(raw)
+        else value = field.default
       } else {
         value = str(raw)
       }

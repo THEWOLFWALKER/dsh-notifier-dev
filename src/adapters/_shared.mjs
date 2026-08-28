@@ -245,7 +245,10 @@ export async function postText(url, text, { headers = {}, timeoutMs = 10000, cha
   try {
     const response = await guardedFetch(url, {
       method: 'POST',
-      headers,
+      // G-45：纯文本 body 必须显式声明 content-type——不声明时 undici 会嗅探出
+      // text/plain;charset=UTF-8，但语义上"默认"应来自调用方；显式声明同时防
+      // 接收端按 JSON 误解析。调用方同名头覆盖默认值（展开序保证）。
+      headers: { 'content-type': 'text/plain; charset=utf-8', ...headers },
       body: String(text ?? ''),
       signal: controller.signal,
     }, channel)

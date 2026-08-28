@@ -10,15 +10,34 @@ import { assertPublicHttpUrl } from './_urlguard.mjs'
 
 export const type = 'webhook'
 
+function warn(message) {
+  try { console.error('[dsh-notifier/webhook]', message) } catch { /* 控制台不可用不致命 */ }
+}
+
 /** 校验并归一化配置；缺失抛中文指引。 */
 export function resolve(cfg = {}) {
   const url = str(cfg.url)
   if (url === '') {
     throw new NotifyError('webhook 未配置：url（接收 POST JSON 的 webhook 地址）未填写', ERROR_CODES.NOT_CONFIGURED)
   }
-  const headers = cfg.headers !== null && typeof cfg.headers === 'object' && !Array.isArray(cfg.headers)
+  // G-38：headers 值归一 String——YAML 里 `port: 8080` 这类裸数字会被 fetch Headers
+  // 构造器直接抛 TypeError（整条通知炸在半路），归一后仍保持用户声明的键名与文本语义；
+  // 值是对象/数组的头没有合理文本形态，warn 后丢弃（绝不可能"猜"出一个值发出去）。
+  const rawHeaders = cfg.headers !== null && typeof cfg.headers === 'object' && !Array.isArray(cfg.headers)
     ? cfg.headers
     : {}
+  const headers = {}
+  for (const [key, value] of Object.entries(rawHeaders)) {
+    if (key === '') continue
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      headers[key] = String(value)
+      if (typeof value !== 'string') {
+        warn(`webhook headers.${key} 是 ${typeof value}，已转字符串 "${String(value)}" 发送`)
+      }
+    } else {
+      warn(`webhook headers.${key} 不是标量（${typeof value}），已丢弃`)
+    }
+  }
   return {
     url,
     headers,

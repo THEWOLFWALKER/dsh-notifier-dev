@@ -44,6 +44,15 @@ export const SPEC_CHANNELS = {
     request: (cfg, msg) => ({ url: cfg.webhook, body: { text: joinPara(msg) } }),
     ok: ({ status }) => status === 200, // Slack 成功只回 200 纯文本 "ok"，无业务码
     fail: ({ status, text }) => (status === 403 ? 'webhook 无效或已失效（403）：到 Slack App → Incoming Webhooks 重新复制地址' : text.slice(0, 120)),
+    // 边界显式报错（G-63）：Incoming Webhook 官方域名只有 hooks.slack.com——
+    // 填成普通 chat.postMessage API 地址（或别的站）会 404/静默失败，校验给出定向指引。
+    validate: (resolved) => {
+      let host = ''
+      try { host = new URL(resolved.webhook).hostname } catch { host = '' }
+      if (host !== 'hooks.slack.com') {
+        throw new NotifyError('slack 未配置：webhook 必须是 https://hooks.slack.com/services/ 开头的 Incoming Webhook 地址（API token 不走本渠道）', ERROR_CODES.NOT_CONFIGURED)
+      }
+    },
   },
 
   discord: {
@@ -54,7 +63,15 @@ export const SPEC_CHANNELS = {
       webhook: { required: true, secret: true, desc: 'Discord Webhook 完整地址：服务器设置 → 整合 → Webhook → 新建后复制' },
     },
     encode: 'json',
-    request: (cfg, msg) => ({ url: cfg.webhook, body: { content: joinText(msg) } }),
+    // G-64：Discord content 硬上限 2000 字符——超限发送只回一句 400[Bulk edit]，
+    // 建连前 fail-fast 给出当前长度，比远程报错可诊断。（单 if，不违声明表控制流军规）
+    request: (cfg, msg) => {
+      const content = joinText(msg)
+      if (content.length > 2000) {
+        throw new NotifyError(`discord 推送失败：内容超过 Discord 上限 2000 字符（当前 ${content.length}），请缩短正文`, ERROR_CODES.API_ERROR)
+      }
+      return { url: cfg.webhook, body: { content } }
+    },
     ok: is2xx, // 成功回 204 No Content，无业务码
     fail: ({ status }) => (status === 404 ? 'webhook 已删除（404）：到 Discord 服务器设置重新创建 Webhook' : ''),
   },
@@ -323,8 +340,9 @@ export const SPEC_CHANNELS = {
       baseUrl: { required: true, desc: 'OneBot 实现（NapCat/LLOneBot/go-cqhttp）的 HTTP 服务地址，如 http://127.0.0.1:3000' },
       accessToken: { secret: true, desc: '可选 access token（OneBot 配置里设置的鉴权 token）' },
       messageType: { default: 'private', desc: 'private=私聊（默认）/ group=群聊' },
-      userId: { desc: '私聊目标 QQ 号（messageType: private 时必填）' },
-      groupId: { desc: '群号（messageType: group 时必填）' },
+      // type:'number'：QQ 号在 YAML/JSON 里数字与字符串两形态都常见，engine 双形态归一
+      userId: { desc: '私聊目标 QQ 号（messageType: private 时必填）', type: 'number' },
+      groupId: { desc: '群号（messageType: group 时必填）', type: 'number' },
     },
     encode: 'json',
     // v0.6.5（审查 R4-3-P2-3）：message 改用 OneBot 11 标准消息数组格式。原字符串直传
@@ -347,10 +365,11 @@ export const SPEC_CHANNELS = {
       if (resolved.messageType !== 'private' && resolved.messageType !== 'group') {
         throw new NotifyError('onebot 未配置：messageType 只能是 private（私聊）或 group（群聊）', ERROR_CODES.NOT_CONFIGURED)
       }
-      if (resolved.messageType === 'group' && resolved.groupId === '') {
+      // 数值字段缺失落 undefined（非 ''），空值判定必须双形态
+      if (resolved.messageType === 'group' && (resolved.groupId === '' || resolved.groupId === undefined)) {
         throw new NotifyError('onebot 未配置：messageType 为 group 时 groupId（群号）未填写', ERROR_CODES.NOT_CONFIGURED)
       }
-      if (resolved.messageType !== 'group' && resolved.userId === '') {
+      if (resolved.messageType !== 'group' && (resolved.userId === '' || resolved.userId === undefined)) {
         throw new NotifyError('onebot 未配置：私聊推送 userId（QQ 号）未填写', ERROR_CODES.NOT_CONFIGURED)
       }
     },

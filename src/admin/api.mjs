@@ -22,6 +22,7 @@
 import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { CHANNEL_TYPES, channelFieldsOf } from '../config.mjs'
+import { INBOUND_CHANNELS, INBOUND_CHANNEL_SET } from '../inbound/channels-registry.mjs'
 import {
   CONTROL_OVERLAY_MAX_MEMBERS,
   CONTROL_OVERLAY_MAX_STRING,
@@ -29,10 +30,11 @@ import {
 } from '../control/session-arbiter.mjs'
 
 /**
- * 入站通道全集（与 inbound 装配一一对应；出站全集 = config.mjs 的 CHANNEL_TYPES）。
- * 逐字契约：server.mjs / ui.mjs 按此并行开发，勿改顺序与成员。
+ * 入站通道全集（单一事实来源 channels-registry；与 inbound 装配一一对应，
+ * 出站全集 = config.mjs 的 CHANNEL_TYPES）。逐字契约：server.mjs / ui.mjs 按此
+ * 并行开发，勿改顺序与成员——清单本体在 registry，本文件只转发导出。
  */
-export const INBOUND_CHANNELS = ['telegram', 'feishu', 'qq', 'wxpusher', 'wechat', 'dingtalk']
+export { INBOUND_CHANNELS } from '../inbound/channels-registry.mjs'
 
 /**
  * 双域冲突通道：既是出站 webhook 渠道（webhook/secret）又是入站机器人渠道
@@ -72,7 +74,7 @@ const DEFAULT_STATE_DIR = './state'
 
 /** 出站/入站通道集合（includes 判定用 Set，避免每行 O(n) 扫描）。 */
 const OUTBOUND_SET = new Set(CHANNEL_TYPES)
-const INBOUND_SET = new Set(INBOUND_CHANNELS)
+const INBOUND_SET = INBOUND_CHANNEL_SET
 
 /** 取「普通对象」：null / 数组 / 标量一律视为无条目（手工编辑或损坏数据防御）。 */
 function plainObjectOf(value) {

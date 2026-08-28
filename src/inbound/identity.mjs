@@ -9,14 +9,15 @@
 // 军规：读失败回退空对象（fail-open 读），写失败由 store 保留 dirty 重试；绝不覆写损坏现场。
 
 import { isValidTargetId } from './target-guard.mjs'
+import { INBOUND_CHANNEL_SET } from './channels-registry.mjs'
 
 const KEY_BINDINGS = 'inbound:bindings'
 const KEY_PENDING = 'inbound:pending'
-/** 一次性迁移标记（R5 审查 R5-1-P1-1：无标记则每次启动重播撒，管理台删除的成员被 YAML 复活）。 */
+/** 一次性迁移标记（R5 审查 R5-1-P1-1：无标记则每次启动重播撒，管理台已删成员被 YAML 复活）。 */
 const KEY_MIGRATED = 'inbound:migrated'
 /** lastSeenAt 更新节流：每用户每小时最多一次落盘（避免每条入站消息都全量重写 state.json）。 */
 const LAST_SEEN_THROTTLE_MS = 60 * 60 * 1000
-const VALID_CHANNELS = new Set(['telegram', 'feishu', 'qq', 'wxpusher', 'wechat', 'dingtalk'])
+const VALID_CHANNELS = INBOUND_CHANNEL_SET // G-13：单一事实来源（原内联六通道字面量）
 const VALID_ROLES = new Set(['owner', 'member'])
 const VALID_ORIGINS = new Set(['migrated', 'paired', 'learned', 'confirmed'])
 
