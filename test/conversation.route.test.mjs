@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { registerConversationRouter } from '../src/inbound/conversation.mjs'
 import { createInboundBus } from '../src/inbound/bus.mjs'
 import { createStore } from '../src/inbound/store.mjs'
+import { createIdentity } from '../src/inbound/identity.mjs'
 import { createAgentRouter } from '../src/routing/agent-router.mjs'
 import { createSessionRegistry } from '../src/routing/session-registry.mjs'
 import { createControlEntry } from '../src/control/entry.mjs'
@@ -46,9 +47,20 @@ function makeAgent(id, status = 'idle', cwd = `/tmp/proj/${id}`) {
  *    传对象 = 直接使用（抛错防御场景）。
  */
 function makeRig(options = {}) {
-  const { agents = [], channelTypes = () => ['telegram', 'bark'], clockStart = 1_000_000 } = options
+  const { agents = [], channelTypes = () => ['telegram', 'bark'], clockStart = 1_000_000, busBinding = null } = options
   const store = createStore(tempPath())
-  const bus = createInboundBus({ allowUsers: ['42'], store })
+  // G-49 用例：busBinding 指定时给 bus 注入 identity 复合键准入（可发带空白 userId 的
+  // 信封）；缺省保持 legacy allowUsers 装配，存量用例行为不变。
+  const identity = busBinding === null
+    ? null
+    : (() => {
+      const created = createIdentity({ store, logger: null })
+      created.addBinding({ channel: 'telegram', userId: busBinding })
+      return created
+    })()
+  const bus = identity === null
+    ? createInboundBus({ allowUsers: ['42'], store })
+    : createInboundBus({ identity, store })
   const handlers = {}
   const agentMap = new Map(agents.map((agent) => [agent.id, agent]))
   const ctx = {
@@ -402,6 +414,39 @@ test('mergeWindowMs: 0 = 关闭合并（README 契约回归）：每条消息立
   assert.equal(agent.calls.followup[1].content[0].text, '第二条')
   await sleep(FLUSH_MS) // 等满一个旧默认窗口，确认没有迟到的第三次投递
   assert.equal(agent.calls.followup.length, 2, '不应有窗口到期后的追加投递')
+  rig.dispose()
+})
+
+// ---------------------------------------------------------------- G-49 身份/路由键归一
+
+test('G-49：会话绑定键全链路一致命中——空白 userId 写读同键、registry 挂钩同身份', async () => {
+  const alpha = makeAgent(ALPHA_1, 'idle', '/home/u/proj/alpha')
+  // busBinding：bus 走 identity 复合键准入（空白 userId 信封可过闸到达 conversation）
+  const rig = makeRig({ agents: [alpha], busBinding: '42' })
+  rig.fire('agent/created', alpha)
+
+  // 写侧：信封 userId ' 42 ' → conversation 键经 identity.bindingKey 归一 → bind:telegram:42
+  // （旧实现会落 'bind:telegram: 42 '，与 router 读键裂开，绑定写完即丢）
+  rig.userSays(`/bind ${ALPHA_1}`, { userId: ' 42 ' })
+  assert.equal(rig.store.get('bind:telegram:42'), ALPHA_1, 'bind 键分量归一落盘')
+  assert.deepEqual(rig.calls.attach, [{ sid: ALPHA_1, binding: { channel: 'telegram', userId: '42' } }],
+    'registry 挂钩分量与 bind 键同一归一（不存带空白的 42）')
+
+  // 读侧：agent-router L1 与写键同源——干净/带空白 userId 都命中同一条绑定
+  assert.deepEqual(rig.router.resolveInbound('telegram', '42'),
+    { sessionId: ALPHA_1, source: 'bind', ambiguous: false })
+  assert.equal(rig.router.resolveInbound('telegram', ' 42 ').sessionId, ALPHA_1, '脏 userId 归一后命中')
+
+  // 投递全链路：空白 userId 信封 → 归一键命中 → 投给绑定会话
+  rig.userSays('在吗', { userId: ' 42 ' })
+  await sleep(FLUSH_MS)
+  assert.equal(alpha.calls.followup.length, 1, '空白 userId 信封照常投递到绑定会话')
+  assert.equal(alpha.calls.followup[0].content[0].text, '在吗')
+
+  // 摘挂半链路：attach 用 ' 42 '、/agent back 用 '42' → 同一身份，挂钩摘得掉
+  rig.userSays('/agent back')
+  assert.equal(rig.store.get('bind:telegram:42'), undefined)
+  assert.equal(rig.registry.getSession(ALPHA_1).inbound, undefined, '跨空白形态 attach/detach 同键摘挂')
   rig.dispose()
 })
 

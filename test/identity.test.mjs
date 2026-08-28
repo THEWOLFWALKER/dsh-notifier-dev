@@ -13,7 +13,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createStore } from '../src/inbound/store.mjs'
-import { createIdentity } from '../src/inbound/identity.mjs'
+import { createIdentity, bindingKey } from '../src/inbound/identity.mjs'
 import { createPairing } from '../src/inbound/pairing.mjs'
 import { createInboundBus } from '../src/inbound/bus.mjs'
 
@@ -196,6 +196,48 @@ test('identity：待确认绑定 add/confirm/dismiss 生命周期', () => {
   assert.equal(identity.dismissPending('qq', 'q1').ok, true)
   assert.equal(identity.allows('qq', 'q1'), false)
   assert.equal(identity.confirmPending('qq', 'q1').reason, 'not-found')
+})
+
+// ---------------------------------------------------------------- G-49 键归一（休眠边界封口）
+
+test('G-49：bindingKey 单一构造点——空白/大小写漂移的分量同键，allows 读写同源', () => {
+  const { store } = tempStore()
+  const identity = createIdentity({ store, logger: quiet })
+  identity.addBinding({ channel: 'telegram', userId: 'user' })
+
+  // 键构造归一：两分量 trim；channel 收敛小写（有限小写渠道集合）；userId 不折叠大小写
+  // （渠道侧 id 大小写语义真实存在：wxpusher UID_ 前缀、飞书 open_id——折叠会打 miss 存量键）
+  assert.equal(bindingKey('telegram', 'user'), 'telegram:user')
+  assert.equal(bindingKey(' telegram ', ' user '), bindingKey('telegram', 'user'), "' user ' 与 'user' 同键")
+  assert.equal(bindingKey('TELEGRAM', 'user'), 'telegram:user', 'channel 大小写漂移同键')
+  assert.equal(bindingKey('\tqq\n', '1'), 'qq:1', '各类空白（含制表/换行）都 trim')
+  assert.notEqual(bindingKey('telegram', 'User'), bindingKey('telegram', 'user'), 'userId 大小写不得折叠')
+
+  // allows 读键归一：带空白 userId / 脏 channel 的调用命中同一条绑定
+  assert.equal(identity.allows('telegram', 'user'), true)
+  assert.equal(identity.allows('telegram', ' user '), true)
+  assert.equal(identity.allows('telegram', 'user '), true)
+  assert.equal(identity.allows(' telegram ', 'user'), true, '脏 channel 归一后命中')
+  // lastSeenAt 写回键与读键同源：表不膨胀、不落幽灵键
+  assert.equal(identity.size(), 1)
+  assert.deepEqual(Object.keys(store.get('inbound:bindings', {})), ['telegram:user'])
+  // 归一不抹掉渠道维度：跨渠道隔离照旧（身份是 (channel, userId)，不是全局用户串）
+  assert.equal(identity.allows('feishu', 'user'), false)
+  assert.equal(identity.allows('feishu', ' user '), false)
+  assert.equal(identity.allows('feishu', ' USER '), false, 'userId 大小写不折叠（跨大小写不得误命中）')
+})
+
+test('G-49：bus 全链路——带空白 userId 的信封经 identity 复合准入一致命中并扇出', () => {
+  const { bus } = makeRig({ bindings: [['telegram', 'user']] })
+  let fannedOut = 0
+  bus.onMessage(() => { fannedOut += 1 })
+  // 信封 userId 带空白 → bus.allows → identity.allows → bindingKey 归一 → 命中 'user' 绑定
+  assert.equal(bus.allows('telegram', ' user '), true)
+  assert.equal(bus.accept(env({ text: 'hi', userId: ' user ' })).ok, true, '空白 userId 同键准入')
+  assert.equal(fannedOut, 1, '准入命中 → 业务扇出（消息不丢）')
+  // 非成员照旧拒绝（归一只封空白/大小写边界，不放宽成员资格）
+  assert.equal(bus.accept(env({ text: 'hi', userId: ' nope ' })).ok, false)
+  assert.equal(fannedOut, 1)
 })
 
 // ---------------------------------------------------------------- bus 复合准入与引导态

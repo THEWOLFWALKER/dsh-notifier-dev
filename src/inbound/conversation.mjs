@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto'
 import { workspaceOf } from '../routing/session-registry.mjs'
 import { CHANNEL_TYPES } from '../config.mjs'
 import { chatScopeOf } from '../control/session-arbiter.mjs'
+import { bindingKey as identityBindingKey } from './identity.mjs'
 
 const DEFAULT_MERGE_WINDOW_MS = 1500
 const SUMMARY_MAX_CHARS = 120
@@ -98,7 +99,10 @@ export function registerConversationRouter(deps) {
   const agentOf = (sessionId) => {
     try { return typeof ctx?.agents?.get === 'function' ? ctx.agents.get(sessionId) : undefined } catch { return undefined }
   }
-  const bindingKey = (envelope) => `bind:${envelope.channel}:${envelope.userId}`
+  // G-49：会话绑定持久化键。分量归一收敛到 identity.bindingKey（trim + channel 小写），
+  // 与 agent-router resolveInbound L1 的读键同源——' user ' 与 'user' 写读同键永不裂
+  // （休眠边界封口：现网适配器输出恰好归一，此改不改变现网行为）。
+  const bindingKey = (envelope) => `bind:${identityBindingKey(envelope.channel, envelope.userId)}`
 
   // ---- v0.3.2 命令族支撑（军规：registry/router 任何缺失或抛错一律降级，绝不弄崩投递主线）----
 
@@ -131,8 +135,17 @@ export function registerConversationRouter(deps) {
     return agent !== undefined ? workspaceOf(agent) : ''
   }
 
-  /** 当前对话的入站挂钩（与 bind:<channel>:<userId> 键同源，registry.attach/detach 用）。 */
-  const inboundBindingOf = (envelope) => ({ channel: envelope.channel, userId: String(envelope.userId ?? '') })
+  /**
+   * 当前对话的入站挂钩（与 bind:<channel>:<userId> 键同源，registry.attach/detach 用）。
+   * G-49：分量归一镜像 identity.bindingKey 的规则（channel trim + 小写、userId trim）——
+   * attach 与 detach 的分量必落在同一身份上，' user ' 与 'user' 同挂钩（否则覆盖绑定/
+   * 解绑时摘不掉自己挂上的钩）。不从复合键反切分量（userId 可含冒号，反切会截断），
+   * 规则漂移由 test/conversation.route.test.mjs 的 G-49 全链路用例锁死。
+   */
+  const inboundBindingOf = (envelope) => ({
+    channel: String(envelope.channel ?? '').trim().toLowerCase(),
+    userId: String(envelope.userId ?? '').trim(),
+  })
 
   /**
    * 活跃会话快照（/agent 列表与 /agent use 的数据源）。registry 注入时用台账

@@ -20,6 +20,35 @@ const VALID_CHANNELS = new Set(['telegram', 'feishu', 'qq', 'wxpusher', 'wechat'
 const VALID_ROLES = new Set(['owner', 'member'])
 const VALID_ORIGINS = new Set(['migrated', 'paired', 'learned', 'confirmed'])
 
+/**
+ * G-49 身份/路由复合键的**唯一构造点**：`${channel}:${userId}`（会话绑定域由调用方再前缀
+ * `bind:`）。四处键构造全部改引本函数，归一规则单一来源：
+ *  - identity.allows 的读键与 lastSeenAt 写回键（本文件）；
+ *  - conversation 的会话绑定持久化键 `bind:<channel>:<userId>`；
+ *  - agent-router resolveInbound L1 的读键（与 conversation 写键同源才能命中）；
+ *  - registry 入站挂钩的 channel/userId 分量（conversation 构造，镜像本函数规则）。
+ *
+ * 归一策略（大小写收敛）：
+ *  - 两分量 trim：' user ' 与 'user' 同键——当前各适配器输出恰好归一，此修是休眠边界
+ *    封口（不改现网行为，只保证未来空白/大小写漂移不裂键）；
+ *  - channel 收敛小写：渠道是有限小写类型集合（VALID_CHANNELS），大小写漂移同键；
+ *  - userId **不**折叠大小写：渠道侧 id 大小写语义真实存在（wxpusher UID_ 前缀、飞书
+ *    open_id），折叠会让存量盘上键打 miss——只 trim 不折叠。
+ *
+ * 不返回归一后的分量（userId 可含冒号，复合键反切会截断）——需要分量的调用方
+ * （registry 挂钩）在构造处镜像本规则，一致性由 test/identity.test.mjs 与
+ * test/conversation.route.test.mjs 的全链路用例锁死。
+ *
+ * @param {string} channel - 渠道类型（telegram/feishu/qq/wxpusher/wechat/dingtalk）
+ * @param {string} userId - 渠道侧用户 id
+ * @returns {string} 归一复合键 `${channel}:${userId}`
+ */
+export function bindingKey(channel, userId) {
+  const normalizedChannel = String(channel ?? '').trim().toLowerCase()
+  const normalizedUserId = String(userId ?? '').trim()
+  return `${normalizedChannel}:${normalizedUserId}`
+}
+
 /** 归一化单条绑定记录（读盘防御：坏字段回退默认，坏形状整条丢弃）。 */
 function normalizeBinding(raw, fallbackKey) {
   if (raw === null || typeof raw !== 'object') return null
@@ -115,14 +144,19 @@ export function createIdentity(options = {}) {
     /** 复合键准入（v0.7 计划书 §3.1：准入带渠道维度，修跨渠道串扰）。 */
     allows(channel, userId) {
       if (typeof channel !== 'string' || typeof userId !== 'string') return false
+      // G-49：读键与写回键同走 bindingKey 归一（' user ' 与 'user' 同键），单一构造点
+      // 防读写两侧漂移——若写回用裸 channel 拼键，未来分量归一放宽时会落出
+      // ' telegram :user' 这类永不被读键命中的幽灵重复键。现网适配器输出恰好归一，
+      // 此修是休眠边界封口，不改变现网行为。
+      const key = bindingKey(channel, userId)
       const table = readBindings()
-      const record = table[`${channel}:${String(userId)}`]
+      const record = table[key]
       if (record === undefined) return false
       // lastSeenAt 节流更新（内存判定 + 稀疏落盘，不放大写放大）
       if (Date.now() - record.lastSeenAt > LAST_SEEN_THROTTLE_MS) {
         try {
           record.lastSeenAt = Date.now()
-          writeBindings({ ...table, [`${channel}:${record.userId}`]: record })
+          writeBindings({ ...table, [key]: record })
         } catch (error) {
           warn(`lastSeenAt 更新失败（不致命）: ${error instanceof Error ? error.message : String(error)}`)
         }
