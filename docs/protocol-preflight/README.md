@@ -8,6 +8,7 @@
 | Telegram | [telegram.md](./telegram.md)；[Bot API](https://core.telegram.org/bots/api) | `src/inbound/telegram-bot.mjs`, `src/channels/telegram/`, `src/adapters/telegram.mjs` | `test/channels/telegram.test.mjs`, `test/inbound.telegram.test.mjs`, `test/adapters.test.mjs` | webhook secret、429、4096/64-byte 边界、文件真机 | 截断 callback token、bot token 当 accountId、无限重试 |
 | 飞书 | [feishu.md](./feishu.md)；开放平台动态文档 | `src/inbound/feishu-bot.mjs`, `src/channels/feishu/`, `src/adapters/feishu.mjs` | `test/channels/feishu.test.mjs`, `test/inbound.feishu.test.mjs`, `test/adapters.test.mjs` | 租户验签/加密、Card Kit 限制、文件权限、真实回调 | 未验签入 Control Core、猜测卡片字段、宣称 fileSend |
 | 微信 iLink | [wechat-ilink.md](./wechat-ilink.md)；社区逆向线索 | `src/channels/wechat-ilink/`, `src/inbound/_ilink-api.mjs` | `test/channels/wechat-ilink.test.mjs`, `test/inbound.wechat.test.mjs` | QR/节点、35s 长轮询、stale token、图片/文件/撤回真机 | 未知 QR 当成功、先推进 cursor、跨账号 token、把 declared 标正式 |
+| 钉钉 Stream | [dingtalk.md](./dingtalk.md)；dingtalk-stream 2.1.4/2.1.6-beta.1/2.1.7-beta.1 三版源码核对 | `src/inbound/dingtalk-stream.mjs` | `test/inbound.dingtalk.test.mjs` | 真机 10 分钟长连（ping 周期、60s 重推消失、ack 被接受、SYSTEM 帧 topic 字段裁决） | 顶层 messageId 契约、requestId 头字段名、裸 'ack' data、把 SDK 源码核对结论改回猜测 |
 
 ## 实现映射规则
 
