@@ -750,6 +750,51 @@ test('G-22 同根（码点安全）：超长星体平面回复按码点分段，
   await rig.inbound.stop()
 })
 
+test('G-22：被动回复条数配额超限 warn（c2c 4 条/群 5 条）——不硬阻塞投递，边界内静默', async () => {
+  const rig = makeRig({ config: { notifyGroups: ['g_open'] } })
+  await driveReady(rig)
+  // rateGate 固定 1050ms 节流：本用例要连发 5+5+6 段，压掉真实等待（finally 还原）
+  const realSetTimeout = globalThis.setTimeout
+  globalThis.setTimeout = (fn, ms, ...rest) => realSetTimeout(fn, ms > 0 ? 0 : ms, ...rest)
+  try {
+    // c2c：9000 码点 → 5 段 > 配额 4 → warn 出声但仍逐段投递（丢弃决策留给平台）
+    assert.equal(await rig.inbound.sendText('u_open', '🀄'.repeat(9000), 'msg_q1'), true)
+    // 群：恰好 10000 码点 → 5 段 = 配额 5（边界未超）→ 不出声
+    assert.equal(await rig.inbound.sendText('g_open', '🀄'.repeat(10000), 'msg_q2'), true)
+    // 群：12000 码点 → 6 段 > 配额 5 → warn 出声
+    assert.equal(await rig.inbound.sendText('g_open', '🀄'.repeat(12000), 'msg_q3'), true)
+  } finally {
+    globalThis.setTimeout = realSetTimeout
+  }
+  const userSends = rig.calls.filter((entry) => entry.url === `${API}/v2/users/u_open/messages`)
+  const groupSends = rig.calls.filter((entry) => entry.url === `${API}/v2/groups/g_open/messages`)
+  assert.equal(userSends.length, 5, 'c2c 超限仍投递 5 段（不硬阻塞）')
+  assert.equal(groupSends.length, 11, '群两轮共 5+6 段全部投递（不硬阻塞）')
+  assert.ok(userSends.every((entry) => entry.body.msg_id === 'msg_q1'), '被动回复逐段携带原 msg_id')
+  const quotaWarns = rig.lines.filter((line) => /配额/.test(line))
+  assert.equal(quotaWarns.length, 2, '恰好两次超限出声（c2c 一次 + 群一次），边界内静默')
+  assert.ok(quotaWarns.some((line) => line.includes('c2c') && line.includes('4')), 'c2c 超限 warn 含通道与配额数')
+  assert.ok(quotaWarns.some((line) => line.includes('群') && line.includes('5')), '群超限 warn 含通道与配额数')
+  await rig.inbound.stop()
+})
+
+test('G-22：主动消息（无 msg_id）不受被动回复配额约束——超限分段零出声', async () => {
+  const rig = makeRig()
+  await driveReady(rig)
+  const realSetTimeout = globalThis.setTimeout
+  globalThis.setTimeout = (fn, ms, ...rest) => realSetTimeout(fn, ms > 0 ? 0 : ms, ...rest)
+  try {
+    // 主动推送 9000 码点 → 5 段：无 msg_id → 不计入被动回复配额，不应出声
+    assert.equal(await rig.inbound.sendText('u_open', '🀄'.repeat(9000)), true)
+  } finally {
+    globalThis.setTimeout = realSetTimeout
+  }
+  const sends = rig.calls.filter((entry) => entry.url === `${API}/v2/users/u_open/messages`)
+  assert.equal(sends.length, 5)
+  assert.equal(rig.lines.filter((line) => /配额/.test(line)).length, 0, '主动消息超限分段不应触发配额 warn')
+  await rig.inbound.stop()
+})
+
 test('editResolved：补发审批结果文本（消息不可编辑）；无 chatId 直接跳过', async () => {
   const rig = makeRig()
   await driveReady(rig)

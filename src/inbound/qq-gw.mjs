@@ -33,6 +33,10 @@ const CHAT_STATE_MAX = 1024
 // 码点语义经 splitByCodePoints 保证——码元切片会把星体平面字符切成孤立代理项（G-22 同根）。
 const QQ_TEXT_MAX_CODEPOINTS = 2000
 const QQ_MARKDOWN_MAX_CODEPOINTS = 3000
+/** G-22：被动回复条数配额（QQ 官方平台限制：c2c 4 条 / 群 5 条，按同一 msg_id 的被动回复计）。
+ *  超限时平台静默丢弃（无错误码、无回执）——本侧不硬阻塞投递（硬阻塞把「可能仍送达」
+ *  变成「必然不送达」），仅 warn 出声让丢弃可见。主动消息（无 msg_id）不受此配额约束。 */
+const QQ_PASSIVE_REPLY_QUOTA = { user: 4, group: 5 }
 
 // WS op codes（QQ 网关协议）
 const OP_DISPATCH = 0
@@ -446,6 +450,8 @@ export function createQqInbound(options = {}) {
   /** 发文本：超长按码点分段逐条发送（每段独立 msg_seq，服务端按 msg_id+msg_seq 去重）。
    *  G-22 同根修复：旧 slice(0, 2000) 是 UTF-16 码元语义，第 2000 码元恰落在星体平面
    *  字符（emoji/生僻字）中间时产生孤立代理项（JSON 载荷非法，平台拒收或乱码）。
+   *  G-22 配额：被动回复（携带 msg_id）分段数超平台配额时 warn 出声但不阻塞（超限部分
+   *  平台静默丢弃，先让丢弃可见——见 QQ_PASSIVE_REPLY_QUOTA 注释）。
    *  任一段失败即抛错（已发段不撤回，与 iLink 分块语义一致）。 */
   async function postMessage(chatId, content, msgId = undefined) {
     if (fetchImpl === undefined) return null
@@ -457,6 +463,12 @@ export function createQqInbound(options = {}) {
       : `${apiBase}/v2/users/${target}/messages`
     const chunks = splitByCodePoints(String(content ?? ''), QQ_TEXT_MAX_CODEPOINTS)
     const pieces = chunks.length > 0 ? chunks : ['']
+    if (msgId !== undefined) {
+      const quota = kind === 'group' ? QQ_PASSIVE_REPLY_QUOTA.group : QQ_PASSIVE_REPLY_QUOTA.user
+      if (pieces.length > quota) {
+        warn(`被动回复分段 ${pieces.length} 条超过${kind === 'group' ? '群' : 'c2c'}配额 ${quota} 条：超限部分平台将静默丢弃（本侧不硬阻塞，已照发）: ${target}`)
+      }
+    }
     let lastId = null
     for (const piece of pieces) {
       await rateGate.gate()
