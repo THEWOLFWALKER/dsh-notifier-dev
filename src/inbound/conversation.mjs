@@ -247,7 +247,10 @@ export function registerConversationRouter(deps) {
       say('已解绑（回到通道默认路由）')
       return true
     }
-    if (cmd === 'stop') {
+    if (cmd === 'stop' && args.length === 0) {
+      // G-04：/stop 是无参命令——只有裸 '/stop' 命中取消。带附言的 '/stop 一下别急'
+      // 不再命中（收紧前 startsWith('/stop ') 会把它当取消指令，误杀长任务），
+      // 落到函数尾部的未知命令路径：回执「未识别的命令」+ 按普通文本投递。
       const bound = boundSession(envelope)
       const agent = bound !== null ? agentOf(bound) : undefined
       if (agent === undefined) { say('当前没有可停止的会话'); return true }
@@ -264,7 +267,9 @@ export function registerConversationRouter(deps) {
     if (cmd === 'agent') {
       const sub = String(args[0] ?? '').toLowerCase()
       if (sub === 'use') {
-        handleAgentUse(envelope, args[1], say)
+        // G-33：目标名可含空格（workspace 名如 "my space"）——args[1] 只取首词会截断，
+        // 改为剩余参数整体作为 needle（matchSessionByNeedle 做精确/前缀匹配，本身 trim）。
+        handleAgentUse(envelope, args.slice(1).join(' '), say)
         return true
       }
       if (sub === 'back') {
@@ -313,6 +318,11 @@ export function registerConversationRouter(deps) {
       ].filter((line) => line !== '').join('\n'))
       return true
     }
+    // G-04：未知命令回执。/stop 收紧为仅裸 '/stop' 命中取消后，'/stop 等等' 这类带
+    // 附言形态落到此路径——若只静默按普通文本投递，用户会误以为命令已被执行（回执黑洞）。
+    // 回执仅告知未识别，「当普通文本处理（避免吞消息）」的既有语义保持不变
+    // （若下方投递失败，routeUnsafe 还会另有回执）。
+    say(`未识别的命令 /${cmd}（用 /help 查看命令集）`)
     return false // 未知命令：当普通文本处理（避免吞消息）
   }
 
@@ -520,7 +530,9 @@ export function registerConversationRouter(deps) {
   // notifications never pass here; only remote control/conversation commands do.
   function route(envelope, text) {
     const trimmed = String(text ?? '').trim()
-    const command = trimmed === '/stop' || trimmed.startsWith('/stop ') ? 'stop'
+    // G-04：仅裸 '/stop' 归类为 stop 控制命令。'/stop 等等' 不再命中（旧 startsWith('/stop ')
+    // 会把附言形态也送进 Control Core 当取消指令，误杀长任务），改走未知命令路径。
+    const command = trimmed === '/stop' ? 'stop'
       : (trimmed.startsWith(steerPrefix) ? 'steer' : (trimmed.startsWith('/') ? null : 'ordinary-message'))
     if (control === null || command === null) return routeUnsafe(envelope, text)
     // QQ group/ambiguous envelopes must not fall through to the legacy route

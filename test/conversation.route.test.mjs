@@ -213,6 +213,28 @@ test('/agent use 零命中：报错并提示 /agent（含 <4 位前缀不可匹�
   rig.dispose()
 })
 
+// ---------------------------------------------------------------- G-33 含空格目标名
+
+test('G-33：/agent use 目标名含空格——整体作为 needle，不再截断到首词', async () => {
+  const agent = makeAgent(ALPHA_1, 'idle', '/home/u/proj/my space') // workspace = "my space"
+  const other = makeAgent(BETA_1, 'idle', '/home/u/proj/beta')
+  const rig = makeRig({ agents: [agent, other] })
+  rig.fire('agent/created', agent)
+  rig.fire('agent/created', other)
+
+  // 旧行为：args[1] 只取 "my" → 未匹配到会话 my；新行为：剩余参数整体 join
+  rig.userSays('/agent use my space')
+  assert.equal(rig.store.get('bind:telegram:42'), ALPHA_1, '含空格 workspace 名命中')
+  assert.match(rig.replies.at(-1).text, /workspace=my space/)
+  await rig.flush('在吗')
+  assert.equal(agent.calls.followup.length, 1, '绑定后文本投给含空格 workspace 的会话')
+  assert.equal(other.calls.followup.length, 0)
+  // 首词单独发（截断形态）仍不命中——needle 语义没有被放宽成前缀包含
+  rig.userSays('/agent use my')
+  assert.match(rig.replies.at(-1).text, /未匹配到会话 my/)
+  rig.dispose()
+})
+
 test('/agent back：清掉 bind 键并 detachInbound 旧挂钩', () => {
   const alpha = makeAgent(ALPHA_1, 'idle', '/home/u/proj/alpha')
   const rig = makeRig({ agents: [alpha] })
