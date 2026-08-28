@@ -19,14 +19,20 @@ export function getChannelName(channel) {
 
 /**
  * 解析注册面命令。
+ * G-06：群聊命令常带机器人后缀——TG '/pair@MyNotifierBot code'、飞书还原后的
+ * '/pair@张三 code'。命令词上的 @ 后缀做贪心剥除（/@.+$/，含点号的 botname 一并
+ * 覆盖），剥完为空视为非命令；@ 只在命令词上剥，args 原样保留（不含 @ 残片）。
+ * G-65：全角斜杠 '／pair' 在判定前规范化首字符为 '/'（仅首字符——句中全角斜杠是
+ * 正文，不动）；解析成功不吞附言——'/help 附言' 的附言原样留在 args 交给处理器
+ * （解析成功只说明认出了命令词，不等于整条消息只剩命令词）。
  * @param {string} text - 原始消息文本
  * @returns {{ name: string, args: string[], raw: string } | null} 非命令/空文本返回 null
  */
 export function parseCommand(text) {
-  const raw = String(text ?? '').trim()
+  const raw = String(text ?? '').trim().replace(/^／/, '/')
   if (raw === '' || !raw.startsWith('/')) return null
   const parts = raw.split(/\s+/)
-  const name = parts[0].slice(1).toLowerCase()
+  const name = parts[0].slice(1).replace(/@.+$/, '').toLowerCase()
   if (name === '') return null
   return { name, args: parts.slice(1), raw }
 }
