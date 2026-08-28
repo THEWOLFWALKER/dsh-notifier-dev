@@ -14,6 +14,7 @@
 import { buildApprovalAction, buildQuestionAction, parseApprovalAction, parseActionPayload, parseQuestionAction } from './_contract.mjs'
 import { resolveNotifyTargets } from './target-guard.mjs'
 import { stripCommandMention, stripLeadingMention } from './commands.mjs'
+import { verdictFailureText } from './verdict-text.mjs'
 
 const DEFAULT_DOMAIN = 'https://open.feishu.cn'
 const SDK_PACKAGE = '@larksuiteoapi/node-sdk'
@@ -452,7 +453,7 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
           chatId: clickedChatOf(data),
           chatType: data?.context?.open_chat_type ?? data?.chat_type,
         })
-        const text = result?.message ?? '该操作已处理或已过期'
+        const text = result?.message ?? verdictFailureText(result?.reason, 'approval', '该操作已处理或已过期')
         patchResolvedCard(data, buildActionResolvedCard(`${text}（来源：飞书用户 ${data?.operator?.open_id ?? '?'}）`), `${text}（来源：飞书用户 ${data?.operator?.open_id ?? '?'}）`)
         return { toast: { type: result?.ok === true ? 'success' : 'info', content: text } }
       }
@@ -480,7 +481,7 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
           userId: String(data?.operator?.open_id ?? '(unknown)'),
           chatId: clickedChatOf(data),
         })
-        const text = verdict?.message ?? (verdict?.status === 'accepted' ? '✅ 已作答' : '该提问已回答或已过期')
+        const text = verdict?.message ?? (verdict?.status === 'accepted' ? '✅ 已作答' : verdictFailureText(verdict?.reason, 'question', '该提问已回答或已过期'))
         patchResolvedCard(data, buildQuestionResolvedCard(`${text}（来源：飞书用户 ${data?.operator?.open_id ?? '?'}）`), `${text}（来源：飞书用户 ${data?.operator?.open_id ?? '?'}）`)
         return { toast: { type: verdict?.ok === true || verdict?.status === 'accepted' ? 'success' : 'info', content: text } }
       }
@@ -506,9 +507,10 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
         userId: String(data?.operator?.open_id ?? '(unknown)'),
         chatId: clickedChatOf(data),
       })
+      // G-54：失败话术按 reason 分层，与 TG 同源（verdict-text.mjs），不再一律「已处理或已过期」。
       const text = verdict.ok
         ? (approvalAction.decision === 'allowed-once' ? '✅ 已批准（单次有效）' : '❌ 已拒绝')
-        : '该审批已处理或已过期（token 单次核销）'
+        : (verdict.message ?? verdictFailureText(verdict.reason, 'approval'))
       // 卡片改成终态（patch 覆盖按钮，防过期按钮二次点击）；不 await，3s 内先回 toast
       patchResolvedCard(data, buildResolvedCard(`${text}（来源：飞书用户 ${data?.operator?.open_id ?? '?'}）`), `${text}（来源：飞书用户 ${data?.operator?.open_id ?? '?'}）`)
       return { toast: { type: (verdict.ok === true || verdict.status === 'accepted') ? 'success' : 'info', content: text } }

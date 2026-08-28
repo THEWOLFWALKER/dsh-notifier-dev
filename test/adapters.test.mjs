@@ -325,6 +325,33 @@ test('telegram: 429 限流应答解析 parameters.retry_after → retryAfterMs�
       (error) => {
         assert.equal(error.status, 429)
         assert.equal(error.retryAfterMs, 3000)
+        // G-53 分层：公开文案=渠道中文名+状态码；响应体片段只在 detail
+        assert.equal(error.message, 'Telegram推送失败（HTTP 429）')
+        assert.doesNotMatch(error.message, /retry after 3/)
+        assert.doesNotMatch(error.publicMessage, /Too Many Requests/)
+        assert.match(error.detail, /Too Many Requests: retry after 3/)
+        return true
+      },
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('postJson: 网络层错误公开文案不带底层 message（代理地址/机器路径不外泄，G-53）', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => {
+    throw new Error('getaddrinfo ENOTFOUND proxy.corp.internal:8080 (via /etc/resolv.conf)')
+  }
+  try {
+    await assert.rejects(
+      () => postJson('https://api.example.com/x', {}, { channel: 'telegram', timeoutMs: 500 }),
+      (error) => {
+        assert.ok(error instanceof NotifyError)
+        assert.equal(error.code, 'NETWORK_ERROR')
+        assert.equal(error.message, 'Telegram网络连接失败')
+        assert.doesNotMatch(error.publicMessage, /proxy\.corp\.internal|resolv\.conf/)
+        assert.match(error.detail, /proxy\.corp\.internal:8080/)
         return true
       },
     )

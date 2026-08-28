@@ -12,6 +12,7 @@ import { createCallbackRefs } from './callback-refs.mjs'
 import { resolveNotifyTargets } from './target-guard.mjs'
 import { buildQuestionAction } from './_contract.mjs'
 import { stripCommandMention } from './commands.mjs'
+import { verdictFailureText, cardMissingText } from './verdict-text.mjs'
 
 const DEFAULT_API_BASE = 'https://api.telegram.org'
 const POLL_TIMEOUT_S = 25
@@ -220,9 +221,14 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
           userId: query.from?.id,
           chatId: query.message?.chat?.id,
         })
+        // G-54：失败话术按 reason 分层（token-required/key-mismatch/source-chat-mismatch/
+        // already-resolved/expired 各自文案），不再一律「已处理或已过期」误导排障方向。
+        // 卡片承载缺失（query.message 空 = 原消息被删）用专用话术，不落「请到原会话」。
         const text = verdict.ok === true || verdict.status === 'accepted'
           ? (decision === 'allowed-once' ? '✅ 已批准（单次有效）' : '❌ 已拒绝')
-          : '该审批已处理或已过期（token 单次核销）'
+          : (query.message === undefined || query.message?.chat === undefined
+            ? cardMissingText()
+            : (verdict.message ?? verdictFailureText(verdict.reason, 'approval')))
         await api('answerCallbackQuery', { callback_query_id: query.id, text }).catch(() => {})
         if (query.message?.chat?.id !== undefined) {
           await api('editMessageText', {

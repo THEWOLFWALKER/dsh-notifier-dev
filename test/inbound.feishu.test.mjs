@@ -458,7 +458,8 @@ test('card.action.trigger：重复点击同一审批 → already-resolved toast�
   const first = fire()
   const second = fire()
   assert.equal(first.toast.type, 'success')
-  assert.match(second.toast.content, /已处理或已过期/)
+  // G-54：already-resolved 有专属话术（不再笼统「已处理或已过期」）
+  assert.match(second.toast.content, /该审批已处理，无需重复操作/)
   assert.equal((await outcome).decision, 'rejected', '首达采纳')
   await inbound.stop()
 })
