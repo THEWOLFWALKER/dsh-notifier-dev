@@ -63,10 +63,11 @@ class FakeWebSocket {
   }
   serverOpen() { this.readyState = 1; this.emit('open') }
   serverSend(frame) { this.emit('message', { data: JSON.stringify(frame) }) }
-  serverClose() {
+  serverClose(code = undefined) {
     if (this.readyState === 3) return
     this.readyState = 3
-    this.emit('close')
+    // G-07：close 事件携带服务端关闭码（无码=undefined → 走默认重连分支）
+    this.emit('close', code === undefined ? {} : { code })
   }
   send(data) { this.sent.push(JSON.parse(data)) }
   close() { this.serverClose() }
@@ -100,6 +101,7 @@ function makeRig({ allowUsers = ['u_open'], config = {}, fetchOptions = {} } = {
     webSocketImpl: FakeWebSocket,
     reconnectBaseMs: 2,
     reconnectCapMs: 8,
+    close4008WaitMs: config.close4008WaitMs, // G-07：测试注入缩短 4008 固定等待窗
   })
   liveInbounds.push(inbound)
   return { bus, inbound, calls, lines, debugLines, fetchImpl }
@@ -489,6 +491,94 @@ test('INVALID_SESSION（op9）：丢弃 session，重连走全新 IDENTIFY', asy
   await tick()
   assert.ok(ws2.sent.some((frame) => frame.op === 2), '应重新 IDENTIFY')
   assert.ok(!ws2.sent.some((frame) => frame.op === 6), '不应 RESUME 已失效会话')
+  await rig.inbound.stop()
+})
+
+// ------------------------------------------------------------- G-21 / G-07
+
+test('G-21 INVALID_SESSION d=true：可恢复会话保留，重连走 RESUME（不再一律弃会话）', async () => {
+  const rig = makeRig()
+  const ws = await driveReady(rig)
+  ws.serverSend({ op: 0, t: 'C2C_MESSAGE_CREATE', s: 7, d: { id: 'e1', content: 'hi', author: { user_openid: 'u_open' } } })
+  await tick()
+  ws.serverSend({ op: 9, d: true }) // 官方 SDK 语义：d=true 会话可恢复
+  await tick(10)
+  const ws2 = FakeWebSocket.instances.at(-1)
+  assert.notEqual(ws2, ws, '应重建连接')
+  ws2.serverOpen()
+  ws2.serverSend({ op: 10, d: { heartbeat_interval: 60000 } })
+  await tick()
+  const resume = ws2.sent.find((frame) => frame.op === 6)
+  assert.ok(resume, 'd=true 应保留会话走 RESUME（避免多付一次 IDENTIFY + 丢续传窗）')
+  assert.equal(resume.d.session_id, 'sess_1')
+  assert.equal(resume.d.seq, 7, 'RESUME 应回传最后事件序号')
+  assert.ok(!ws2.sent.some((frame) => frame.op === 2), '不应发 IDENTIFY')
+  assert.ok(rig.lines.some((line) => line.includes('可恢复')), '告警应区分可恢复/不可恢复')
+  await rig.inbound.stop()
+})
+
+test('G-07 close 4004：作废 token 缓存重取 + 弃会话重新 IDENTIFY（不再带死凭证无限重连）', async () => {
+  const rig = makeRig()
+  const ws = await driveReady(rig)
+  const tokensBefore = rig.calls.filter((entry) => entry.url === TOKEN_URL).length
+  ws.serverClose(4004)
+  await tick(10)
+  const ws2 = FakeWebSocket.instances.at(-1)
+  assert.notEqual(ws2, ws, '应重建连接')
+  assert.equal(rig.calls.filter((entry) => entry.url === TOKEN_URL).length, tokensBefore + 1,
+    'close 4004 = token 被平台吊销：必须作废缓存重取（旧实现全文件无一处 invalidate）')
+  assert.ok(rig.lines.some((line) => line.includes('4004')), '告警应说明认证失败语义')
+  ws2.serverOpen()
+  ws2.serverSend({ op: 10, d: { heartbeat_interval: 60000 } })
+  await tick()
+  assert.ok(ws2.sent.some((frame) => frame.op === 2), '应弃会话重新 IDENTIFY')
+  assert.ok(!ws2.sent.some((frame) => frame.op === 6), '不应 RESUME 已失效会话')
+  await rig.inbound.stop()
+})
+
+test('G-07 close 4008：固定等待窗内不重连，窗过再 RESUME（限流码不走指数退避）', async () => {
+  const rig = makeRig({ config: { close4008WaitMs: 60 } })
+  const ws = await driveReady(rig)
+  const countBefore = FakeWebSocket.instances.length
+  ws.serverClose(4008)
+  await tick(20) // 指数退避口径（base=2ms/cap=8ms）早已到点——固定窗未到不得重连
+  assert.equal(FakeWebSocket.instances.length, countBefore, '固定等待窗内不得重连（短退避撞限流墙）')
+  await tick(80)
+  assert.equal(FakeWebSocket.instances.length, countBefore + 1, '等待窗过后应重连')
+  const ws2 = FakeWebSocket.instances.at(-1)
+  ws2.serverOpen()
+  ws2.serverSend({ op: 10, d: { heartbeat_interval: 60000 } })
+  await tick()
+  assert.ok(ws2.sent.some((frame) => frame.op === 6), '4008 会话仍有效，应走 RESUME')
+  await rig.inbound.stop()
+})
+
+test('G-07 close 4006/4009：会话不可恢复弃之重 IDENTIFY；无码关闭维持 RESUME 现行为', async () => {
+  for (const code of [4006, 4009]) {
+    const rig = makeRig()
+    const ws = await driveReady(rig)
+    ws.serverClose(code)
+    await tick(10)
+    const ws2 = FakeWebSocket.instances.at(-1)
+    assert.notEqual(ws2, ws, `close ${code} 应重建连接`)
+    ws2.serverOpen()
+    ws2.serverSend({ op: 10, d: { heartbeat_interval: 60000 } })
+    await tick()
+    assert.ok(ws2.sent.some((frame) => frame.op === 2), `close ${code} 应弃会话重新 IDENTIFY`)
+    assert.ok(!ws2.sent.some((frame) => frame.op === 6), `close ${code} 不应 RESUME`)
+    await rig.inbound.stop()
+  }
+  // 无码（1006 异常断开等）→ 现行为：RESUME 优先（既有用例已覆盖 close() 无码路径，
+  // 此处显式断言一次防止分支表误伤默认路径）
+  const rig = makeRig()
+  const ws = await driveReady(rig)
+  ws.serverClose()
+  await tick(10)
+  const ws2 = FakeWebSocket.instances.at(-1)
+  ws2.serverOpen()
+  ws2.serverSend({ op: 10, d: { heartbeat_interval: 60000 } })
+  await tick()
+  assert.ok(ws2.sent.some((frame) => frame.op === 6), '无码关闭应维持 RESUME 现行为')
   await rig.inbound.stop()
 })
 

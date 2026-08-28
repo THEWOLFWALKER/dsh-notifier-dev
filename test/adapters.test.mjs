@@ -236,13 +236,13 @@ test('各 adapter 都导出 type', () => {
 // ===== W6 出站投递语义（G-50/08/09/56）=====
 
 /** 两段式 fetch stub：第一次 token 换取，第二次消息投递（响应用 raw 字符串而非 Response.json 契约）。 */
-function captureQq(messageResponse) {
+function captureQq(messageResponse, tokenPayload = { access_token: 'T1', expires_in: 7200 }) {
   const originalFetch = globalThis.fetch
   const seen = []
   globalThis.fetch = async (url) => {
     seen.push(String(url))
     if (String(url).includes('getAppAccessToken')) {
-      return { ok: true, status: 200, json: async () => ({ access_token: 'T1', expires_in: 7200 }) }
+      return { ok: true, status: 200, json: async () => tokenPayload }
     }
     return messageResponse
   }
@@ -278,6 +278,13 @@ test('qq-bot: 失败不推进 msg_seq（重试幂等基线锚定）', async () =
   await assert.rejects(() => qqBot.send(resolved, MSG), /非 JSON/)
   await cap.done()
   assert.equal(resolved._msgSeq, 0)
+})
+
+test('qq-bot: expires_in=0 不再 || 7200 静默活两小时——TTL 归一 fail-closed 抛错（G-55）', async () => {
+  const cap = captureQq({ ok: true, status: 200, json: async () => ({ id: 'm' }) }, { access_token: 'T1', expires_in: 0 })
+  const resolved = qqBot.resolve({ appId: 'A1', appSecret: 'S1', groupId: 'G1' })
+  await assert.rejects(() => qqBot.send(resolved, MSG), /TTL 非法/, '上游损坏响应必须失败可见，不得默认值掩盖')
+  await cap.done()
 })
 
 test('serverchan: sctp 前缀 SENDKEY 走 sctp.ftqq.com 域名（G-09 SC3）', async () => {

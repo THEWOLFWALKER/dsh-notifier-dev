@@ -78,6 +78,9 @@ export function resolveWechatInboundConfig(raw, { credentials } = {}) {
       userId: String(cfg.userId ?? cred.userId ?? '').trim(),
       notifyUsers: (Array.isArray(cfg.notifyUsers) ? cfg.notifyUsers : []).map((id) => String(id).trim()).filter((id) => id !== ''),
       longPollTimeoutMs: clampInt(cfg.longPollTimeoutMs, 35000, 5000, 120000),
+      // G-12：轮询假死看门狗对账周期（默认 15s；在飞 getupdates 超 longPollTimeoutMs+
+      // 一个对账周期仍无返回 → 判假死强制 abort 断开重试）
+      watchdogIntervalMs: clampInt(cfg.watchdogIntervalMs, 15000, 5, 300000),
       timeoutMs: clampInt(cfg.timeoutMs, 15000, 1000, 60000),
       chunkSize: clampInt(cfg.chunkSize, 2000, 10, 4000),
       sendChunkDelayMs: clampInt(cfg.sendChunkDelayMs, 2000, 0, 30000),
@@ -111,6 +114,8 @@ export function createWechatIlinkInbound(options = {}) {
   const accountKey = accountScoped ? `${accountPrefix}account` : ACCOUNT_KEY
   const contextKey = (uid) => accountScoped ? `${accountPrefix}ctx:${uid}` : `${CTX_PREFIX}${uid}`
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+  // G-12：看门狗对账周期（resolveWechatInboundConfig 已归一；直接构造时兜底默认 15s）
+  const watchdogIntervalMs = clampInt(config.watchdogIntervalMs, 15000, 5, 300000)
   const imageDownloadTimeoutMs = clampInt(options.imageDownloadTimeoutMs, DEFAULT_INBOUND_MEDIA_TIMEOUT_MS, 1000, 60000)
   const imageDownloadMaxBytes = Math.min(MAX_INBOUND_IMAGE_BYTES,
     Math.max(1, Number(options.imageDownloadMaxBytes) || MAX_INBOUND_IMAGE_BYTES))
@@ -136,6 +141,11 @@ export function createWechatIlinkInbound(options = {}) {
   let disabled = false // 会话过期后置位：轮询停 + 发送拒（需人工重新扫码）
   let loopPromise = null
   let currentAbort = null
+  // G-12 假死看门狗状态：pollStartedAt 记当前在飞 getupdates 的发起时刻（null=无在飞）；
+  // watchdogKicks 计连续 kick 次数（任一次正常返回即清零——连续增长说明通道真死）。
+  let pollStartedAt = null
+  let watchdogTimer = null
+  let watchdogKicks = 0
   let syncBuf = boundedCursor(store?.get(syncBufKey, ''))
 
   function ctxKey(uid) {
@@ -271,16 +281,36 @@ export function createWechatIlinkInbound(options = {}) {
     if (normalized.image !== undefined) downloadImageBestEffort(normalized)
   }
 
+  /**
+   * G-12：轮询假死看门狗。长轮询挂死（TCP 活着但服务端永不回包）不产生任何异常——
+   * 失败计数（只覆盖显式异常）与熔断（只覆盖 sendmessage 限流）都不触发，通道静默失效
+   * 用户却以为插件在线。本层对账：在飞 getupdates 超过 longPollTimeoutMs + 一个对账
+   * 周期仍未返回，即 abort 强制断开，让轮询循环保守的失败计数路径重建连接。
+   * 对齐 dsh-im supervisor 思路（周期对账 + 防重入：仅在飞且超期才动手）。
+   */
+  function watchdogTick() {
+    if (!running || currentAbort === null || pollStartedAt === null) return
+    const nowMs = (options.now ?? Date.now)()
+    const inflightMs = nowMs - pollStartedAt
+    const deadlineMs = config.longPollTimeoutMs + Math.max(5000, watchdogIntervalMs)
+    if (inflightMs <= deadlineMs) return
+    watchdogKicks += 1
+    warn(`轮询假死检测：getupdates 在飞 ${Math.round(inflightMs / 1000)}s 未归（长轮询上限 ${Math.round(config.longPollTimeoutMs / 1000)}s，连续第 ${watchdogKicks} 次），强制断开重试`)
+    try { currentAbort.abort() } catch { /* 已完成不致命 */ }
+  }
+
   async function pollLoop() {
     let failures = 0
     while (running) {
       const controller = new AbortController()
       currentAbort = controller
+      pollStartedAt = (options.now ?? Date.now)() // G-12：在飞起点（finally 清）
       try {
         const response = await client.getUpdates(syncBuf, {
           timeoutMs: config.longPollTimeoutMs,
           signal: controller.signal,
         })
+        watchdogKicks = 0 // 正常返回即证通道未死，连续 kick 计数清零
         const batch = normalizeUpdateBatch(response, { accountId: config.accountId })
         if (!batch.ok) {
           const verdict = batch
@@ -323,6 +353,7 @@ export function createWechatIlinkInbound(options = {}) {
         await sleep(backoff ? config.backoffDelayMs : config.retryDelayMs)
       } finally {
         currentAbort = null
+        pollStartedAt = null // G-12：在飞结束（正常/异常/打断都算）
       }
     }
   }
@@ -405,14 +436,19 @@ export function createWechatIlinkInbound(options = {}) {
     start() {
       if (running || loopPromise !== null || disabled) return
       running = true
+      // G-12：假死看门狗与轮询循环同生命周期（unref：不独自挂住进程）
+      watchdogTimer = setInterval(watchdogTick, watchdogIntervalMs)
+      watchdogTimer.unref?.()
       loopPromise = pollLoop().finally(() => {
         loopPromise = null
+        if (watchdogTimer !== null) { clearInterval(watchdogTimer); watchdogTimer = null }
       })
     },
 
     /** 停止：打断在途长轮询并等循环退出（幂等）。 */
     async stop() {
       running = false
+      if (watchdogTimer !== null) { clearInterval(watchdogTimer); watchdogTimer = null }
       try { currentAbort?.abort() } catch { /* abort 不致命 */ }
       try { await loopPromise } catch { /* 循环异常已在内部吸收 */ }
       loopPromise = null

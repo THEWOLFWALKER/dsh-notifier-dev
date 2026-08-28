@@ -6,7 +6,7 @@
 // 注意：群/单聊「主动消息」需在 QQ 开放平台为机器人开启相应场景权限。
 
 import { postJson, str, num, NotifyError, ERROR_CODES } from './_shared.mjs'
-import { createTokenManager, createRateGate } from './_tokens.mjs'
+import { createTokenManager, createRateGate, normalizeTtlMs } from './_tokens.mjs'
 
 export const type = 'qq-bot'
 
@@ -56,7 +56,8 @@ export async function send(resolved, msg) {
     if (typeof payload?.access_token !== 'string' || payload.access_token === '') {
       throw new NotifyError(`qq-bot 换取 access_token 失败：检查 appId/appSecret 是否正确（q.qq.com 开发设置页）`, ERROR_CODES.API_ERROR)
     }
-    return { token: payload.access_token, expiresInMs: (Number(payload.expires_in) || 7200) * 1000 }
+    // G-55：expires_in 秒→毫秒后归一（非有限/≤0 抛错，不再 || 7200 掩盖上游损坏）
+    return { token: payload.access_token, expiresInMs: normalizeTtlMs(Number(payload.expires_in) * 1000, 'expires_in') }
   })
   resolved._rateGate ??= createRateGate(resolved.rateMs)
 

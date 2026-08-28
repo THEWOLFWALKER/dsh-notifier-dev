@@ -36,7 +36,7 @@
 // 军规：任何异常只 warn 不抛；stop() 幂等且清干净全部定时器/连接；错误文案不含 appSecret。
 
 import { createHash } from 'node:crypto'
-import { createTokenManager } from '../adapters/_tokens.mjs'
+import { createTokenManager, normalizeTtlMs } from '../adapters/_tokens.mjs'
 import { createBreaker } from './_breaker.mjs'
 import { setBounded, createThrottledWarn } from './_bounded.mjs'
 import { resolveNotifyTargets } from './target-guard.mjs'
@@ -194,7 +194,9 @@ export function createDingtalkInbound(options = {}) {
     if (Number(payload?.errcode) !== 0 || typeof payload?.access_token !== 'string' || payload.access_token === '') {
       throw new Error(`获取钉钉 access_token 失败（HTTP ${response.status}${payload?.errcode !== undefined ? ` errcode ${payload.errcode}` : ''}）：请检查 appKey/appSecret`)
     }
-    return { token: payload.access_token, expiresInMs: (Number(payload.expires_in) || 7200) * 1000 }
+    // G-55：同族归一——expires_in 非法（非有限/≤0）不再 || 7200 掩盖（同值不同命：
+    // 0 在钉钉层曾活 7200s、在 wecom 层只活 1s）
+    return { token: payload.access_token, expiresInMs: normalizeTtlMs(Number(payload.expires_in) * 1000, 'expires_in') }
   })
 
   // 运行态

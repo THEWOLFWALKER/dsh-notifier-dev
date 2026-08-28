@@ -17,7 +17,7 @@
 // 频控：Bot 维度 60qpm ≈ 1 条/秒（复用出站 qq-bot 的限速门经验值）；被动回复
 // （带 msg_id 关联事件）有独立配额，5 条内免主动消息权限。
 
-import { createTokenManager, createRateGate } from '../adapters/_tokens.mjs'
+import { createTokenManager, createRateGate, normalizeTtlMs } from '../adapters/_tokens.mjs'
 import { setBounded, createThrottledWarn } from './_bounded.mjs'
 import { resolveNotifyTargets } from './target-guard.mjs'
 import { buildApprovalAction, parseApprovalAction, buildQuestionAction, parseQuestionAction } from './_contract.mjs'
@@ -47,6 +47,10 @@ const OP_RECONNECT = 7
 const OP_INVALID_SESSION = 9
 const OP_HELLO = 10
 const OP_HEARTBEAT_ACK = 11
+
+/** G-07：close 4008（连接被限速）是服务端给出的硬性等待窗——按官方 SDK 语义固定等
+ *  60s 再重连，不走指数退避（限流期短退避重连等于连续撞墙，反而加剧限流）。 */
+const CLOSE_4008_WAIT_MS = 60000
 
 /**
  * 解析并校验 inbound.qq 配置。
@@ -134,6 +138,8 @@ export function createQqInbound(options = {}) {
   const WebSocketImpl = options.webSocketImpl ?? globalThis.WebSocket
   const reconnectBaseMs = Math.max(1, Number(options.reconnectBaseMs) || 1000)
   const reconnectCapMs = Math.max(reconnectBaseMs, Number(options.reconnectCapMs) || 30000)
+  // G-07：close 4008 的固定等待窗（默认 60s；测试注入缩短，不参与指数退避）
+  const close4008WaitMs = Math.max(0, Number(options.close4008WaitMs) || CLOSE_4008_WAIT_MS)
   const ackThreshold = Number(options.maxMissedAcks)
   const maxMissedAcks = Number.isFinite(ackThreshold) && ackThreshold >= 1 ? Math.min(10, Math.floor(ackThreshold)) : 2
 
@@ -162,7 +168,8 @@ export function createQqInbound(options = {}) {
     if (typeof payload?.access_token !== 'string' || payload.access_token === '') {
       throw new Error(`换取 access_token 失败（HTTP ${response.status}）：检查 appId/appSecret`)
     }
-    return { token: payload.access_token, expiresInMs: (Number(payload.expires_in) || 7200) * 1000 }
+    // G-55：与出站 qq-bot 同一归一——expires_in 非法（非有限/≤0）不再 || 7200 掩盖
+    return { token: payload.access_token, expiresInMs: normalizeTtlMs(Number(payload.expires_in) * 1000, 'expires_in') }
   })
   const rateGate = createRateGate(1050) // 60qpm ≈ 1 条/秒
 
@@ -188,10 +195,12 @@ export function createQqInbound(options = {}) {
     return (config.notifyGroups ?? []).includes(String(chatId)) ? 'group' : 'user'
   }
 
-  function scheduleReconnect({ resume = false } = {}) {
+  function scheduleReconnect({ resume = false, delayMs = null } = {}) {
     if (stopRequested) return
     if (reconnectTimer !== null) return
-    const delay = Math.min(reconnectBaseMs * 2 ** reconnectAttempts, reconnectCapMs)
+    // G-07：4008（连接被限速）服务端给出的是硬性等待窗，不用指数退避——按计划固定 60s
+    const delay = delayMs !== null ? Math.max(0, delayMs)
+      : Math.min(reconnectBaseMs * 2 ** reconnectAttempts, reconnectCapMs)
     reconnectAttempts += 1
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
@@ -213,6 +222,36 @@ export function createQqInbound(options = {}) {
       try { ws.close() } catch { /* 已关闭 */ }
       ws = null
     }
+  }
+
+  /** G-07：关闭码分支表（对齐官方 SDK reconnect 语义，dsh-im qqbot-connector 同源）：
+   *  - 4004 认证失败：token 已被平台吊销——作废 token 缓存（此前全文件无一处
+   *    tokens.invalidate()，带着死凭证无限重连直到 TTL 自然过期）+ 弃会话重 IDENTIFY
+   *  - 4008 连接被限速：服务端硬性等待窗，固定等（不走指数退避）；会话仍有效走 RESUME
+   *  - 4006 seq 非法 / 4007 shard 无效 / 4009 会话超时：会话不可恢复，弃之重 IDENTIFY
+   *  - 其余（1000 正常关闭 / 1006 异常断开 / 无码）：现行为——RESUME 优先 + 指数退避 */
+  function scheduleReconnectForClose(code) {
+    if (code === 4004) {
+      warn('QQ 网关认证失败（close 4004）：作废 access_token 缓存重取，弃会话重新 IDENTIFY')
+      tokens.invalidate()
+      sessionId = null
+      lastSeq = null
+      scheduleReconnect({ resume: false })
+      return
+    }
+    if (code === 4008) {
+      warn(`QQ 网关连接被限速（close 4008）：按服务端等待窗固定 ${Math.round(close4008WaitMs / 1000)}s 后 RESUME（不走指数退避）`)
+      scheduleReconnect({ resume: true, delayMs: close4008WaitMs })
+      return
+    }
+    if (code === 4006 || code === 4007 || code === 4009) {
+      warn(`QQ 网关闭码 ${code}：会话不可恢复，弃会话重新 IDENTIFY`)
+      sessionId = null
+      lastSeq = null
+      scheduleReconnect({ resume: false })
+      return
+    }
+    scheduleReconnect({ resume: true })
   }
 
   async function fetchGatewayUrl() {
@@ -421,11 +460,17 @@ export function createQqInbound(options = {}) {
       return
     }
     if (frame.op === OP_INVALID_SESSION) {
-      warn('会话失效（op9）：丢弃 session 重新 IDENTIFY')
-      sessionId = null
-      lastSeq = null
+      // G-21：按官方 SDK 语义看 d 标志——d:true 会话仍可恢复（保留 session 走 RESUME，
+      // 事件续传不丢）；d:false 会话已死才弃之重 IDENTIFY。旧实现一律弃会话：
+      // 每次可恢复失效都多付一次 IDENTIFY 握手 + 丢失续传窗。
+      const resumable = frame.d === true
+      warn(`会话失效（op9）：${resumable ? '可恢复，保留 session 走 RESUME' : '不可恢复，弃会话重新 IDENTIFY'}`)
+      if (!resumable) {
+        sessionId = null
+        lastSeq = null
+      }
       cleanupSocket()
-      scheduleReconnect({ resume: false })
+      scheduleReconnect({ resume: resumable })
     }
   }
 
@@ -440,9 +485,10 @@ export function createQqInbound(options = {}) {
         warn(`帧处理异常: ${error instanceof Error ? error.message : String(error)}`)
       }
     })
-    ws.addEventListener('close', () => {
+    ws.addEventListener('close', (event) => {
       cleanupSocket()
-      scheduleReconnect({ resume: true })
+      // G-07：关闭码带语义——4004 刷 token / 4008 固定窗 / 4006/4007/4009 弃会话
+      scheduleReconnectForClose(Number(event?.code))
     })
     ws.addEventListener('error', () => { /* close 会跟着来，重连在 close 里统一调度 */ })
   }

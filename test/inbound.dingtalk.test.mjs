@@ -837,13 +837,28 @@ test('notifyTargets：notifyUsers 优先，缺省回落 fallbackTargets；capabi
 
 // ---------------------------------------------------------------- token 与重连
 
-test('token 到期前 60s 余量：缓存落入刷新窗口即重取（两次回复两次 gettoken）', async () => {
+test('G-29 动态刷新余量：短 TTL 不再「每发必取」，TTL 到点后重取', async () => {
   const rig = makeRig({ fetchOptions: { tokenResponse: { errcode: 0, access_token: 'AT_TOKEN', expires_in: 1 } } })
   await driveConnected(rig)
   pushMessage({ msgId: 'msg_tk1' })
   assert.equal(await rig.inbound.sendText('cid_1', '一'), true)
   assert.equal(await rig.inbound.sendText('cid_1', '二'), true)
-  assert.equal(rig.calls.filter((entry) => entry.url.startsWith(`${OAPI}/gettoken?`)).length, 2)
+  // TTL=1s 远小于 60s 余量：旧固定余量下缓存永判不新鲜（第二次发送即重取，短 TTL 渠道
+  // 每发必打 gettoken）；G-29 动态余量 min(60s, 剩余寿命 20%) 下缓存可用到自然到期。
+  assert.equal(rig.calls.filter((entry) => entry.url.startsWith(`${OAPI}/gettoken?`)).length, 1,
+    '两次发送应共用同一 token（1 次 gettoken）')
+  await new Promise((resolve) => setTimeout(resolve, 1100)) // TTL(1s) 到点
+  assert.equal(await rig.inbound.sendText('cid_1', '三'), true)
+  assert.equal(rig.calls.filter((entry) => entry.url.startsWith(`${OAPI}/gettoken?`)).length, 2,
+    '过期后的下一次发送应重取 token')
+})
+
+test('G-55：gettoken 返回 expires_in=0 → TTL 归一 fail-closed，发送失败且告警可见（不再 || 7200）', async () => {
+  const rig = makeRig({ fetchOptions: { tokenResponse: { errcode: 0, access_token: 'AT_TOKEN', expires_in: 0 } } })
+  await driveConnected(rig)
+  pushMessage({ msgId: 'msg_tk0' })
+  assert.equal(await rig.inbound.sendText('cid_1', '一'), false, '上游损坏不再被默认值掩盖成「活 7200s」')
+  assert.ok(rig.lines.some((line) => line.includes('TTL 非法')), '告警必须含 TTL 非法语义')
 })
 
 test('errcode!==0：token 作废重取后重试一次成功（不误报失败）', async () => {
