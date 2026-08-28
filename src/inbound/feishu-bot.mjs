@@ -13,6 +13,7 @@
 
 import { buildApprovalAction, buildQuestionAction, parseApprovalAction, parseActionPayload, parseQuestionAction } from './_contract.mjs'
 import { resolveNotifyTargets } from './target-guard.mjs'
+import { stripCommandMention, stripLeadingMention } from './commands.mjs'
 
 const DEFAULT_DOMAIN = 'https://open.feishu.cn'
 const SDK_PACKAGE = '@larksuiteoapi/node-sdk'
@@ -44,12 +45,43 @@ export function resolveFeishuInboundConfig(raw, { envRefs = (v) => v, credential
   }
 }
 
-/** 从文本消息 content 里提取净文本（剥 @提及占位 @_user_N）。 */
-function extractText(content) {
+/**
+ * 从文本消息 content 里提取净文本（G-25：@提及占位 @_user_N 依据事件 mentions 映射「还原」为 @名字）。
+ *
+ * 飞书文本消息把 @提及 压成不透明占位符 @_user_N，真名放在事件 message.mentions[] 里
+ * （官方《接收消息内容结构》：mentions[].key = '@_user_N'，mentions[].name = 展示名；
+ * id 为 open_id 对象或字符串两种 schema 均有，此处只用 key/name）。旧实现把占位符
+ * 直接删成空串：
+ *   - '帮我提醒 @_user_2 开会' → '帮我提醒  开会'（连续双空格 + 谁被 @ 的语义全丢）
+ *   - '/pair @_user_1 code'    → '/pair  code'（占位符虽被 parseCommand 的 \s+ 分词吸收，
+ *     但消息里 @ 了谁这一信息彻底丢失）
+ *
+ * 【还原 vs 剥离——与 TG/钉钉的策略差异】飞书是「还原语义」不是「剥离」：TG/钉钉的 @ 是
+ * 字面文本、渠道不带任何元数据，只能按形态剥（stripCommandMention/stripLeadingMention）；
+ * 飞书有结构化 mentions 映射，能把不透明占位符还原成可读 '@名字'，保住「谁被提到」的语义，
+ * 双空格随之消失。还原后才做通用的「行首机器人提及 = 寻址噪音」剥离（见 handleMessage）——
+ * 那是所有渠道共用的寻址噪音规则，与这里的还原不冲突。
+ *
+ * mentions 缺失或该占位符不在映射里 → 退回旧行为（删成空串）：事件不带 mentions 时无从
+ * 还原，宁可丢名字也不留 '@_user_1' 这种对用户无意义的占位符残片。
+ *
+ * @param {string} content - message.content（JSON 字符串，形如 {"text":"@_user_1 hi"}）
+ * @param {Array<{key?: string, name?: string}>} [mentions] - 事件 message.mentions
+ * @returns {string} 还原/剥离占位符后的净文本（trim 过）
+ */
+function extractText(content, mentions = []) {
   try {
     const parsed = JSON.parse(content ?? '')
     const text = typeof parsed?.text === 'string' ? parsed.text : ''
-    return text.replace(/@_user_\d+/g, '').trim()
+    if (text === '') return ''
+    const byKey = new Map()
+    for (const mention of Array.isArray(mentions) ? mentions : []) {
+      const key = String(mention?.key ?? '')
+      const name = String(mention?.name ?? '').trim()
+      if (key !== '' && name !== '') byKey.set(key, `@${name}`)
+    }
+    if (byKey.size === 0) return text.replace(/@_user_\d+/g, '').trim()
+    return text.replace(/@_user_\d+/g, (placeholder) => byKey.get(placeholder) ?? '').trim()
   } catch {
     return ''
   }
@@ -251,7 +283,13 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
       const messageId = String(message.message_id ?? '')
       if (messageId === '' || openId === '') return
       const text = String(message.message_type ?? '') === 'text'
-        ? extractText(message.content)
+        // G-25：mentions 映射还原占位符 → '@名字'（正文中间的提及保语义、双空格消失）；
+        // G-06：还原后再做与 TG/钉钉同款的寻址噪音剥离——行首 '@机器人名 '（群聊里
+        // 用户必须 @ 机器人才发的消息，还原后会变成 '@机器人 /stop'，不剥则
+        // conversation 的 startsWith('/') 判定失效、群聊命令全废）+ 命令词 @ 后缀
+        // （'/pair@张三 code' → '/pair code'，args 不含 @ 残片）。正文中间还原出的
+        // '@名字' 一律保留（那是语义内容，不是寻址噪音）。
+        ? stripCommandMention(stripLeadingMention(extractText(message.content, message.mentions)))
         : `[不支持的消息类型：${message.message_type ?? 'unknown'}]`
       if (text === '') return
       // bus 白名单 + 去重在 bus 层完成；本层只负责规范化 envelope。
