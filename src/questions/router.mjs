@@ -26,6 +26,7 @@
 
 import { createHash, randomBytes } from 'node:crypto'
 import { normalizeInbound } from '../inbound/_contract.mjs'
+import { MESSAGE_PRIORITY } from '../inbound/bus.mjs'
 import { guardTargets } from '../inbound/target-guard.mjs'
 import { createEscalationChain } from '../approval/escalation.mjs'
 import { createInteractionLedger } from '../interaction/ledger.mjs'
@@ -838,13 +839,15 @@ export function createQuestionBridge(deps) {
   let disposed = false
 
   /**
-   * 挂载编号回复处理器。必须在审批路由注册之后调用（bus.onMessage 插入序 =
-   * 消费优先级：审批 '1'/'2' 先于提问编号，避免歧义时提问抢走审批回复）。
+   * 挂载编号回复处理器。G-31 起消费优先级由 bus.onMessage 的显式 priority 声明
+   * （卡片动作 10 / 编号回复 20），不再依赖「先于审批路由注册」的调用次序——
+   * 审批与提问同为 numberedReply 时按注册序稳定排序，审批仍先裁决（歧义时
+   * 提问不抢走审批的 '1'/'2' 回复）。
    */
   function attach() {
     if (disposed) return
-    if (disposeCardAction === null) disposeCardAction = bus.onMessage(handleCardAction)
-    if (disposeMessage === null) disposeMessage = bus.onMessage(handleNumberedReply)
+    if (disposeCardAction === null) disposeCardAction = bus.onMessage(handleCardAction, { priority: MESSAGE_PRIORITY.cardAction })
+    if (disposeMessage === null) disposeMessage = bus.onMessage(handleNumberedReply, { priority: MESSAGE_PRIORITY.numberedReply })
   }
 
   /**

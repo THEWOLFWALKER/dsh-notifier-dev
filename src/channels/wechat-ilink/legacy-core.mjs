@@ -264,10 +264,13 @@ export function createWechatIlinkInbound(options = {}) {
       warnCtxRejected((count) => `context_token 形状异常已拒收（长度或字符不符合限制，上限 ${CTX_TOKEN_MAX_LEN}，不接受空白/控制字符）：来自 ${from} 的本条消息照常处理，发送将走无 token 重试路径${count > 1 ? `（近期累计 ${count} 次）` : ''}`)
     }
     const text = String(normalized.text ?? '')
-    const messageId = String(normalized.messageId ?? '') || `wx:${from}:${hash6(text)}`
+    const rawMessageId = String(normalized.messageId ?? '')
+    // G-46：hash6 兜底键标记 synthetic——bus 去重走 60s 短窗（原生 msgId 才配 24h）。
+    const messageId = rawMessageId !== '' ? rawMessageId : `wx:${from}:${hash6(text)}`
+    const messageIdSynthetic = rawMessageId === ''
     // v0.7：accept 返回值消费——拒绝/命令回执不再已读不回
     // context_token is transport state, never a Control Core/audit field.
-    const envelope = { ...normalized, channel: 'wechat', accountId: String(config?.accountId ?? ''), userId: from, chatId: from, messageId, text }
+    const envelope = { ...normalized, channel: 'wechat', accountId: String(config?.accountId ?? ''), userId: from, chatId: from, messageId, messageIdSynthetic, text }
     delete envelope.contextToken
     delete envelope.contextTokenRejected
     const result = bus.accept(envelope)

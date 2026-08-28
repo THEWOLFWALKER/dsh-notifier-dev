@@ -1,8 +1,8 @@
 # Project state
 
-Snapshot date: 2026-08-27. Current release branch: `codex/stage5-wechat-ilink-hardening`. Package version authority is `0.9.0`; the public GitHub source mirror and npm registry `latest` are synced to `0.9.0`.
+Snapshot date: 2026-08-28. Current development branch: `codex/fix-outbound-delivery` (R4 train in progress; W10 committed `5a06dac`, W11 at 2/9 items). Last released version is `0.9.3`; the R4 train will close at `0.9.4`. Test-count baselines in release guards are updated at train close, not per-commit.
 
-- Current development validation: `npm test` = **1352** total, **1351 pass + 1 skip**.
+- Current development validation: `npm test` = **1493** total, **1493 pass** (2026-08-28, mid-R4).
 - Historical npm `0.8.6` artifact carried contract count **909**; the published `0.9.0` artifact uses the current **1352** test count.
 - Canonical engineering repository is private `dsh-notifier-dev`; the public GitHub repository is a release/source mirror and is not a development relay.
 - Runtime is Node.js ESM, Node `>=22`, no production dependencies, no build step. There are 27 outbound adapters and six inbound control channels.

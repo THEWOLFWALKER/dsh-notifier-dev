@@ -11,6 +11,7 @@
 
 import { createEscalationChain } from './escalation.mjs'
 import { normalizeInbound, parseApprovalAction } from '../inbound/_contract.mjs'
+import { MESSAGE_PRIORITY } from '../inbound/bus.mjs'
 import { guardTargets } from '../inbound/target-guard.mjs'
 import { createInteractionLedger } from '../interaction/ledger.mjs'
 import { workspaceOf } from '../routing/session-registry.mjs'
@@ -392,7 +393,8 @@ export function registerApprovalHandler(deps) {
     return true
   }
 
-  const disposeApprovalAction = bus.onMessage(handleApprovalAction)
+  // G-31：显式优先级——卡片动作线最先（ap: 负载是显式意图，绝不落入会话路由）。
+  const disposeApprovalAction = bus.onMessage(handleApprovalAction, { priority: MESSAGE_PRIORITY.cardAction })
 
   // 编号回复降级（无按钮渠道）：白名单用户回复 1/2 核销最近一条待决审批。
   // v0.6.3 返回 true = 消息已被审批消费——bus 据此停止扇出，同一消息不再进对话路由
@@ -438,7 +440,7 @@ export function registerApprovalHandler(deps) {
     return true
   }
 
-  const disposeMessage = bus.onMessage(handleNumberedReply)
+  const disposeMessage = bus.onMessage(handleNumberedReply, { priority: MESSAGE_PRIORITY.numberedReply })
 
   /** CRACK-003：编号回复代决资格——仅该渠道绑定的 owner 可代决他人卡片；identity 缺失/异常 fail-closed。 */
   function isAuthorizedDecider(identity, channel, userId) {

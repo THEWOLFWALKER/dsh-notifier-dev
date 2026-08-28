@@ -1,6 +1,10 @@
 # Technical debt and release gates
 
-状态更新：2026-08-27。本轮代码维护已完成；剩余事项只是真机/宿主验证和外部目录缓存刷新，不应被误读为待实现的新功能。当前已发布 v0.9.0 源码线 `npm test` 为 `1352`（1351 pass + 1 skip）；公共 GitHub 源码镜像、npm registry 与公开仓库发现元数据均已同步，Awesome DSH PR #3490 已提交。
+状态更新：2026-08-28。R3 安全加固列车已收口发布 `0.9.3`；当前在 R4「配置与入站生命周期」列车中途（W10 已提交 `5a06dac`，W11 完成 2/9），`npm test` 为 `1493`（1493 pass，列车中途数，收口时统一更新发布基线）。剩余事项只是真机/宿主验证和外部目录缓存刷新，不应被误读为待实现的新功能。
+
+### 已知工具面坑（2026-08-28 登记）
+
+- **裸 `node --test` 会把 `scripts/` 吸进测试扫描**：`scripts/test-channel.mjs` 是需要 CLI 参数的运维脚本，无参调用退出码 1，被 node test runner 当失败用例。正式测试面是 `npm test`（glob 限定 `test/*.test.mjs`/`*.spec.mjs`）；全量校验一律用 `npm test`，不要裸跑 `node --test`。
 
 ## 已完成的维护范围
 

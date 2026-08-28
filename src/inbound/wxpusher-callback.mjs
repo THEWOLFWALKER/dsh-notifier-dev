@@ -164,7 +164,10 @@ export function createWxpusherInbound(options = {}) {
           accountId: resolvedAccountId,
           userId: uid,
           chatId: uid,
+          // G-46：回调无消息 id，hash6 合成键标记 synthetic——bus 去重走 60s 短窗
+          // （键含 time 秒级戳，同秒重投仍被吸收；不同秒的同文本新消息不再误吞）。
           messageId: `cmd:${uid}:${time}:${hash6(text)}`,
+          messageIdSynthetic: true,
           text,
         })
         if (result?.reply !== undefined) {

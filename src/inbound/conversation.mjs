@@ -17,6 +17,7 @@ import { workspaceOf } from '../routing/session-registry.mjs'
 import { CHANNEL_TYPES } from '../config.mjs'
 import { chatScopeOf } from '../control/session-arbiter.mjs'
 import { bindingKey as identityBindingKey } from './identity.mjs'
+import { MESSAGE_PRIORITY } from './bus.mjs'
 
 const DEFAULT_MERGE_WINDOW_MS = 1500
 const SUMMARY_MAX_CHARS = 120
@@ -608,6 +609,7 @@ export function registerConversationRouter(deps) {
     else reply(envelope.channel, envelope.chatId, '远程控制被拒绝，请回桌面确认')
   }
 
+  // G-31：会话路由是消费链末位兜底（priority 100）——前面审批/提问未消费的消息才进 agent 会话。
   const disposeMessage = bus.onMessage((envelope) => {
     const text = String(envelope.text ?? '').trim()
     if (text === '') return
@@ -642,7 +644,7 @@ export function registerConversationRouter(deps) {
       timer: setTimeout(() => flush(envelope), mergeWindowMs),
       forceSteer: false,
     })
-  })
+  }, { priority: MESSAGE_PRIORITY.conversation })
 
   // 追踪最近活跃 agent（默认投递目标）；agent 退出时清理绑定与合并窗。
   // v0.7.3（#4）：DSH 的 agent/created | agent/disposed 事件签名是 (payload: { agent })，
