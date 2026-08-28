@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.9.2] - 2026-08-28
+
+R2「投递与凭证可靠性」修复列车（80 项清单第二批 13 项：W6/W7/W8）。全部为 mock/contract 证据，协议类修复未经真机验证（真机缺口已登记 `docs/memory/risks.md`）；`npm test` 为 1447（1447 pass）。
+
+### ⚠️ 破坏性语义变化（迁移说明）
+
+- **投递超时不再重试（G-50）**：超时 = 请求可能已到达，重试即 at-least-once 重复通知。现在超时统一标记 noRetry（错误码仍 TIMEOUT，文案「结果未知，不再重试」）；确定性失败（连接拒绝/明确 4xx/5xx）维持重试。**依赖「超时后自动重试」的用户需自行评估是否补发**。
+- **token TTL 非法值 fail-closed（G-55）**：上游返回 `expires_in` 为 0/负/非数值时，qq-bot/wecom-app/钉钉入站/qq 网关四处不再各自 `|| 7200` 静默吞掉——统一抛错让投递失败并告警。上游损坏必须可见，不得拿默认值掩盖。
+- **QQ 网关 INVALID_SESSION 可恢复会话不再弃（G-21）**：op9 带 `d:true` 时保留 session 走 RESUME；`d:false` 才重新 IDENTIFY（对齐官方 SDK）。
+
+### W6 出站投递语义（G-50/08/09/56）
+
+- **G-50 超时不再盲目重试**：`postJson`/`postForm` 超时统一 `timeoutNoRetryError`（noRetry=true）——重试会把「可能已送达」变成「必然重复送达」。
+- **G-08 平台限流退避**：HTTP 错误体解析 `parameters.retry_after` 附着 `retryAfterMs`，重试退避取 max(指数退避, retryAfterMs)；Telegram 入站 `api()` 同附着。
+- **G-09 Server酱 SC3**：`sctp` 前缀 SENDKEY 走 `sctp.ftqq.com` 域名；`sct`/`sendKey`/`sctKey` 三别名同时配置按 sct > sendKey > sctKey 取值并 stderr 出声一次。
+- **G-56 qq-bot 2xx 非 JSON**：解析失败抛 `BAD_UPSTREAM_RESPONSE` + stderr，不再乐观当成功；msg_seq 冻结语义维持（失败不推进，重试幂等）。
+
+### W7 错误可见性分层（G-53/54）
+
+- **G-53 publicMessage/detail 分层**：错误对象区分对外话术（通知/回执用，不含上游原文与凭证碎片）与对内明细（日志用）；`health` 与 `notify` 各取所需。
+- **G-54 渠道名映射**：对外话术用中文渠道名（「钉钉」「企业微信」而非 `dingtalk`/`wecom-app`）；`verdict-text` 统一生成，`bus.mjs` 枚举零改动。
+
+### W8 token 与网关生命周期（G-11/55/29/07/21/12）
+
+- **G-11 代际守卫**：`invalidate()` 递增 generation 并清 inflight；在飞任务写回前比对代际——旧任务晚完成不再把被吊销 token 连同 7200s TTL 写回缓存。
+- **G-55 TTL 归一单一实现 `normalizeTtlMs`**：非有限/≤0 抛错，正数钳制 [1s, 7d]。同值不同命终结：0 曾在 qq 层活 7200s、wecom 层活 1s、feishu-register 变立即超时（本地配置不炸 CLI：回退默认 480s 并出声）。
+- **G-29 动态刷新余量**：余量 = min(配置值, 剩余寿命 20%)——TTL < 60s 的渠道不再「永判不新鲜」每发必取 gettoken。
+- **G-07 QQ 关闭码分支表**：4004 作废 token + 弃会话（全文件首处 `tokens.invalidate()`，不再带死凭证无限重连）；4008 固定 60s 等待窗（限流码走短退避反而雪崩）；4006/4007/4009 弃会话重 IDENTIFY；其余现行为。
+- **G-21 INVALID_SESSION 看 d 标志**：见上文破坏性变化。
+- **G-12 iLink 轮询假死看门狗**：在飞 getupdates 超 longPollTimeoutMs + 宽限仍未返回即 abort 强制断开重试（连续 kick 计数可观测）——TCP 活着但服务端不推消息的假死从「完全静默」变「可检测」。
+
 ## [0.9.1] - 2026-08-28
 
 R1「正确性第一线」修复列车（20 轮审查 80 项清单的第一批 18 项）。全部为 mock/contract 证据，协议类修复未经真机验证（真机缺口已登记 `docs/memory/risks.md`）；`npm test` 为 1414（1414 pass）。

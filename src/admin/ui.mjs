@@ -132,7 +132,7 @@ label.fld input { flex: 1; }
 </head>
 <body>
 <header>
-  <h1>dsh-notifier 管理台<small>v0.9.1</small></h1>
+  <h1>dsh-notifier 管理台<small>v0.9.2</small></h1>
   <span id="loadState" role="status" aria-live="polite"></span>
   <span id="entryHint">仅本机回环 · 当前入口：<code id="entryUrl"></code></span>
   <button id="btnCopyEntry" title="复制当前管理台地址">复制地址</button>
