@@ -349,8 +349,20 @@ export function registerApprovalHandler(deps) {
       return true
     }
     const targets = (Array.isArray(row.pushedTo) ? row.pushedTo : []).filter((target) => String(target.channel) === String(envelope.channel) && (target.accountId === undefined || String(target.accountId) === String(envelope.accountId ?? '')))
-    if (targets.length > 0 && !targets.some((target) => String(target.userId) === String(envelope.userId))) {
-      reply('仅审批接收人可点击裁决')
+    // G-41（2026-08-28）：去掉原 `targets.length > 0 &&` 门控——pushedTo 为空表（或该
+    // 渠道/账号无投递记录）时同样执行接收人比对。空表意味着「无法证明投递对象」：
+    // 按钮 token 虽只随卡片下发，纵深上仍不得在无法证明回复来源时放行（原形态会跳过
+    // 比对直落 Control Core，只剩 authorize 一道内部防线，且回执话术误导为「已处理」）。
+    // 取舍：增量落账窗口（persistPushed 前的单卡发送耗时）与写盘失败造成的临时空表
+    // 在此退化为「拒绝直到账本一致」——用户回桌面或稍后重点，方向与 fail-closed 一致，
+    // 只收紧不放宽。
+    if (!targets.some((target) => String(target.userId) === String(envelope.userId))) {
+      if (targets.length === 0) {
+        warn(`审批按钮来源无法核验（无投递记录）：${key}（channel ${envelope.channel}，user ${envelope.userId}）`)
+        reply('未找到该审批的投递记录，无法核验回复来源，请回桌面处理')
+      } else {
+        reply('仅审批接收人可点击裁决')
+      }
       return true
     }
     // v0.8.7：accountId 缺失时不得用 channel 名伪造——fail-closed 交还桌面。
