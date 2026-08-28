@@ -17,7 +17,7 @@
 //     绝不让底层异常裸穿到 HTTP 层；
 //   - 动作方法（testChannel/scanChannel）能力不可用抛 ApiError(501)，可用则结果原样透传；
 //   - 审计（<stateDir>/admin-audit.jsonl，append-only，§5「谁改了什么」）失败只 warn，
-//     绝不影响主流程。
+//     绝不影响主流程（appendAudit 内部吞错 + 各调用点 auditGuard 兜底双保险，G-05）。
 
 import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -306,7 +306,8 @@ function describeBadChannelValue(key, value) {
  *   getChannels/putChannel/testChannel/scanChannel/getMembers/putMember/deleteMember/
  *   confirmPendingMember/dismissPendingMember/mintPairingCode/revokePairingCode/getAudit/
  *   getPendingQuestions/settleQuestion
- *   （appendAudit 为内部函数不外露）
+ *   （appendAudit 门面供 pairing 等外部子系统落审计；本文件内部调用点一律走
+ *   auditGuard 兜底——审计失败绝不改变主流程返回值，G-05）
  */
 export function createAdminApi(options = {}) {
   const {
@@ -388,6 +389,24 @@ export function createAdminApi(options = {}) {
       try { chmodSync(auditFile, 0o600) } catch { /* Windows/受限环境无 chmod */ }
     } catch (error) {
       warn(`审计写入失败: ${errorMessage(error)}`)
+    }
+  }
+
+  /**
+   * G-05（2026-08-28）：内部审计统一兜底入口，本文件所有 appendAudit 调用点一律经此。
+   * appendAudit 自身虽已吞错（磁盘满/权限异常只 warn），但调用点控制流同样不得依赖
+   * 审计成功——状态写入/裁决已生效的事实不能被可观测性副作用翻成异常：HTTP 层会把
+   * 裸异常映射 500，前端引导重试，重试命中 already-handled 再报错，内外状态认知分叉。
+   * 经 api.appendAudit 门面调用（与 pairing 等外部子系统同一入口，宿主/测试可整体替换
+   * 审计后端；api 在下方声明，本函数只在方法调用期执行，届时必已初始化）。任何抛错 →
+   * warn（stderr + host logger 双出口）后继续，绝不改变主流程返回值；各调用点各自经
+   * 此入口独立兜底，互不牵连。取舍：该次审计行缺失，降级以 warn 留痕换取结果如实。
+   */
+  const auditGuard = (action, detail) => {
+    try {
+      api.appendAudit(action, detail)
+    } catch (error) {
+      warn(`审计写入失败（action=${String(action ?? 'unknown')}，主流程结果不受影响）: ${errorMessage(error)}`)
     }
   }
 
@@ -611,7 +630,7 @@ export function createAdminApi(options = {}) {
         }
       }
 
-      appendAudit('putBindings', {
+      auditGuard('putBindings', {
         agents: nextAgents === null ? null : Object.keys(nextAgents),
         channels: nextChannels === null ? null : Object.keys(nextChannels),
       })
@@ -710,7 +729,7 @@ export function createAdminApi(options = {}) {
       if (!callSetter(router?.setSessionOutbound, id, normalized)) {
         throw new ApiError(500, '会话覆盖写入存储失败')
       }
-      appendAudit('patchSession', { id, diff: normalized })
+      auditGuard('patchSession', { id, diff: normalized })
       const outbound = plainObjectOf(plainObjectOf(readTable(KEY_SESSIONS)[id])?.outbound)
       return { id, outbound: outbound === null ? undefined : deepCopyPlain(outbound) }
     },
@@ -823,7 +842,7 @@ export function createAdminApi(options = {}) {
       if (!callSetter(router?.setSessionControl, id, normalized)) {
         throw new ApiError(500, '会话控制覆盖写入存储失败')
       }
-      appendAudit('setSessionControl', { id, diff: controlSummary(normalized) })
+      auditGuard('setSessionControl', { id, diff: controlSummary(normalized) })
       const control = plainObjectOf(plainObjectOf(readTable(KEY_SESSIONS)[id])?.control)
       return { id, control: controlSummary(control) }
     },
@@ -915,7 +934,7 @@ export function createAdminApi(options = {}) {
         warn(`通道凭证写入失败: ${errorMessage(error)}`)
         return { type, saved: false }
       }
-      appendAudit('putChannel', { type }) // 审计只记通道名，绝不落凭证内容
+      auditGuard('putChannel', { type }) // 审计只记通道名，绝不落凭证内容
       return { type, saved: true }
     },
 
@@ -956,7 +975,7 @@ export function createAdminApi(options = {}) {
       }
       const result = await handler()
       if (plainObjectOf(result) !== null && result.saved === true) {
-        appendAudit('scanChannel', { channel }) // 只记通道名，绝不落凭证内容
+        auditGuard('scanChannel', { channel }) // 只记通道名，绝不落凭证内容
       }
       return result
     },
@@ -1035,7 +1054,7 @@ export function createAdminApi(options = {}) {
       }
       const result = identity.updateBinding(parsed.channel, parsed.userId, normalized)
       if (result.ok !== true) throw new ApiError(404, `成员不存在：${parsed.raw}`)
-      appendAudit('putMember', { key: parsed.raw, diff: normalized })
+      auditGuard('putMember', { key: parsed.raw, diff: normalized })
       return { key: parsed.raw, saved: true, record: result.record }
     },
 
@@ -1061,7 +1080,7 @@ export function createAdminApi(options = {}) {
       }
       const result = identity.removeBinding(parsed.channel, parsed.userId)
       if (result.ok !== true) throw new ApiError(404, `成员不存在：${parsed.raw}`)
-      appendAudit('deleteMember', { key: parsed.raw, role: current.role })
+      auditGuard('deleteMember', { key: parsed.raw, role: current.role })
       return { key: parsed.raw, deleted: true }
     },
 
@@ -1081,7 +1100,7 @@ export function createAdminApi(options = {}) {
         if (result.reason === 'already-bound') throw new ApiError(409, `该身份已是成员：${parsed.raw}`)
         throw new ApiError(404, `待确认绑定不存在：${parsed.raw}`)
       }
-      appendAudit('confirmPending', { key: parsed.raw })
+      auditGuard('confirmPending', { key: parsed.raw })
       return { key: parsed.raw, confirmed: true, record: result.record }
     },
 
@@ -1098,7 +1117,7 @@ export function createAdminApi(options = {}) {
       if (parsed === null) throw new ApiError(422, MEMBER_KEY_HINT)
       const result = identity.dismissPending(parsed.channel, parsed.userId)
       if (result.ok !== true) throw new ApiError(404, `待确认绑定不存在：${parsed.raw}`)
-      appendAudit('dismissPending', { key: parsed.raw })
+      auditGuard('dismissPending', { key: parsed.raw })
       return { key: parsed.raw, dismissed: true }
     },
 
@@ -1234,7 +1253,11 @@ export function createAdminApi(options = {}) {
         throw new ApiError(409, '结算未生效（内部状态不可解释）')
       }
       const auditDetail = { ref, action, handled: result.handled === true }
-      appendAudit('settleQuestion',
+      // G-05（2026-08-28）：审计是可观测性副作用——裁决已在 Control Core 内生效，磁盘满/
+      // 权限异常不得把成功裁决翻成 500（前端会引导重试，重试命中 already-handled 再报错，
+      // 内外状态认知分叉）。auditGuard 独立兜底：审计写失败只 warn（stderr + host logger），
+      // 继续按已生效结果返回；代价是该次审计行缺失，降级必须在日志里可见。
+      auditGuard('settleQuestion',
         result.ok === true
           ? { ...auditDetail, settled: true }
           : { ...auditDetail, settled: false, reason: String(result.reason ?? 'unknown') })
