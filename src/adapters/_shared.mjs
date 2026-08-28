@@ -9,6 +9,7 @@ export const ERROR_CODES = Object.freeze({
   API_ERROR: 'API_ERROR',
   TIMEOUT: 'TIMEOUT',
   NETWORK_ERROR: 'NETWORK_ERROR',
+  BAD_UPSTREAM_RESPONSE: 'BAD_UPSTREAM_RESPONSE',
 })
 
 /** 带稳定错误码的推送失败，message 一律为中文指引（模型与用户都读）。 */
@@ -69,6 +70,22 @@ function httpError(channel, response, text) {
   error.status = response.status
   error.text = text.slice(0, 2048)
   try { error.json = JSON.parse(text) } catch { error.json = undefined }
+  // G-08：TG 等网关 429 带 `parameters.retry_after`（秒）。解析出即附着 retryAfterMs，
+  // 供 sendWithRetry 将退避抬到平台指定值（不再用固定 backoff 撞同一堵墙）。
+  const retryAfter = Number(error.json?.parameters?.retry_after)
+  if (Number.isFinite(retryAfter) && retryAfter > 0) error.retryAfterMs = retryAfter * 1000
+  return error
+}
+
+/**
+ * G-50：超时错误统一构造。超时 = 请求可能已到达对端，结果未知——盲目重试会造成
+ * at-least-once 重复通知。标记 noRetry=true 让 sendWithRetry 立即放弃并计入 failed，
+ * 错误码保持 TIMEOUT（宿主按码统计不受影响）。确定性失败（连接拒绝、HTTP 4xx/5xx
+ * 明确响应）不经过这里，维持既有重试语义。
+ */
+function timeoutNoRetryError(channel, timeoutMs) {
+  const error = new NotifyError(`${channel}投递超时（${timeoutMs}ms），结果未知，不再重试`, ERROR_CODES.TIMEOUT)
+  error.noRetry = true
   return error
 }
 
@@ -90,7 +107,7 @@ export async function postJson(url, payload, { headers = {}, timeoutMs = 10000, 
   } catch (error) {
     if (error instanceof NotifyError) throw error
     const timedOut = error instanceof Error && error.name === 'AbortError'
-    if (timedOut) throw new NotifyError(`${channel}请求超时（${timeoutMs}ms）`, ERROR_CODES.TIMEOUT)
+    if (timedOut) throw timeoutNoRetryError(channel, timeoutMs)
     const detail = error instanceof Error ? error.message : String(error)
     throw new NotifyError(`${channel}请求失败: ${detail}`, ERROR_CODES.NETWORK_ERROR)
   } finally {
@@ -98,7 +115,7 @@ export async function postJson(url, payload, { headers = {}, timeoutMs = 10000, 
   }
 }
 
-/** 统一 form-encoded POST（Server酱用），同样带超时与错误分类。 */
+/** 统一 form-encoded POST（Server酱用），同样带超时与错误分类；超时同 G-50 语义（noRetry）。 */
 export async function postForm(url, payload, { timeoutMs = 10000, channel = '渠道' } = {}) {
   const body = new URLSearchParams()
   for (const [key, value] of Object.entries(payload)) {
@@ -120,13 +137,15 @@ export async function postForm(url, payload, { timeoutMs = 10000, channel = '渠
   } catch (error) {
     if (error instanceof NotifyError) throw error
     const timedOut = error instanceof Error && error.name === 'AbortError'
-    if (timedOut) throw new NotifyError(`${channel}请求超时（${timeoutMs}ms）`, ERROR_CODES.TIMEOUT)
+    if (timedOut) throw timeoutNoRetryError(channel, timeoutMs)
     const detail = error instanceof Error ? error.message : String(error)
     throw new NotifyError(`${channel}请求失败: ${detail}`, ERROR_CODES.NETWORK_ERROR)
   } finally {
     clearTimeout(timer)
   }
 }
+// ^ postForm 的超时分支与 postJson 同语义（G-50）：Server酱投递走这条路径，
+// 超时后盲目重试同样会造成重复通知，不能只修 postJson 留下这条漏网。
 
 /** 统一 GET（token 换取用），带超时与错误分类；返回原始 Response（2xx 才 resolve）。 */
 export async function getJson(url, { headers = {}, timeoutMs = 10000, channel = '渠道' } = {}) {

@@ -98,7 +98,12 @@ export function createTelegramInbound({ config, bus, vault, store = null, logger
       })
       const payload = await response.json().catch(() => null)
       if (payload?.ok !== true) {
-        throw new Error(`telegram ${method} 失败: HTTP ${response.status} ${payload?.description ?? ''}`.trim())
+        const error = new Error(`telegram ${method} 失败: HTTP ${response.status} ${payload?.description ?? ''}`.trim())
+        // G-08：TG 限流应答带 parameters.retry_after（秒）。此处 api() 单发不自动重试，
+        // 但把 retryAfterMs 附着在错误上，调用方（回执文案/上游退避）可据此解释间隔。
+        const retryAfter = Number(payload?.parameters?.retry_after)
+        if (Number.isFinite(retryAfter) && retryAfter > 0) error.retryAfterMs = retryAfter * 1000
+        throw error
       }
       return payload.result
     } finally {
