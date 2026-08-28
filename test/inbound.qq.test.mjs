@@ -77,7 +77,12 @@ const liveInbounds = []
 
 function makeRig({ allowUsers = ['u_open'], config = {}, fetchOptions = {} } = {}) {
   const lines = []
-  const logger = { warn: (prefix, message) => lines.push(`${prefix} ${message}`) }
+  // G-40：debug 级采样日志单独收集（@ 形态白名单未命中出声断言）
+  const debugLines = []
+  const logger = {
+    warn: (prefix, message) => lines.push(`${prefix} ${message}`),
+    debug: (prefix, message) => debugLines.push(`${prefix} ${message}`),
+  }
   const bus = createInboundBus({ allowUsers, logger })
   const { fetchImpl, calls } = makeFetch(fetchOptions)
   const inbound = createQqInbound({
@@ -97,7 +102,7 @@ function makeRig({ allowUsers = ['u_open'], config = {}, fetchOptions = {} } = {
     reconnectCapMs: 8,
   })
   liveInbounds.push(inbound)
-  return { bus, inbound, calls, lines, fetchImpl }
+  return { bus, inbound, calls, lines, debugLines, fetchImpl }
 }
 
 const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -556,7 +561,7 @@ test('GROUP_AT_MESSAGE_CREATE：群 @ 消息剥离提及占位；chatId=group_op
   const ws = await driveReady(rig)
   ws.serverSend({
     op: 0, t: 'GROUP_AT_MESSAGE_CREATE', s: 4,
-    d: { id: 'evt_2', group_openid: 'g_open', content: '<@!BOT123> 帮我跑测试', author: { member_openid: 'u_open' } },
+    d: { id: 'evt_2', group_openid: 'g_open', content: '<@!123456> 帮我跑测试', author: { member_openid: 'u_open' } },
   })
   assert.equal(accepted.length, 1)
   assert.equal(accepted[0].channel, 'qq')
@@ -564,6 +569,40 @@ test('GROUP_AT_MESSAGE_CREATE：群 @ 消息剥离提及占位；chatId=group_op
   assert.equal(accepted[0].chatId, 'g_open')
   assert.equal(accepted[0].chatType, 'group')
   assert.equal(accepted[0].text, '帮我跑测试')
+  await rig.inbound.stop()
+})
+
+test('G-40：@ 占位白名单——三种已证实形态剥净（<@!数字>/<@数字>/行首 @名字+空格）', async () => {
+  const rig = makeRig()
+  const accepted = []
+  rig.bus.onMessage((envelope) => accepted.push(envelope))
+  const ws = await driveReady(rig)
+  // 三种已证实形态逐一入站（不同群避免去重/LRU 干扰）
+  ws.serverSend({ op: 0, t: 'GROUP_AT_MESSAGE_CREATE', s: 4, d: { id: 'evt_m1', group_openid: 'g_m1', content: '<@!123456>帮我跑测试', author: { member_openid: 'u_open' } } })
+  ws.serverSend({ op: 0, t: 'GROUP_AT_MESSAGE_CREATE', s: 5, d: { id: 'evt_m2', group_openid: 'g_m2', content: '<@123456> 帮我跑测试', author: { member_openid: 'u_open' } } })
+  ws.serverSend({ op: 0, t: 'GROUP_AT_MESSAGE_CREATE', s: 6, d: { id: 'evt_m3', group_openid: 'g_m3', content: '@小助手 帮我跑测试', author: { member_openid: 'u_open' } } })
+  assert.equal(accepted.length, 3)
+  for (const envelope of accepted) {
+    assert.equal(envelope.text, '帮我跑测试', `形态应剥净（实际: ${envelope.text}）`)
+  }
+  assert.equal(rig.debugLines.length, 0, '已证实形态不应触发 debug 采样日志')
+  await rig.inbound.stop()
+})
+
+test('G-40：未知 @ 形态保留原文 + debug 出声（不再假定「剥不掉也无害」）', async () => {
+  const rig = makeRig()
+  const accepted = []
+  rig.bus.onMessage((envelope) => accepted.push(envelope))
+  const ws = await driveReady(rig)
+  // 未知形态一：占位内非数字 ID（<@x>）——旧正则会剥 <@![A-Za-z0-9_]+>，白名单收紧后保留
+  ws.serverSend({ op: 0, t: 'GROUP_AT_MESSAGE_CREATE', s: 4, d: { id: 'evt_u1', group_openid: 'g_u1', content: '<@x> 帮我跑测试', author: { member_openid: 'u_open' } } })
+  // 未知形态二：行首 @名字 无尾随空格（缺「名字结束」判据，剥了会误伤粘连正文）
+  ws.serverSend({ op: 0, t: 'GROUP_AT_MESSAGE_CREATE', s: 5, d: { id: 'evt_u2', group_openid: 'g_u2', content: '@小助手帮我跑测试', author: { member_openid: 'u_open' } } })
+  assert.equal(accepted.length, 2)
+  assert.equal(accepted[0].text, '<@x> 帮我跑测试', '未知形态保留原文（@ 残片可见，不静默误剥）')
+  assert.equal(accepted[1].text, '@小助手帮我跑测试')
+  assert.equal(rig.debugLines.length, 2, '每条未知形态各出声一次（真机采样线索）')
+  for (const line of rig.debugLines) assert.match(line, /未命中白名单/, '出声内容应指向白名单未命中')
   await rig.inbound.stop()
 })
 
@@ -747,7 +786,7 @@ function floodGroupEvents(ws, count, { prefix = 'g_', from = 0 } = {}) {
       op: 0,
       t: 'GROUP_AT_MESSAGE_CREATE',
       s: 100 + i,
-      d: { id: `evt_flood_${prefix}${i}`, group_openid: `${prefix}${i}`, content: '<@!BOT> hi', author: { member_openid: 'u_open' } },
+      d: { id: `evt_flood_${prefix}${i}`, group_openid: `${prefix}${i}`, content: '<@!1> hi', author: { member_openid: 'u_open' } },
     })
   }
 }
@@ -790,7 +829,7 @@ test('targetKinds LRU：活跃群（中途再来消息）不因「首次学习�
     op: 0,
     t: 'GROUP_AT_MESSAGE_CREATE',
     s: seq,
-    d: { id: `evt_hot_${seq}`, group_openid: 'g_hot', content: '<@!BOT> hi', author: { member_openid: 'u_open' } },
+    d: { id: `evt_hot_${seq}`, group_openid: 'g_hot', content: '<@!1> hi', author: { member_openid: 'u_open' } },
   })
   learnHot(1) // 最早学习
   floodGroupEvents(ws, CHAT_STATE_MAX - 1, { prefix: 'g_pad_' }) // 表正好填满 1024

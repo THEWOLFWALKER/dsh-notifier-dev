@@ -75,9 +75,28 @@ export function resolveQqInboundConfig(raw, options = {}) {
   }
 }
 
-/** 群消息 content 常以 @机器人 占位开头（<@!BOTID> 或 @名字），剥掉再投递。 */
+/**
+ * G-40：群消息 @ 机器人占位白名单化——仅剥已证实形态，绝不「假定剥不掉也无害」。
+ * 已证实形态：`<@!数字ID>`、`<@数字ID>`（官方占位）与行首 `@名字+空格`（纯文本形态）。
+ * 未命中白名单但形似提及（以 @ / <@ 开头）→ 保留原文并由调用方 debug 出声：
+ * @ 残片会污染 agent 语境与 /pair 参数；平台若改格式，日志可见而非静默漏剥。
+ * 官方文档称群 content 已自动去 @ 前缀（docs/protocol-preflight/qq-bot.md），但真机
+ * 样本不足——白名单+出声是「漏剥可见」与「误剥可见」之间的保守中点。
+ */
+const MENTION_WHITELIST = [
+  /^<@!\d+>\s*/, // 官方占位形态一：<@!数字ID>（占位自定界，尾随空格可缺省）
+  /^<@\d+>\s*/, // 官方占位形态二：<@数字ID>
+  /^@\S+\s+/, // 纯文本形态：行首 @名字+空格（空格是「名字结束」判据，缺空格视为未知）
+]
+
+/** 剥离群消息行首的 @ 机器人占位；返回 { text, matched, mentionLike }（matched=命中
+ *  白名单已剥；mentionLike=形似提及但未命中，调用方据此 debug 出声）。 */
 function stripMention(content) {
-  return String(content ?? '').replace(/^(<@![A-Za-z0-9_]+>|@\S+)\s*/, '').trim()
+  const text = String(content ?? '')
+  for (const pattern of MENTION_WHITELIST) {
+    if (pattern.test(text)) return { text: text.replace(pattern, '').trim(), matched: true }
+  }
+  return { text: text.trim(), matched: false, mentionLike: /^(@|<@)/.test(text) }
 }
 
 /**
@@ -118,6 +137,11 @@ export function createQqInbound(options = {}) {
     try { logger?.warn?.('[dsh-notifier/inbound:qq]', message) } catch { /* 日志失败绝不致命 */ }
     // v0.6.1 双写 stderr：宿主 logger 不落 stdout 时轮询/装配告警仍可见（真机事故复盘）
     try { console.error('[dsh-notifier/inbound:qq]', message) } catch { /* 控制台不可用不致命 */ }
+  }
+  // debug 级诊断只走宿主 logger（不双写 stderr）：@ 形态采样这类低频诊断由宿主按需开启，
+  // 避免 stderr 噪音；宿主未接 debug 时静默跳过（fail-safe，不影响主路径）。
+  const debug = (message) => {
+    try { logger?.debug?.('[dsh-notifier/inbound:qq]', message) } catch { /* 日志失败绝不致命 */ }
   }
   const evictionWarn = createThrottledWarn(warn, { intervalMs: 1000 })
   const onEvict = (key) => evictionWarn((count) => `目标类型学习表达上限：淘汰 ${count} 个旧目标（最近淘汰 ${String(key).slice(0, 32)}）`)
@@ -276,7 +300,13 @@ export function createQqInbound(options = {}) {
         const userId = String(d?.author?.member_openid ?? '')
         const chatId = String(d?.group_openid ?? '')
         const messageId = String(d?.id ?? '')
-        const text = stripMention(d?.content)
+        // G-40：白名单未命中但形似提及 → 保留原文 + debug 出声（@ 残片会污染 agent 语境
+        // 与 /pair 参数；平台改格式时靠日志发现而非静默漏剥）。头部截 32 字符便于采样。
+        const mention = stripMention(d?.content)
+        if (mention.mentionLike === true) {
+          debug(`群消息 @ 形态未命中白名单，已保留原文（QQ @ 占位真机样本不足，出现即需采样登记）: ${JSON.stringify(String(d?.content ?? '').slice(0, 32))}`)
+        }
+        const text = mention.text
         if (messageId === '' || userId === '' || chatId === '' || text === '') return
         setBounded(targetKinds, chatId, 'group', CHAT_STATE_MAX, onEvict)
         // v0.7：群聊拒绝回执发回群（含「请私聊发送 /pair」引导）
