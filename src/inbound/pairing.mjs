@@ -278,11 +278,11 @@ export function createPairing(options = {}) {
           writeCodes(table, now)
           audit('expire', { id: entry.id, origin: entry.origin })
         }
-        // v0.8.7 (BYPASS-BOOT/B2)：过期码提交计入失败计数——否则过期码可无限次触发
-        // 引导码重铸（泵码），每枚新码都要走一次下发路径。
-        const tripped = recordFailure(userKey, now)
-        if (tripped) audit('lockout', { user: userKey, phase: 'tripped' })
-        return { ok: false, reason: tripped ? 'locked-out' : 'expired' }
+        // G-30/G-31：过期码单独分支——不计入 5 次失败锁出，回执统一「码已过期」。
+        // 过期码不是爆破信号（能提交过期码说明曾真实持有在铸码，爆破面是非法形态/
+        // 查无此码，仍计失败）；防泵码由 commands.mjs ensureBootstrap 的 10min 重铸
+        // 节流兜住（v0.8.7 的锁出防泵是多余一层，且会把用过时码的合法用户误锁 10min）。
+        return { ok: false, reason: 'expired' }
       }
       // minted 未下发也可被核销（下发通道只是展示，不是安全边界）
       entry.state = 'redeemed'

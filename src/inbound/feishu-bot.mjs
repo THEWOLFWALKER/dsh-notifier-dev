@@ -19,6 +19,12 @@ import { verdictFailureText } from './verdict-text.mjs'
 const DEFAULT_DOMAIN = 'https://open.feishu.cn'
 const SDK_PACKAGE = '@larksuiteoapi/node-sdk'
 
+// G-17：飞书卡片 TTL 兜底（对齐 TG refs DEFAULT_TTL_MS 15min）。升级前在途卡片缺
+// srcChat/iat 时兼容放行——TG 侧由 ref TTL 15min 天然封顶，飞书侧此前无等价约束，
+// 旧卡片可被无限转发点击（跨会话裁决窗口无上限）。卡片 value 增带 iat 后窗口封顶，
+// 两渠道强度对称。
+const CARD_TTL_MS = 15 * 60 * 1000
+
 /**
  * 解析并校验 inbound.feishu 配置。
  * @param {object} raw - inbound.feishu 原始配置
@@ -117,13 +123,13 @@ function buildCard({ title, content, approvalKey, token, chatId }) {
             tag: 'button',
             text: { tag: 'plain_text', content: '✅ 批准（本次）' },
             type: 'primary',
-            value: { act: buildApprovalAction('allowed-once', approvalKey, token), srcChat: String(chatId ?? '') },
+            value: { act: buildApprovalAction('allowed-once', approvalKey, token), srcChat: String(chatId ?? ''), iat: Date.now() },
           },
           {
             tag: 'button',
             text: { tag: 'plain_text', content: '❌ 拒绝' },
             type: 'danger',
-            value: { act: buildApprovalAction('rejected', approvalKey, token), srcChat: String(chatId ?? '') },
+            value: { act: buildApprovalAction('rejected', approvalKey, token), srcChat: String(chatId ?? ''), iat: Date.now() },
           },
         ],
       },
@@ -176,7 +182,7 @@ function buildQuestionCard({ title, content, qKey, token, options = [], chatId }
     tag: 'button',
     text: { tag: 'plain_text', content: `${idx + 1}. ${String(label).slice(0, 30)}` },
     type: 'default',
-    value: { act: buildQuestionAction(qKey, String(idx), token), srcChat: String(chatId ?? '') },
+    value: { act: buildQuestionAction(qKey, String(idx), token), srcChat: String(chatId ?? ''), iat: Date.now() },
   }))
   return {
     config: { wide_screen_mode: true },
@@ -203,7 +209,7 @@ function buildActionCard({ title, content, actions: buttons = [], chatId }) {
       text: { tag: 'plain_text', content: button.label },
       type: 'danger',
       // v0.8.4 F-08：动作卡同样嵌入来源会话（srcChat），callback 侧比对点击会话
-      value: { act: button.data, srcChat: String(chatId ?? '') },
+      value: { act: button.data, srcChat: String(chatId ?? ''), iat: Date.now() },
     }))
   return {
     config: { wide_screen_mode: true },
@@ -283,15 +289,22 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
       const openId = String(data?.sender?.sender_id?.open_id ?? '')
       const messageId = String(message.message_id ?? '')
       if (messageId === '' || openId === '') return
-      const text = String(message.message_type ?? '') === 'text'
-        // G-25：mentions 映射还原占位符 → '@名字'（正文中间的提及保语义、双空格消失）；
-        // G-06：还原后再做与 TG/钉钉同款的寻址噪音剥离——行首 '@机器人名 '（群聊里
-        // 用户必须 @ 机器人才发的消息，还原后会变成 '@机器人 /stop'，不剥则
-        // conversation 的 startsWith('/') 判定失效、群聊命令全废）+ 命令词 @ 后缀
-        // （'/pair@张三 code' → '/pair code'，args 不含 @ 残片）。正文中间还原出的
-        // '@名字' 一律保留（那是语义内容，不是寻址噪音）。
-        ? stripCommandMention(stripLeadingMention(extractText(message.content, message.mentions)))
-        : `[不支持的消息类型：${message.message_type ?? 'unknown'}]`
+      const isText = String(message.message_type ?? '') === 'text'
+      if (!isText) {
+        // G-26：非文本消息静默忽略 + 回执，不再注入占位符文本——占位符会进 agent
+        // 语境被当指令解读（注入面）。回执尽力而为，失败只 warn。
+        const chatId = String(message.chat_id ?? openId)
+        if (client !== null) {
+          client.im.v1.message.create({
+            params: { receive_id_type: receiveIdTypeOf(chatId) },
+            data: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: '暂不支持该消息类型' }) },
+          }).catch((error) => {
+            warn(`非文本回执发送失败: ${error instanceof Error ? error.message : String(error)}`)
+          })
+        }
+        return
+      }
+      const text = stripCommandMention(stripLeadingMention(extractText(message.content, message.mentions)))
       if (text === '') return
       // bus 白名单 + 去重在 bus 层完成；本层只负责规范化 envelope。
       // v0.7：chat_type 透传（/pair 私聊判定）；accept 返回值消费——拒绝/命令回执不再已读不回
@@ -437,6 +450,17 @@ export function createFeishuInbound({ config, bus, fallbackTargets = [], logger 
     try {
       const value = data?.action?.value ?? {}
       const raw = typeof value.act === 'string' ? value.act : ''
+      // G-17：卡片 TTL 校验（与 TG refs 15min 对称）。带 iat 的新卡超过窗口即拒绝——
+      // 转发点击跨会话裁决的兼容放行窗口封顶；缺 iat（升级前在途）warn 后兼容放行，
+      // 与 srcChat 缺省策略一致（升级瞬间的在途卡片最多 15min 内自然衰减）。
+      if (typeof value.iat === 'number') {
+        if (Date.now() - value.iat > CARD_TTL_MS) {
+          warn(`卡片已过期（iat=${value.iat}，TTL=${CARD_TTL_MS}ms）: ${raw.slice(0, 48)}`)
+          return { toast: { type: 'info', content: '该操作已处理或已过期（请回桌面处理）' } }
+        }
+      } else {
+        warn('卡片回调缺少签发时间（iat），跳过 TTL 校验（升级前在途卡片兼容）')
+      }
       const action = parseActionPayload(raw)
       // v0.5 动作按钮：ac:<actionKey>:<token>（actions 注入时才处理）
       if (action !== null) {

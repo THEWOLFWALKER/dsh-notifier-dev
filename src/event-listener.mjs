@@ -3,6 +3,7 @@
 // 统一走 notifyAll 广播。防抖：turn/end 按 session 做尾沿 10s 合并（同 session 不刷屏）；
 // approval/asked 与 agent/error 即时推送。dedup：按 session.id:seq / agent.id:turn:step 去重（24h）。
 
+import { createHash } from 'node:crypto'
 import { basename } from 'node:path'
 import { createKeywordFilter, createGraceQueue } from './rules.mjs'
 import { createHostEventRegistrar, normalizeSessionEventArgs } from './host-events.mjs'
@@ -17,6 +18,11 @@ import { maskSecrets, normalizeRedaction, MINIMAL_EXCERPT_CHARS } from './redact
 export function workspaceNameOf(session) {
   const cwd = session?.header?.cwd
   return cwd !== undefined && typeof cwd === 'string' && cwd.length > 0 ? basename(cwd) : String(session?.id ?? '')
+}
+
+/** G-18：6 位十六进制负载摘要（dedup 键追加用，与 wxpusher hash6 同法）。 */
+function hash6(value) {
+  return createHash('sha256').update(String(value ?? '')).digest('hex').slice(0, 6)
 }
 
 /** 取会话日志里最后一条 assistant/message 的文本块。 */
@@ -441,7 +447,11 @@ export function createEventListener(ctx, notifier, resolvedConfig, wiring = {}) 
     const intent = intentOfSessionEvent(event)
     if (intent === undefined) return
     if (!eventAllowed(intent)) return
-    const key = `${session.id ?? '(anon)'}:${event.seq ?? 0}`
+    // G-18：approval/asked 即时推送键追加负载摘要（hash6(detail)——detail 由 toolName/
+    // reason 构成）。宿主重放（同 session 同 seq）但负载不同（先请 toolA 后请 toolB）时
+    // 不再互吞；turn 类维持现状——同 seq 即同一事件，负载不参与判定。
+    const base = `${session.id ?? '(anon)'}:${event.seq ?? 0}`
+    const key = intent.event === 'approval/asked' ? `${base}:${hash6(intent.detail)}` : base
     if (!dedup.test(key)) return
     if (intent.event === 'turn/end' || intent.event === 'turn/start') {
       // turn/end 与 turn/start 共用同一防抖 key（session.id）：10s 内 start→end 连续

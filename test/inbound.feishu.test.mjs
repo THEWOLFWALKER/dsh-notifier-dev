@@ -376,7 +376,7 @@ test('白名单外用户：消息不到达订阅者（白名单在 bus 层拦截
   await rig.inbound.stop()
 })
 
-test('非文本消息：转成占位文本继续投递（agent 可感知用户发了图/文件）', async () => {
+test('G-26 非文本消息：静默忽略 + 回执「暂不支持该消息类型」（不再注入占位符文本）', async () => {
   const rig = makeRig()
   const accepted = []
   rig.bus.onMessage((envelope) => accepted.push(envelope))
@@ -386,8 +386,14 @@ test('非文本消息：转成占位文本继续投递（agent 可感知用户�
     sender: { sender_id: { open_id: 'ou_1' } },
     message: { message_id: 'om_2', chat_id: 'oc_g', message_type: 'image', content: '' },
   })
-  assert.equal(accepted.length, 1)
-  assert.equal(accepted[0].text, '[不支持的消息类型：image]')
+  await tick()
+  // G-26：占位符文本会进 agent 语境被当指令解读（注入面）——非文本消息不再投递
+  assert.equal(accepted.length, 0, '非文本消息不注入占位符，bus 无入站')
+  // 回执尽力而为（失败仅 warn）：fake client 应收到「暂不支持该消息类型」
+  assert.equal(rig.fake.state.sent.length, 1)
+  assert.equal(rig.fake.state.sent[0].receiveId, 'oc_g')
+  assert.equal(rig.fake.state.sent[0].msgType, 'text')
+  assert.equal(JSON.parse(rig.fake.state.sent[0].content).text, '暂不支持该消息类型')
   await rig.inbound.stop()
 })
 
