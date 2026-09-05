@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.9.4] - 2026-08-28
+
+R4「配置收敛与入站生命周期」修复列车（80 项清单 W10/W11/W12 共 25 项）。全部为 mock/contract 证据，协议类修复未经真机验证（真机缺口登记 `docs/memory/risks.md`）；`npm test` 为 1531（1531 pass）。
+
+### ⚠️ 破坏性语义变化（迁移说明）
+
+- **出站配置「视图热、投递冷」（G-14）**：管理台保存出站渠道凭证后 UI 即时回显并标「重启后生效」——投递层只在插件下次启动时并入运行时（YAML ⊕ store 合并）。**此前「保存即生效」的认知作废；重启前保存不影响已运行的出站链路。**
+- **配对码过期不再计入 5 次失败锁出（G-30/31）**：过期码单独分支回执「码已过期」，不翻锁——能提交过期码说明曾真实持有在铸码，不是爆破信号；防泵码由引导码重铸 10min 节流单层兜住。**依赖「过期码 5 次锁出」的用户不再生效（无效码仍计失败锁出）。**
+- **合成消息 id 语义（G-46/G-27）**：无消息 id 回调（wxpusher 等）的合成幂等键从 24h 长窗改 60s 短窗；wxpusher 键追加进程内单调 seq——同一秒内同文本的两条真实消息不再互吞（传输层重投去重让位，幂等由业务层兜底）。
+
+### W10 配置校验与渠道枚举收敛（G-13/S-12/G-61~64/G-32/G-38/G-39/G-45/G-28）
+
+- **G-13 渠道枚举唯一来源**：新增 `src/inbound/channels-registry.mjs` 冻结数组，identity/target-guard/assembly/admin 四处硬编码改引——新渠道单点注册。
+- **S-12 target-guard 未知渠道 fail-closed**：未知出站渠道从放行改为拒绝 + warn（对齐入站默认拒绝红线）。
+- **G-61~64/G-32/G-38/G-39/G-45/G-28 配置形态收敛**：数值字段 `type:'number'` 声明；pushplus template/channel 白名单；webhook headers 值字符串化；desktop sound 布尔形态全表解析；`_bounded` max 非数字回落调用方默认；slack 仅 Incoming Webhook 显式报错；discord >2000 码点 fail-fast；postText 补 `content-type`；iLink contextToken 缺省 warn。
+
+### W11 入站生命周期与交互健壮性（G-15/G-46/G-16/G-17/G-18/G-26/G-27/G-30/31/G-34；G-19 取证登记）
+
+- **G-15 bus 消费优先级显式化**：`MESSAGE_PRIORITY` 冻结常量（cardAction=10/numberedReply=20/default=50/conversation=100），五处注册点显式传参 + 同 priority 注册序稳定排序——暗契约转明契约。
+- **G-16 重启残留审批失效告知（D4）**：启动扫描 `ap:` pending 行 → 标记 expired + 向 pushedTo 目标补发「该审批因宿主重启已失效，请回桌面处理」；补发失败仅 warn 不阻塞启动。
+- **G-17 飞书卡片 TTL 兜底**：卡片 value 增带签发时间 `iat`，回调超 15min（对齐 TG refs）拒绝 + toast 指引；升级前在途缺 iat 卡片 warn 后兼容放行。
+- **G-18 event-listener 去重键按 intent 分离**：approval/asked 键追加负载摘要（同 seq 不同负载不再互吞）；turn 类维持现状。
+- **G-26 非文本消息静默忽略 + 回执**：飞书非文本消息不再注入占位符文本进 agent 语境（注入面关闭），回执「暂不支持该消息类型」尽力而为。
+- **G-27 wxpusher 合成键单调 seq**：同秒同内容两条真实消息不再互吞（60s 窗语义内放行双消息）。
+- **G-30/31 过期码单独分支**：见上文破坏性变化。
+- **G-34 双路径通知双响封口（D5）**：卡片/编号裁决成功后同 key 文本线（广播 + 升级链）5min 抑制窗口——点过卡片不再收到「仍在等待批准」。
+- **G-19 scoped 事件契约（取证登记，不改码）**：C 轮 cordis 源码证据（`events.ts:165-175` context filter、`agent/disposed` Scoped）与现有 root 订阅策略存在张力，但源码不在仓库、真机未验证——按计划登记 `docs/memory/risks.md`，行为保持 scope 诊断 + root 回落，留真机回归项。
+
+### W12 存储与状态（G-20/G-47/G-44/G-14/S-14/S-04）
+
+- **G-20 配对码铸造单次原子写**：mint 的 minted→active 双写崩溃窗口（孤儿码可被核销）合并为单态 `minted-active` 一次落盘；审计行独立写不影响状态一致性。
+- **G-47 route:sessions 出站覆盖行 30d TTL**：无 disposedAt 的覆盖行（/quiet、管理台覆盖）30d 不活跃即清（宿主活跃会话护栏不误删）；disposed 行到期摘除时保留出站覆盖字段——静默配置不随会话回收丢失。
+- **G-44 坏绑定键启动清洗**：启动一次性清洗坏形状/幽灵键 + 写回 + warn 计数；只动 `inbound:bindings`，绝不动 `inbound:migrated`——「启动损坏白纸重置」下已删成员不复活（放大面测试钉死）。
+- **G-14 出站配置视图热/投递冷**：见上文破坏性变化。
+- **S-14 ledger.resolve 前态不设防**：已终态行二次 resolve 返回 `already-resolved` 不再翻转；actions 多步落地走 `claimedSettle` 显式逃生门。
+- **S-04 凭证明文落盘缓解加固**：store 加载前 mode 自检——非 0600 warn + chmod 收紧尝试（失败仅 warn 不阻塞启动）。
+
+### 已知残留（登记 `docs/memory/risks.md`）
+
+- 沿用 0.9.3 的 SSRF DNS rebinding 竞态、单 token 模型固有边界两条残留。
+- **G-19 scoped 事件契约未定**：见上文——需真机/宿主源码复验后才决定 root 订阅、双订阅或 payload 兜底策略。
+- **W12 G-47 纯覆盖行首见基准内存态**：重启后重新起算 30d，最坏多留一个运行周期（30d 量级可接受）。
+
 ## [0.9.3] - 2026-08-28
 
 R3「安全中危加固」列车（80 项清单 W9：S-02/S-05/S-06/S-07 四项）。全部为 mock/contract 证据，协议行为未经真机验证（真机缺口登记 `docs/memory/risks.md`）；`npm test` 为 1478（1478 pass）。

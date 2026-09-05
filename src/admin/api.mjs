@@ -433,11 +433,14 @@ export function createAdminApi(options = {}) {
         configured: dual ? isEnabled : (hasAccount(type) || isEnabled),
         enabled: isEnabled,
         editable: !dual,
+        // G-14（W12）：出站配置视图热/投递冷——出站恒「重启后生效」（投递层只在插件
+        // 下次启动时并入运行时：YAML ⊕ store 合并），UI 据此渲染警示角标。
+        restartRequired: true,
       })
     }
     for (const channel of INBOUND_CHANNELS) {
       const configured = hasAccount(channel)
-      rows.push({ type: channel, direction: 'inbound', configured, enabled: configured, editable: true })
+      rows.push({ type: channel, direction: 'inbound', configured, enabled: configured, editable: true, restartRequired: false })
     }
     return rows
   }
@@ -859,8 +862,9 @@ export function createAdminApi(options = {}) {
      * 声明表、手写渠道读 FIELD_HINTS、入站通道读 INBOUND_FIELDS）——空 config 的通道
      * 也能渲染表单从零新建（§9-2「UI 建通道凭证」零 YAML）。
      * @returns {Array<{ type: string, direction: 'outbound'|'inbound', configured: boolean,
-     *   enabled: boolean, editable: boolean, config: object, fields: object }>}
-     *   行集合与 overview().channels 同构同序，多 config/fields/editable 字段。
+     *   enabled: boolean, editable: boolean, restartRequired: boolean, config: object, fields: object }>}
+     *   行集合与 overview().channels 同构同序，多 config/fields/editable/restartRequired 字段
+     *   （restartRequired：出站恒 true——投递冷，配置重启后才并入运行时，UI 据此标「重启后生效」）。
      */
     getChannels() {
       const yamlTable = yamlOutboundOf()
@@ -897,7 +901,9 @@ export function createAdminApi(options = {}) {
      * 数组/原始值对象（webhook.headers、wxpusher.uids 等真实形态）。
      * @param {string} type - 通道类型，必须 ∈ CHANNEL_TYPES ∪ INBOUND_CHANNELS。
      * @param {object} config - 非空普通对象，键必须在该通道字段白名单内。
-     * @returns {{ type: string, saved: boolean }} saved=false = 存储不可用/写入失败降级（不抛）。
+     * @returns {{ type: string, saved: boolean, restartRequired: boolean }} saved=false = 存储
+     *   不可用/写入失败降级（不抛）；restartRequired=出站恒 true（投递冷，G-14：UI 保存后
+     *   即时回显但须重启才并入运行时，据此提示「重启后生效」）。
      * @throws {ApiError} 422 type 非法、config 非非空普通对象、含 webhook/未知/保留键、
      *   或字段数/值形态超限。
      */
@@ -937,7 +943,10 @@ export function createAdminApi(options = {}) {
         return { type, saved: false }
       }
       auditGuard('putChannel', { type }) // 审计只记通道名，绝不落凭证内容
-      return { type, saved: true }
+      // G-14（W12）：出站配置视图热/投递冷——返回 restartRequired 供 UI 即时提示「重启后生效」。
+      // 出站渠道恒 true（投递层下次启动才并入运行时）；双域通道（feishu/dingtalk）UI 表单写的是
+      // 入站机器人凭证域（出站 webhook 只读走 YAML），语义归入站 → false。
+      return { type, saved: true, restartRequired: OUTBOUND_SET.has(type) && !DUAL_INBOUND_DOMAIN.has(type) }
     },
 
     /**

@@ -105,6 +105,45 @@ export function createIdentity(options = {}) {
     store.set(KEY_BINDINGS, table)
   }
 
+  // G-44（W12）：启动时一次性清洗坏绑定键 + 写回 + warn 计数。
+  // 坏键 = 存储键与业务视图无法往返的键：normalizeBinding 判坏形状（整条丢弃），或
+  // 键与归一复合键不一致——bindingKey 收敛空白/大小写后对不上（如 ' telegram:42'、
+  // 'Telegram:42'、'telegram: 42' 这类读路径永远命中不了的幽灵键）。allows() 用
+  // bindingKey 归一查询，这些键只占存储不见天日，是「存储与业务视图长期不一致」的来源，
+  // 读时清洗不写回会让盘上死键无限累积，故本批次改为启动一次性清洗 + 写回。
+  // 只动 inbound:bindings，绝不动 inbound:migrated——白名单重播的一次性守卫若被清洗
+  // 连带清掉，「启动损坏白纸重置」（绑定表全坏读到空白）场景下管理台已删成员会被
+  // YAML 静默复活（删减权收归管理台的契约被推翻），这是本条的放大面，测试必含。
+  const startupCleanup = () => {
+    if (store === null) return
+    let raw
+    try {
+      raw = store.get(KEY_BINDINGS, {})
+    } catch (error) {
+      warn(`坏绑定键启动清洗读表失败（跳过，不阻塞）: ${error instanceof Error ? error.message : String(error)}`)
+      return
+    }
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return
+    const badKeys = []
+    const cleaned = {}
+    for (const [key, value] of Object.entries(raw)) {
+      const record = normalizeBinding(value, key)
+      if (record === null) { badKeys.push(key); continue }
+      const canonical = bindingKey(record.channel, record.userId)
+      if (canonical !== key) { badKeys.push(key); continue }
+      cleaned[key] = record
+    }
+    if (badKeys.length === 0) return // 无死键：零写放大
+    try {
+      store.set(KEY_BINDINGS, cleaned)
+      const preview = badKeys.slice(0, 3).map((k) => String(k).slice(0, 32)).join('、')
+      warn(`坏绑定键启动清洗：${badKeys.length} 条移除（${preview}${badKeys.length > 3 ? '…' : ''}），绑定表与业务视图对齐`)
+    } catch (error) {
+      warn(`坏绑定键清洗写回失败（不致命）: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  startupCleanup()
+
   function readPending() {
     if (store === null) return {}
     const raw = store.get(KEY_PENDING, {})

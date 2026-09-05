@@ -44,11 +44,18 @@ for (const [index, count] of documentedCounts.entries()) {
 }
 
 const requiredPackageFiles = [
-  'src', 'test', 'scripts', 'cordis.patch.yml', 'CHANGELOG.md', 'PLUGINS.md',
+  'src', 'test', 'cordis.patch.yml', 'CHANGELOG.md', 'PLUGINS.md',
   'THIRD_PARTY_NOTICES.md', 'docs/guide.md', 'docs/upgrade-guide.md', 'docs/upgrade-guide.en.md',
+]
+// S-11（W13）：files 从「含整个 scripts 目录」改为显式列举发布脚本（hook-server.mjs
+// 开发用不随包分发）——校验每个发布脚本都在 files 清单里，缺一个即失败。
+const requiredScripts = [
+  'scripts/channel-login.mjs', 'scripts/channel-selfcheck.mjs', 'scripts/gen-channel-matrix.mjs',
+  'scripts/route.mjs', 'scripts/verify-release.mjs', 'scripts/wechat-login.mjs',
 ]
 const packageFiles = Array.isArray(packageJson.files) ? packageJson.files : []
 for (const file of requiredPackageFiles) check(packageFiles.includes(file), `package.json files is missing ${file}`)
+for (const script of requiredScripts) check(packageFiles.includes(script), `package.json files is missing ${script} (S-11 发布脚本须显式列举)`)
 for (const file of ['PLUGINS.md', 'THIRD_PARTY_NOTICES.md', 'docs/guide.md', 'docs/upgrade-guide.md', 'docs/upgrade-guide.en.md']) {
   check(existsSync(resolve(root, file)), `release documentation is missing from the tree: ${file}`)
 }

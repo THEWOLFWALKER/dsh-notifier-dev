@@ -84,6 +84,58 @@ test('identity：迁移不复活管理台已删成员（一次性标记的验收
   assert.equal(identity.size(), 0)
 })
 
+test('G-44：坏绑定键启动一次性清洗——死键移除写回 + warn 计数，合法成员保留', () => {
+  const { store } = tempStore()
+  const first = createIdentity({ store, logger: quiet })
+  first.addBinding({ channel: 'telegram', userId: '999' })
+  // 注入三类坏键：空白漂移（键值错位）、大小写漂移（非法渠道形状）、纯形状损坏
+  const raw = store.get('inbound:bindings', {})
+  raw['telegram: 999'] = { ...raw['telegram:999'], userId: ' 999' }
+  raw['Telegram:999'] = { ...raw['telegram:999'], channel: 'Telegram' }
+  raw['feishu:ou_broken'] = { channel: 'nope', userId: 'x' }
+  store.set('inbound:bindings', raw)
+  // 重启：createIdentity 即触发一次性清洗（logger.warn 收前缀+正文两参，join 后断言正文）
+  const warns = []
+  const identity = createIdentity({ store, logger: { warn: (...args) => warns.push(args.join(' ')) } })
+  const cleaned = store.get('inbound:bindings', {})
+  assert.deepEqual(Object.keys(cleaned), ['telegram:999'], '三类坏键全移除，合法成员保留')
+  assert.equal(identity.size(), 1)
+  assert.equal(identity.allows('telegram', '999'), true, '合法成员不受清洗影响')
+  assert.ok(warns.some((w) => /坏绑定键启动清洗/.test(w)), `清洗必须 warn 可见（实际：${warns.join(' | ')}）`)
+  assert.ok(warns.some((w) => /3 条移除/.test(w)), `warn 带移除计数（实际：${warns.join(' | ')}）`)
+  // 幂等：再启动一次清洗为 no-op，不重复 warn
+  const warns2 = []
+  createIdentity({ store, logger: { warn: (m) => warns2.push(m) } })
+  assert.ok(!warns2.some((w) => /坏绑定键启动清洗/.test(w)), '无死键时零写放大零告警')
+})
+
+test('G-44 放大面：启动损坏白纸重置——绑定表全坏键清成空白，已删成员仍不复活（inbound:migrated 守卫）', () => {
+  const { store } = tempStore()
+  // 第一启动：迁移播撒成员 42（origin=migrated），管理台随后删除，仅剩 999
+  const first = createIdentity({ store, logger: quiet })
+  first.migrate(['42'], ['telegram'])
+  first.addBinding({ channel: 'telegram', userId: '999' })
+  first.removeBinding('telegram', '42') // 管理台删人
+  // 损坏白纸现场：绑定表全部键形状损坏（读如空白），迁移标记仍在
+  const raw = store.get('inbound:bindings', {})
+  for (const key of Object.keys(raw)) raw[key] = { channel: 'nope', userId: 'x' }
+  store.set('inbound:bindings', raw)
+  assert.equal(store.get('inbound:migrated', false), true, '迁移标记在场（第一启动已落）')
+  // 重启：清洗把全坏键清成空白表 + warn；标记绝不被连带清掉
+  const warns = []
+  const identity = createIdentity({ store, logger: { warn: (...args) => warns.push(args.join(' ')) } })
+  assert.deepEqual(store.get('inbound:bindings', {}), {}, '全坏键清空（白纸重置）')
+  assert.equal(store.get('inbound:migrated', false), true, '清洗绝不碰迁移标记')
+  assert.equal(identity.isEmpty(), true, '业务视图白纸')
+  assert.ok(warns.some((w) => /坏绑定键启动清洗/.test(w)), `清洗必须 warn 可见（实际：${warns.join(' | ')}）`)
+  // 白名单重播（放大面）：标记在场 → skipped，已删成员 42 绝不复活
+  const replay = identity.migrate(['42'], ['telegram'])
+  assert.equal(replay.added, 0)
+  assert.equal(replay.skipped, true)
+  assert.equal(identity.allows('telegram', '42'), false, '已删成员不复活')
+  assert.equal(identity.size(), 0)
+})
+
 test('identity：跨渠道准入隔离——同 id 不同渠道互不命中（修审查 #5 入站半边）', () => {
   const { store } = tempStore()
   const identity = createIdentity({ store, logger: quiet })
