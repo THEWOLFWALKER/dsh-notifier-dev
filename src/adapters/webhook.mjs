@@ -20,7 +20,7 @@ export function resolve(cfg = {}) {
   if (url === '') {
     throw new NotifyError('webhook 未配置：url（接收 POST JSON 的 webhook 地址）未填写', ERROR_CODES.NOT_CONFIGURED)
   }
-  // G-38：headers 值归一 String——YAML 里 `port: 8080` 这类裸数字会被 fetch Headers
+  // G-63：headers 值归一 String——YAML 里 `port: 8080` 这类裸数字会被 fetch Headers
   // 构造器直接抛 TypeError（整条通知炸在半路），归一后仍保持用户声明的键名与文本语义；
   // 值是对象/数组的头没有合理文本形态，warn 后丢弃（绝不可能"猜"出一个值发出去）。
   const rawHeaders = cfg.headers !== null && typeof cfg.headers === 'object' && !Array.isArray(cfg.headers)

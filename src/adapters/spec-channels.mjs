@@ -44,7 +44,7 @@ export const SPEC_CHANNELS = {
     request: (cfg, msg) => ({ url: cfg.webhook, body: { text: joinPara(msg) } }),
     ok: ({ status }) => status === 200, // Slack 成功只回 200 纯文本 "ok"，无业务码
     fail: ({ status, text }) => (status === 403 ? 'webhook 无效或已失效（403）：到 Slack App → Incoming Webhooks 重新复制地址' : text.slice(0, 120)),
-    // 边界显式报错（G-63）：Incoming Webhook 官方域名只有 hooks.slack.com——
+    // 边界显式报错（G-38）：Incoming Webhook 官方域名只有 hooks.slack.com——
     // 填成普通 chat.postMessage API 地址（或别的站）会 404/静默失败，校验给出定向指引。
     validate: (resolved) => {
       let host = ''
@@ -63,7 +63,7 @@ export const SPEC_CHANNELS = {
       webhook: { required: true, secret: true, desc: 'Discord Webhook 完整地址：服务器设置 → 整合 → Webhook → 新建后复制' },
     },
     encode: 'json',
-    // G-64：Discord content 硬上限 2000 字符——超限发送只回一句 400[Bulk edit]，
+    // G-39：Discord content 硬上限 2000 字符——超限发送只回一句 400[Bulk edit]，
     // 建连前 fail-fast 给出当前长度，比远程报错可诊断。（单 if，不违声明表控制流军规）
     request: (cfg, msg) => {
       const content = joinText(msg)

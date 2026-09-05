@@ -4,8 +4,8 @@
 
 ## 当前基线
 
-- 当前发布线：`codex/stage5-wechat-ilink-hardening`，包版本字段 `0.9.0`；公共 GitHub 源码镜像已推送，npm registry `latest` 已为 `0.9.0`。
-- 当前测试：`1352`（1351 pass + 1 skip）。历史 npm `0.8.6` 契约为 909；两者按版本区分。
+- 当前发布线：`codex/fix-outbound-delivery`，包版本字段 `0.9.5`（R1–R5 修复列车已收口）；公共 GitHub 源码镜像（`main`）已推送 v0.9.5，npm registry `latest` 仍为 `0.9.0`（待发布）。
+- 当前测试：`1531`（1531 pass，R5 收口基线）。历史 npm `0.8.6` 契约为 909、`0.9.0` 为 1352；按版本区分。
 - 私有 `dsh-notifier-dev` 是工程协作仓库；公共 GitHub 仓库只是发布/源码镜像。
 - 生态收录：公开仓库描述/发现主题已按 v0.9.0 更新；Awesome DSH PR #3490 已提交，dshfind 等待下一轮目录同步。
 - Node.js ESM、Node `>=22`、无生产依赖、无构建步骤；27 个出站渠道，Telegram/Feishu/QQ Bot/WxPusher/WeChat iLink/DingTalk 六个入站控制通道。

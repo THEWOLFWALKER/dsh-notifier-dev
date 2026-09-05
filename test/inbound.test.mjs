@@ -354,7 +354,7 @@ test('bus：同 messageId 重复投递被拒（内存 FIFO 快速路径）', () 
   assert.equal(seen.length, 2)
 })
 
-test('G-31：onMessage 显式 priority 决定扇出序——与注册顺序无关', () => {
+test('G-15：onMessage 显式 priority 决定扇出序——与注册顺序无关', () => {
   const bus = createInboundBus({ allowUsers: ['42'] })
   const order = []
   // 故意倒序注册：conversation(100) 先注册、cardAction(10) 最后——旧插入序语义下
@@ -366,7 +366,7 @@ test('G-31：onMessage 显式 priority 决定扇出序——与注册顺序无�
   assert.deepEqual(order, ['cardAction', 'numberedReply', 'conversation'])
 })
 
-test('G-31：同 priority 按注册先后稳定排序（审批先于提问的既有语义保留）', () => {
+test('G-15：同 priority 按注册先后稳定排序（审批先于提问的既有语义保留）', () => {
   const bus = createInboundBus({ allowUsers: ['42'] })
   const order = []
   bus.onMessage(() => { order.push('approval') ; return false }, { priority: MESSAGE_PRIORITY.numberedReply })
@@ -375,7 +375,7 @@ test('G-31：同 priority 按注册先后稳定排序（审批先于提问的既
   assert.deepEqual(order, ['approval', 'questions'])
 })
 
-test('G-31：未传 priority 缺省 default=50，高于会话路由低于编号回复（向后兼容）', () => {
+test('G-15：未传 priority 缺省 default=50，高于会话路由低于编号回复（向后兼容）', () => {
   const bus = createInboundBus({ allowUsers: ['42'] })
   const order = []
   bus.onMessage(() => { order.push('legacy') })

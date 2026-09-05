@@ -39,9 +39,9 @@ test('G-61 onebot：非数字 userId 不当 0 灌入——非法形态按未配�
   assert.throws(() => resolveOf('onebot')({ baseUrl: 'http://127.0.0.1:3000', userId: '' }), /userId.*未填写/)
 })
 
-// ---------------------------------------------------------------- G-63 slack webhook 边界
+// ---------------------------------------------------------------- G-38 slack webhook 边界
 
-test('G-63 slack：非 hooks.slack.com 域名的 webhook 显式拒绝（API token 不走本渠道）', () => {
+test('G-38 slack：非 hooks.slack.com 域名的 webhook 显式拒绝（API token 不走本渠道）', () => {
   assert.throws(
     () => resolveOf('slack')({ webhook: 'https://slack.com/api/chat.postMessage' }),
     /hooks\.slack\.com/,
@@ -61,9 +61,9 @@ test('G-62 pushplus：template 与 channel 两个枚举同一待遇——非空�
   assert.throws(() => resolveOf('pushplus')({ token: 't', channel: 'sms' }), /channel 仅支持/)
 })
 
-// ---------------------------------------------------------------- G-64 discord 2000 上限
+// ---------------------------------------------------------------- G-39 discord 2000 上限
 
-test('G-64 discord：content 超 2000 字符 fail-fast（建连前拒绝并报当前长度）', async () => {
+test('G-39 discord：content 超 2000 字符 fail-fast（建连前拒绝并报当前长度）', async () => {
   const send = ADAPTERS.discord.send ?? null
   assert.ok(typeof send === 'function', 'discord 是 spec 渠道，send 由引擎生成')
   await assert.rejects(
@@ -75,9 +75,9 @@ test('G-64 discord：content 超 2000 字符 fail-fast（建连前拒绝并报�
   )
 })
 
-// ---------------------------------------------------------------- G-38 webhook headers 归一
+// ---------------------------------------------------------------- G-63 webhook headers 归一
 
-test('G-38 webhook：headers 数值/布尔转字符串，对象丢弃（fetch Headers 不再 TypeError）', () => {
+test('G-63 webhook：headers 数值/布尔转字符串，对象丢弃（fetch Headers 不再 TypeError）', () => {
   const warns = []
   const original = console.error
   console.error = (...args) => warns.push(args.join(' '))
@@ -97,9 +97,9 @@ test('G-38 webhook：headers 数值/布尔转字符串，对象丢弃（fetch He
   }
 })
 
-// ---------------------------------------------------------------- G-39 desktop sound 布尔
+// ---------------------------------------------------------------- G-64 desktop sound 布尔
 
-test('G-39 desktop：sound 布尔形态 true→always / false→never，非法值回落 auto', () => {
+test('G-64 desktop：sound 布尔形态 true→always / false→never，非法值回落 auto', () => {
   assert.equal(resolveOf('desktop')({ sound: true }).sound, 'always')
   assert.equal(resolveOf('desktop')({ sound: false }).sound, 'never')
   assert.equal(resolveOf('desktop')({ sound: 'alway' }).sound, 'auto', '拼错回落默认不炸')

@@ -47,7 +47,7 @@ test('G-59 自定义 ttlMs：mint 参数覆盖默认；到期前一刻可核销�
   assert.equal(pairing.redeem(b.code, { channel: 'telegram', userId: '1', now: now + 5000 }).reason, 'expired', '恰好到期即过期')
 })
 
-test('G-59 minted-active 单态同等可过期：过期后不在在铸列表（G-20 W12 语义）', () => {
+test('G-20 minted-active 单态同等可过期：过期后不在在铸列表（W12 语义）', () => {
   const pairing = createPairing({ store: null, logger: quiet })
   const now = Date.now()
   const minted = pairing.mint({ origin: 'admin', mintedBy: 'boss', ttlMs: 60_000, now })
