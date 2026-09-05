@@ -62,7 +62,7 @@ node scripts/gen-channel-matrix.mjs --check
 node --check src/index.mjs
 ```
 
-For a channel change, also run the relevant adapter contract test and `node scripts/test-channel.mjs` with safe test credentials when available. For inbound changes, use the matching `test/inbound.*.test.mjs` suite and record any real-device gap in `docs/memory/risks.md`.
+For a channel change, also run the relevant adapter contract test and `node scripts/channel-selfcheck.mjs` with safe test credentials when available. For inbound changes, use the matching `test/inbound.*.test.mjs` suite and record any real-device gap in `docs/memory/risks.md`.
 
 ## Deep References
 

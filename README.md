@@ -229,7 +229,7 @@ src/
   ledger.mjs          JSONL ledger + daily digest
   rules.mjs           anti-disturb gates (event / keyword / grace)
 scripts/              channel-login.mjs · channel-selfcheck.mjs · route.mjs · gen-channel-matrix.mjs
-test/                 1531 tests (1531 pass) in the 0.9.4 release line; historical 0.8.6 package carried 909 tests.
+test/                 1531 tests (1531 pass) in the 0.9.5 release line; historical 0.8.6 package carried 909 tests.
 ```
 
 Design rules: pure ESM (`.mjs`), zero runtime dependencies, a declarative spec engine for the bulk of channels, thin honest adapters, no build step.
@@ -246,7 +246,7 @@ Pin discipline (S-13): optional ranges are locked to the reviewed versions (the 
 ## Development
 
 ```bash
-npm test          # 0.9.4 release line: 1531 (1531 pass)
+npm test          # 0.9.5 release line: 1531 (1531 pass)
 ```
 
 To add a channel: implement the adapter interface (`resolve(cfg)` + `send(msg)`) in `src/adapters/` and register it in `src/config.mjs`; the channel matrix above self-regenerates via `node scripts/gen-channel-matrix.mjs`.

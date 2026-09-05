@@ -1,6 +1,6 @@
 // dsh-notifier health.mjs
 // 渠道健康自检核心（阶段 6）：真机验证一个渠道的「resolve → send」全链路。
-// scripts/test-channel.mjs 是它的 CLI 壳；notify_test agent 工具走 notifier（带路由），
+// scripts/channel-selfcheck.mjs（G-57：原 test-channel.mjs 重命名）是它的 CLI 壳；notify_test agent 工具走 notifier（带路由），
 // 这里走裸 adapter——配置错了能拿到最原始的中文错误（去哪里拿凭证）。
 
 import { ADAPTERS, CHANNEL_TYPES, resolveEnvRefs } from './config.mjs'

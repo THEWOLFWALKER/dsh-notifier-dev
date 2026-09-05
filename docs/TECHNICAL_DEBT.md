@@ -4,7 +4,7 @@
 
 ### 已知工具面坑（2026-08-28 登记）
 
-- **裸 `node --test` 会把 `scripts/` 吸进测试扫描**：`scripts/test-channel.mjs` 是需要 CLI 参数的运维脚本，无参调用退出码 1，被 node test runner 当失败用例。正式测试面是 `npm test`（glob 限定 `test/*.test.mjs`/`*.spec.mjs`）；全量校验一律用 `npm test`，不要裸跑 `node --test`。
+- **裸 `node --test` 会把 `scripts/` 吸进测试扫描**：`scripts/channel-selfcheck.mjs`（G-57：原 `test-channel.mjs` 重命名）是需要 CLI 参数的运维脚本，无参调用退出码 1，被 node test runner 当失败用例。正式测试面是 `npm test`（glob 限定 `test/*.test.mjs`/`*.spec.mjs`）；全量校验一律用 `npm test`，不要裸跑 `node --test`。
 
 ## 已完成的维护范围
 
@@ -22,6 +22,16 @@
 ## 维护规则
 
 新工作仍须遵循 plan → adversarial review → focused tests → full validation；mock 通过不等于 provider/宿主行为已验证。不得以扩大功能、猜测协议字段或放宽 fail-closed 边界来关闭上述门。
+
+### mock 分层原则（G-58，2026-09-05 写入）
+
+入站渠道测试按三层分离，防止「mock 与实现同源共生、协议漂移时 mock 先『对了』」（G-01/G-58 原罪）：
+
+1. **协议合约 fixtures**：协议帧/回执的形状样本放 `test/fixtures/`（如 `channels/qq-bot.json`、`qq-c2c-image.json`），只表达「协议长什么样」，不含驱动逻辑。字段增删先改这里，再谈实现。
+2. **传输 fake**：仅模拟「传输层行为」的最小 fake（如 `test/inbound.qq.test.mjs` 的 `FakeWebSocket`），负责 open/message/close/error/半帧/超时等事件驱动，不做业务断言。新增入站通道照抄该结构：fake 只管发事件、收帧，协议语义留在上层。
+3. **业务断言**：`test/inbound.*.test.mjs` 里的用例只断言「帧 → bus envelope / 回执 / 重连」的业务结果，不关心 fake 内部实现。去重/归属断言查具体载荷（ack 条数 + ack 归属），不只数条数。
+
+纪律：新渠道入站测试照此结构写；fake 缺支路（如 error/半帧/超时）先补 fake 再写用例，不得绕过 fake 直接 mock 业务层。
 
 完整检查命令：
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.9.5] - 2026-08-28
+
+R5「测试保真与文档」修复列车（80 项清单 W13：G-57/G-58/G-59/G-60/S-11/S-13 + mock 分层原则）。全部为 mock/contract 证据，协议类修复未经真机验证（真机缺口登记 `docs/memory/risks.md`）；`npm test` 为 1531（1531 pass，同 0.9.4——本批为测试与文档面）。
+
+### W13 测试保真与文档
+
+- **G-57 脚本重命名**：`scripts/test-channel.mjs` → `scripts/channel-selfcheck.mjs`——`test-*` 前缀会被 Node 22 裸 `node --test` 默认 glob 误吞；README/AGENTS/ADAPTER/OPERATIONS/CI 引用全同步。
+- **G-58 mock 保真**：qq FakeWebSocket 补 error 事件/半帧垃圾帧支路（error 不直接调度重连、非法帧不崩握手）；public fetch mock 补超时支路（AbortError 与 G-50 TIMEOUT+noRetry 分类同构）；mock 分层维护规则（协议合约 fixtures / 传输 fake / 业务断言三层分离）写入 `docs/TECHNICAL_DEBT.md`。
+- **G-59 三新测试套件**：`test/health.test.mjs`（渠道自检错误形态/SSRF 拦截/凭证缺失指引/`${ENV:}` 解析）、`test/escalation.test.mjs`（升级链阶段推进/mock timers/多 key 独立/重启清计时器）、`test/pairing.test.mjs`（配对码锁出新语义：过期码不翻锁、无效码 5 次锁出、TTL/审计/隔离）。
+- **G-60 文档缺口**：README 两语言补全会话命令 11 条带边界说明；guide.md 排障新增 accountId 来源规则（绝不 channel 兜底、多账号显式配置）。
+- **S-11 hook-server 排除出包**：package.json `files` 从含整个 `scripts` 目录改为显式列举 6 个发布脚本，`hook-server.mjs`（127.0.0.1 + 512KB cap 开发用）不随包分发；verify-release 增加发布脚本显式列举校验。
+- **S-13 optional 依赖锁定**：`@larksuiteoapi/node-sdk` `^1.61.1` → `1.73.0`（已审查版本）、`qrcode-terminal` → `0.12.0` 精确锁定；移除 UNLICENSED 的 `@tencent-connect/qqbot-connector`（维持「仅参考不引入」决策）。
+
+### 已知残留（登记 `docs/memory/risks.md`）
+
+- 沿用 R4 的 SSRF DNS rebinding 竞态、单 token 模型固有边界、G-19 scoped 事件契约未定、G-47 首见基准内存态四条残留。
+
 ## [0.9.4] - 2026-08-28
 
 R4「配置收敛与入站生命周期」修复列车（80 项清单 W10/W11/W12 共 25 项）。全部为 mock/contract 证据，协议类修复未经真机验证（真机缺口登记 `docs/memory/risks.md`）；`npm test` 为 1531（1531 pass）。

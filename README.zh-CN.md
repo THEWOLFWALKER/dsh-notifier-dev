@@ -227,7 +227,7 @@ src/
   ledger.mjs          JSONL 账本 + 每日摘要
   rules.mjs           防打扰闸门（事件 / 关键词 / 宽限窗）
 scripts/              channel-login.mjs · channel-selfcheck.mjs · route.mjs · gen-channel-matrix.mjs
-test/                 1531 个测试（1531 通过，0.9.4 发布线）；历史 0.8.6 包为 909 个测试。
+test/                 1531 个测试（1531 通过，0.9.5 发布线）；历史 0.8.6 包为 909 个测试。
 ```
 
 设计准则：纯 ESM（`.mjs`）、零运行时依赖、绝大多数渠道走声明式 spec 引擎、适配器薄而诚实、无构建步骤。
@@ -244,7 +244,7 @@ test/                 1531 个测试（1531 通过，0.9.4 发布线）；历史
 ## 开发
 
 ```bash
-npm test          # 0.9.4 发布线：1531（1531 通过）
+npm test          # 0.9.5 发布线：1531（1531 通过）
 ```
 
 新增渠道：在 `src/adapters/` 实现适配器接口（`resolve(cfg)` + `send(msg)`），并在 `src/config.mjs` 注册；上方渠道矩阵由 `node scripts/gen-channel-matrix.mjs` 自动重生成。

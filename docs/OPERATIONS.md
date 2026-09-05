@@ -31,7 +31,7 @@ The Web admin console is the only control console and the full install-to-daily-
 
 | Symptom | First checks |
 |---|---|
-| No outbound delivery | Admin channel status, `test-channel.mjs`, adapter config resolution, stderr warnings |
+| No outbound delivery | Admin channel status, `channel-selfcheck.mjs`, adapter config resolution, stderr warnings |
 | Inbound silent | Optional dependency installed, token/account fallback, paired composite identity, provider long-poll/WS logs |
 | Approval did not apply | Original chat/channel, token age, first-arrival state, desktop fallback; never treat timeout as approval |
 | Ask-user missing | Installed package version, `questions.enabled`, startup assembly log, `npm ls dsh-notifier` |

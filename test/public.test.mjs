@@ -31,9 +31,25 @@ function makeRig({ channels = [{ type: 'webhook', url: 'http://x/hook' }], logge
   return { notifier, records }
 }
 
-async function withFetch(ok = true, fn) {
+async function withFetch(ok = true, fn, { timeout = false } = {}) {
   const original = globalThis.fetch
-  globalThis.fetch = async () => ({ ok, status: ok ? 200 : 500, json: async () => ({}), text: async () => 'err' })
+  if (timeout) {
+    // G-58：超时支路——请求挂起直到被终止，fetch 以 AbortError 拒绝。
+    // postJson 把 AbortError 归为 TIMEOUT + noRetry（G-50 语义，见 adapters.test.mjs
+    // 同款手法）；兜底 25ms 是为不等配置级 timeoutMs（webhook 被钳到 ≥1s）——
+    // 模拟的结局（AbortError）与真实超时逐字节同构，错误分类只看 error.name。
+    globalThis.fetch = (url, init) => new Promise((resolve, reject) => {
+      const fail = () => {
+        const error = new Error('aborted')
+        error.name = 'AbortError'
+        reject(error)
+      }
+      init?.signal?.addEventListener?.('abort', fail) // 走真实 AbortController 路径
+      setTimeout(fail, 25) // 兜底：确定性终止，不让测试挂 1s+
+    })
+  } else {
+    globalThis.fetch = async () => ({ ok, status: ok ? 200 : 500, json: async () => ({}), text: async () => 'err' })
+  }
   try {
     // 必须 await：finally 在 fn 整体 settle 后才恢复 fetch（return fn() 会在首个 await 处提前恢复）
     return await fn()
@@ -118,6 +134,21 @@ test('facade 定向推送：skipped 与 failed 的形状适配', async () => {
     assert.equal(records[1].failed[0].channel, 'webhook')
     assert.match(records[1].failed[0].error, /HTTP 500/)
   })
+})
+
+test('G-58 超时支路：fetch AbortError → TIMEOUT noRetry 文案（结果未知，不再重试）', async () => {
+  const { notifier, records } = makeRig()
+  const facade = createPublicFacade({ notifier, logger: { warn() {} } })
+  await withFetch(true, async () => {
+    const timedOut = await facade.push({ title: 't', content: 'c' }, { channel: 'webhook' })
+    assert.equal(timedOut.ok, false)
+    assert.equal(timedOut.failed.length, 1)
+    assert.equal(timedOut.failed[0].channel, 'webhook')
+    assert.match(timedOut.failed[0].error, /投递超时.*结果未知.*不再重试/)
+    assert.equal(records.length, 1)
+    assert.equal(records[0].channel, 'webhook')
+    assert.match(records[0].failed[0].error, /投递超时|TIMEOUT/)
+  }, { timeout: true })
 })
 
 test('facade never-reject：notifyAll 内部抛错 → failed:[{reason:"internal"}]，绝不 reject', async () => {

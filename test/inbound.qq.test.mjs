@@ -43,7 +43,13 @@ function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json' } })
 }
 
-/** mock WebSocket：EventTarget 子集 + serverSend 驱动协议帧。 */
+/** mock WebSocket：EventTarget 子集 + serverSend 驱动协议帧。
+ *  G-58 mock 保真：除 open/message/close 外补三条异常支路——
+ *   - error 事件：serverError()（真实 WS 的 error 后必跟 close，重连统一在 close 调度）；
+ *   - 半帧：serverSendRaw() 直送原始文本（不 JSON 序列化），客户端 handleFrame
+ *     JSON.parse 失败即忽略，绝不能崩（无重连、无异常上抛）；
+ *   - 超时：心跳 ACK 超时支路不新增方法——serverSend  withheld ACK + t.mock.timers
+ *     推进（W8 心跳用例同手法，见下方「心跳 ACK 连续丢失」用例）。 */
 class FakeWebSocket {
   static instances = []
   constructor(url) {
@@ -68,6 +74,14 @@ class FakeWebSocket {
     this.readyState = 3
     // G-07：close 事件携带服务端关闭码（无码=undefined → 走默认重连分支）
     this.emit('close', code === undefined ? {} : { code })
+  }
+  /** G-58：error 事件支路——真实 WS 的 error 后必跟 close（重连在 close 里统一调度）。 */
+  serverError(message = 'mock ws error') {
+    this.emit('error', { error: new Error(message), message })
+  }
+  /** G-58：半帧支路——直送原始文本（不 JSON 序列化），模拟分片到达/粘包/垃圾帧。 */
+  serverSendRaw(raw) {
+    this.emit('message', { data: String(raw) })
   }
   send(data) { this.sent.push(JSON.parse(data)) }
   close() { this.serverClose() }
@@ -579,6 +593,38 @@ test('G-07 close 4006/4009：会话不可恢复弃之重 IDENTIFY；无码关闭
   ws2.serverSend({ op: 10, d: { heartbeat_interval: 60000 } })
   await tick()
   assert.ok(ws2.sent.some((frame) => frame.op === 6), '无码关闭应维持 RESUME 现行为')
+  await rig.inbound.stop()
+})
+
+// ------------------------------------------------------------- G-58 mock 保真
+
+test('G-58 error 支路：error 事件不直接触发重连（等 close）；close 跟随 → 正常重连', async () => {
+  const rig = makeRig()
+  const ws = await driveReady(rig)
+  const before = FakeWebSocket.instances.length
+  ws.serverError('mock network flap')
+  await tick()
+  assert.equal(FakeWebSocket.instances.length, before, 'error 事件本身不调度重连（重连统一在 close）')
+  assert.equal(ws.readyState, 1, 'error 后连接仍开着（close 才关）')
+  ws.serverClose() // 真实 WS：error 后必跟 close
+  await tick(10)
+  assert.ok(FakeWebSocket.instances.length > before, 'error 后 close 跟随 → 走既有重连路径')
+  await rig.inbound.stop()
+})
+
+test('G-58 半帧支路：分片/垃圾帧被忽略不崩，正常帧照常完成握手', async () => {
+  const rig = makeRig()
+  rig.inbound.start()
+  await tick()
+  const ws = FakeWebSocket.instances.at(-1)
+  ws.serverOpen()
+  ws.serverSendRaw('{"op":') // 半帧：JSON 未完（真实 WS 分片可能拆在任意字节边界）
+  ws.serverSendRaw('这不是 JSON 的垃圾帧')
+  await tick()
+  assert.equal(ws.sent.length, 0, '半帧/垃圾帧不应触发任何发送（客户端忽略非法帧）')
+  ws.serverSend({ op: 10, d: { heartbeat_interval: 60000 } }) // 正常 HELLO 仍可完成握手
+  await tick()
+  assert.ok(ws.sent.some((frame) => frame.op === 2), '半帧之后正常帧照常处理 → IDENTIFY')
   await rig.inbound.stop()
 })
 
