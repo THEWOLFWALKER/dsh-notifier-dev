@@ -58,6 +58,16 @@ Web 管理台（默认启用，仅绑 127.0.0.1；v0.5 起移动端自适应）�
 | **绑定矩阵**（高级） | agent × 通道勾选网格、入站通道默认 agent |
 | **会话台账**（高级） | 每会话出站解析与覆盖编辑 |
 
+实拍预览（蓝白主题，对齐 DeepSeek Harness 设计令牌；仅绑回环地址，v0.5 起移动端自适应）：
+
+| 零配置首访向导 | 通知渠道（已配置 + 可折叠分组） |
+|---|---|
+| ![零配置首访向导](docs/screenshots/fresh-wizard-desktop.png) | ![通知渠道配置](docs/screenshots/configured-channels-desktop.png) |
+
+| 站内解锁门（静默验证 token） | 移动端布局 |
+|---|---|
+| ![解锁门](docs/screenshots/gate-unlock.png) | ![移动端·渠道](docs/screenshots/configured-channels-mobile.png) · ![移动端·向导](docs/screenshots/fresh-wizard-mobile.png) |
+
 ## 快速开始
 
 ```bash

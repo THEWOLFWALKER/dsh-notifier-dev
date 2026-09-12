@@ -60,6 +60,18 @@ The console is enabled by default and binds loopback only (mobile-friendly since
 
 > **Outbound config is "view-hot, delivery-cold"** (G-14, W12): saving an **outbound** channel in the admin console reflects in the UI immediately, and the channel card shows a **"重启后生效" (takes effect after restart)** badge — the delivery layer (outbound router/channel instances) only merges runtime config (YAML ⊕ store) at the **next plugin startup**; inbound credentials likewise reconnect at next startup. Test send is exempt: it runs against the latest merged config instantly, no restart needed.
 
+### What it looks like
+
+| Zero-config onboarding wizard | Channel setup (configured + collapsible groups) |
+|---|---|
+| ![First-visit onboarding wizard](docs/screenshots/fresh-wizard-desktop.png) | ![Channel setup](docs/screenshots/configured-channels-desktop.png) |
+
+| In-page unlock gate (silent token check) | Mobile layouts |
+|---|---|
+| ![Unlock gate](docs/screenshots/gate-unlock.png) | ![Mobile · channels](docs/screenshots/configured-channels-mobile.png) · ![Mobile · wizard](docs/screenshots/fresh-wizard-mobile.png) |
+
+Screenshots captured from the loopback console (blue-white theme, aligned with the DeepSeek Harness design tokens). The console binds loopback only and is mobile-friendly from v0.5.
+
 ## Quick start
 
 ```bash
