@@ -222,6 +222,23 @@ DSH 处于 developer preview，0.x 阶段的次版本号提升允许小幅破坏
 
 ## [Unreleased]
 
+### 修复：Telegram ask_user 单选卡片增加「自定义回答 / 跳过」按钮 + ref 回收与来源校验（PR #22，2026-09-12）
+
+- `src/inbound/telegram-bot.mjs` `sendQuestionCard()` 在选项按钮之后追加 `✍️ 自定义回答`（`c`）与 `⏭ 跳过`（`s`）两个辅助按钮，继续沿用 `buildQuestionAction()` 与 `r:<ref>` 短引用链，不另造协议。
+- **引用回收**：本次卡片为选项与两个辅助按钮铸造的全部 callback ref 记录进 `cardRefs`；容量中途耗尽时、辅助按钮铸造失败时、以及 `sendMessage` 抛错/返回失败时，均完整回收本次已铸全部 ref 后降级编号通知，仅真正发送成功才保留 ref 供点击链单次核销（不再泄漏到 TTL）。
+- **来源/token 校验**：`src/questions/router.mjs` `handleCardAction()` 对 custom/skip 分支补 token 有效性（过期/畸形/错签名）、`token.key === qKey`、ledger 存在且 `status === 'pending'`、以及 `(channel, accountId, userId, chatId)` 精确来源匹配（`pushedTo` 中存在 `accountId` 时必须匹配）；来源字段缺失、旧卡、已答、已过期、错误账号/用户/聊天全部 fail-closed 并给出安全提示。custom 只回指引（`答：<内容>`），不直接结算；真正文本回答仍走 `settleText()` / Control Core / `bus.settle` 首达采纳。
+- 修复来源 fail-closed 闸只查 `null`、漏掉 `Array.prototype.find` 返回 `undefined` 的越权放行。
+- 新增 focused regression：错 key token / 过期 token / 已决问题 / 错误 chat / 错误 account 均 fail-closed，正确来源只发指引不结算，随后 `答：` 文本正常落账。
+
+### 修复：QQ 网关心跳时序死循环（Issue #23，2026-09-12）
+
+- `src/inbound/qq-gw.mjs`：`OP_HELLO` 只记录本连接的 `heartbeat_interval` 并发送 IDENTIFY/RESUME，**不再立即启动并发送首拍心跳**（真机 A/B 证据：QQ 网关只对鉴权完成、收到 READY/RESUMED 之后发出的心跳回 `OP_HEARTBEAT_ACK`，提前起搏永远收不到 ACK 而死循环）。
+- 心跳起搏拆为 `recordHeartbeatInterval()` + `armHeartbeat()`：收到 `READY` 或 `RESUMED` 后才幂等启动定时器并立即发送第一拍（携带当时最新 `lastSeq`）；重复 READY/RESUMED 不会创建多个定时器或重复首拍。
+- `beat()` 语义修正：上一拍未 ACK 且未达到 `maxMissedAcks` 时记一次 miss、告警，但仍继续发送下一拍（保持恢复路径，不再提前 `return` 卡死）；只有达到阈值才 `cleanupSocket()` 并按既有语义走 RESUME 优先重连，该拍不再发送；收到任意有效 `OP_HEARTBEAT_ACK` 后清零等待与连续 miss 计数。
+- **连接级状态隔离**：`heartbeatIntervalMs`/`heartbeatArmed`/`awaitingAck`/`missedAcks` 均为连接级，`cleanupSocket()` 复位；`connect()` 的 message 监听器按连接身份 `conn` 比对，旧连接迟到 ACK 不再取消已决策重连、也不污染新连接；`stop()` 增补清心跳状态，restart 后能重新正常握手与起搏。
+- 保留现有关闭码分支、退避、token、sessionId、lastSeq 与 fail-safe 行为；未顺手重构其他 QQ 协议代码。
+- 测试：删除「HELLO 后立即心跳」旧契约，新增 HELLO→IDENTIFY-only、READY/RESUMED 才首拍、RESUME→RESUMED 起拍、重复 READY/RESUMED 不双定时器、单拍丢失下一拍仍发、旧连接迟到 ACK 不污染新连接等回归。
+
 ### 新增：宿主事件根上下文订阅与可观测性（Issue #16，2026-08-26）
 
 - 新增 `src/host-events.mjs`：DSH/Cordis 宿主事件订阅的兼容边界。宿主按注册上下文限定事件监听作用域，插件挂在 scoped 子上下文时，宿主事件订阅会经功能探测回落到文档化的 Cordis 根上下文（`ctx.root`，自引用校验；非 Cordis 的 root 服务一律拒绝）。
