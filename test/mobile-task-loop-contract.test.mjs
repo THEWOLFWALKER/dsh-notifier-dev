@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createNativeQuestionBridge } from '../src/host/native-questions.mjs'
 
 // v0.10 移动任务闭环契约冻结（任务书第 1 提交）。
 // 本文件锁定「现状 + 目标」契约形状：已落地部分做实断言，尚未实现的目标
@@ -13,10 +14,13 @@ test('contract: host capability snapshot exposes task-visible shape', () => {
   }
 })
 
-test('contract: native question bridge surface', { todo: true }, () => {
+test('contract: native question bridge surface', () => {
   // NativeQuestionBridge 接口：capabilities/attach/pending/settle/snapshot/dispose
   const iface = ['capabilities', 'attach', 'pending', 'settle', 'snapshot', 'dispose']
-  assert.equal(iface.length, 6)
+  const bridge = createNativeQuestionBridge({ ctx: {}, questionBridge: {} })
+  for (const method of iface) {
+    assert.equal(typeof bridge[method], 'function', `bridge must expose ${method}()`)
+  }
 })
 
 test('contract: web-first remote escalation stages', { todo: true }, () => {

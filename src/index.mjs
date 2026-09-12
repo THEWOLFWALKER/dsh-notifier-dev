@@ -21,6 +21,7 @@ import { createInboundChannelRegistry } from './assembly/inbound-channels.mjs'
 import { disposeAll } from './assembly/lifecycle.mjs'
 import { registerApprovalHandler } from './approval/router.mjs'
 import { createQuestionBridge, registerAskUserTool } from './questions/router.mjs'
+import { createNativeQuestionBridge } from './host/native-questions.mjs'
 import { registerConversationRouter } from './inbound/conversation.mjs'
 // v0.5：动作闭环（通知按钮 → 内置处置动作）
 import { createActionDispatcher } from './actions.mjs'
@@ -277,6 +278,7 @@ export function apply(ctx, config = {}) {
   let interactiveRaw = []
   let busRef = null
   let questionsBridge = null
+  let nativeBridge = null
   const questionsForChannels = {
     decide: (payload) => questionsBridge?.decide(payload) ?? { ok: false, message: '提问服务未就绪' },
   }
@@ -561,7 +563,13 @@ export function apply(ctx, config = {}) {
         if (disposeAskTool !== null) disposers.push(disposeAskTool)
         questionsBridge.attach()
         disposers.push(() => questionsBridge.dispose())
-        warn(`远程提问已启用：ask_user 工具（限流 ${resolved.questions.rateLimitPerMinute} 次/分钟，超时 ${Math.round(resolved.questions.timeoutMs / 1000)}s 不代答）；飞书/Telegram 单选选项卡 + 全渠道编号兜底`)
+        // v0.10 宿主原生提问桥（任务书 3.2）：仅经 ctx.userQuestions 公开 seam 桥接
+        // 原生 ask_user_question；seam 缺失/被占用时安全降级（nativeBridge.capabilities()
+        // 反映降级，管理台据此展示）。绝不伪造原生桥。
+        nativeBridge = createNativeQuestionBridge({ ctx, questionBridge: questionsBridge, logger })
+        const nativeAttached = nativeBridge.attach()
+        disposers.push(() => nativeBridge.dispose())
+        warn(`远程提问已启用：ask_user 工具（限流 ${resolved.questions.rateLimitPerMinute} 次/分钟，超时 ${Math.round(resolved.questions.timeoutMs / 1000)}s 不代答）；飞书/Telegram 单选选项卡 + 全渠道编号兜底；宿主原生提问桥 ${nativeAttached ? '已 attach（provider-chain）' : `未 attach（seam=${nativeBridge.capabilities().seam}，降级 unsupported）`}`)
       } catch (error) {
         warn(`questions 桥装配失败，已跳过（其余能力不受影响）: ${error instanceof Error ? error.message : String(error)}`)
       }
@@ -720,6 +728,7 @@ export { createWechatIlinkInbound, resolveWechatInboundConfig } from './channels
 export { registerApprovalHandler } from './approval/router.mjs'
 export { createEscalationChain } from './approval/escalation.mjs'
 export { createQuestionBridge, registerAskUserTool } from './questions/router.mjs'
+export { createNativeQuestionBridge } from './host/native-questions.mjs'
 export { registerConversationRouter } from './inbound/conversation.mjs'
 export { segmentText, countCodepoints, sendSegmented } from './inbound/segment.mjs'
 // v0.6：开放事件源（供测试与其它插件复用）
