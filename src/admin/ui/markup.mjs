@@ -70,7 +70,7 @@ export const ADMIN_UI_MARKUP = `<a class="skip" href="#main">跳到主要内容<
       </ol>
       <div class="setup-pane" id="setupPane1">
         <p class="muted small">推荐你手机上已有的应用；全部出站渠道（含 slack / discord / ntfy 等）可展开选择。</p>
-        <div id="setupTiles" class="tiles"></div>
+        <div id="setupTiles"></div>
         <div class="inline" id="setupMsg1"></div>
       </div>
       <div class="setup-pane" id="setupPane2" hidden>

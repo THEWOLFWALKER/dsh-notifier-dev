@@ -561,10 +561,14 @@ function renderSetupTiles() {
   }
   var rec = rows.filter(function (c) { return setupMeta(c.type).rec })
   var rest = rows.filter(function (c) { return !setupMeta(c.type).rec })
-  var html = rec.map(tileHtml).join('')
+  // 结构注意：#setupTiles 是纯容器（不能带 .tiles 网格类）——推荐行与展开区各自成网，
+  // 否则展开区会沦为外层网格的一个格子，被压成单列（实测 1440px 下 27 张瓷砖挤成 1 列）。
+  var html = '<div class="tiles">' + rec.map(tileHtml).join('')
   if (rest.length > 0) {
     html += '<button type="button" class="tile more" id="setupMore">全部 ' + rows.length + ' 个渠道 →</button>'
-    html += '</div><div id="setupRest" class="tiles" hidden>' + rest.map(tileHtml).join('')
+    html += '</div><div id="setupRest" class="tiles" hidden>' + rest.map(tileHtml).join('') + '</div>'
+  } else {
+    html += '</div>'
   }
   box.innerHTML = html
 }
