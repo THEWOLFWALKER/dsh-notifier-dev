@@ -1,5 +1,36 @@
 # Changelog
 
+## [Unreleased] - 2026-09-12（codex/admin-zero-config-onboarding 分支）
+
+「零配置首访」特性线：安装后不写 YAML——打开终端打印的启动链接，选通知渠道、填凭证、当场收到测试通知；远程控制以后再配。`npm test` 为 **1544**（1544 pass，较 0.9.5 基线 1531 净 +13；`admin-ui-behavior` 套件按新鉴权/向导契约整体重写为 46 项）。
+
+### 后端（装配/API）
+
+- **admin 默认启用**：`cordis.patch.yml` 补 `admin.enabled: true`，新安装零 YAML 即带管理台。
+- **fragment 启动链接（launchToken）**：`src/assembly/admin-token.mjs` 首启生成路径额外产出本次进程内有效的明文 `launchToken`；`src/index.mjs` 在 server 取得真实端口后打印 `http://127.0.0.1:<port>/#token=...`——token 只在 fragment，不进 query / Referer / 访问日志；显式/复用 token 路径不打印（恒 null）。
+- **端口冲突自动回退**：`src/admin/server.mjs` `start()` 遇 `EADDRINUSE` 在同一 server 生命周期内先 close 清理半启动状态，再以 `port: 0` 内核分配重试；仍只绑 127.0.0.1，Origin/Host 白名单按实际端口构建，就绪行打印真实地址。
+- **出站 state 键域分域**：新键 `admin:channel:<type>:outbound`（`src/assembly/outbound.mjs`），与非双域旧键 `<type>:account` 及 YAML bootstrap 按优先级合并（admin 出站键 → 非双域 account → YAML）；双域通道（feishu/dingtalk）出站/入站键域彻底分离，网页编辑出站不再触碰入站扫码凭证。
+- **方向明确 API**：新增 `PUT/DELETE /api/channels/outbound/:type`、`POST /api/channels/outbound/:type/test`、`PUT/DELETE /api/channels/inbound/:type`；旧 `/api/channels/:type` 路由原样保留兼容（双域 webhook 422 限制只约束旧路由）。
+- **即时真实测试**：`testOutboundChannel` 现场合并「当前 YAML 原文 + 当前 state 出站键」后调 `channelTest(type, rawConfig)`——保存后无需重启即可真实测试投递；投递层并入运行时仍维持「重启后生效」（G-14 语义不变）。
+
+### 前端（管理台 UI 重构，src/admin/ui/ 三件套）
+
+- **源码拆分**：`ui.mjs` 只做组合，`ui/theme.mjs`（「信号中枢台」视觉：深空底色 + 信号青主色 + 广播塔脉冲标识）、`ui/markup.mjs`（页面骨架）、`ui/client.mjs`（浏览器端逻辑）；仍为零构建、无 CDN、自包含单文件 HTML。
+- **解锁门取代 window.prompt**：无 token / token 失效一律站内解锁门（`#gate`），认证 token 验证成功后只写 sessionStorage（绝不写 localStorage），受限环境退化页面内存；401 清 token 回解锁门，单飞共享、至多自动恢复一次。
+- **首访三步向导**：选渠道（推荐瓷砖优先、入站渠道不进向导）→ 填凭证（必填标星、`***` 视为未修改不提交）→ 保存并当场真实测试，送达才视为初始化完成；明确「保存成功 ≠ 通知可达」。
+- **信息架构重排**：首页（链路状态 / 下一步行动 / 健康矩阵 / 提问 / 审计流）→ 通知渠道（出站主、入站次）→ 成员 → 通知；绑定矩阵与会话收进「打开高级设置」（默认隐藏）。移动端自适应与焦点/ARIA 语义保留。
+
+### 测试
+
+- `test/admin-ui-behavior.test.mjs` 整体重写（46 项）：fragment 凭证静默验证、先清地址栏再写 sessionStorage、解锁门路径、401 单飞恢复、首访向导全链路（选渠道/必填校验/保存并测试/失败保留输入重试）、个人模式默认值与高级设置显式入口。
+- `test/admin-api.test.mjs` / `test/admin-wiring.test.mjs`：新方向路由、出站键域优先级、双域 editable 语义、即时测试合并配置。
+- `test/personal-ux-api.test.mjs`：泄密判定改为「口令框不得预填值」（解锁门 `type="password"` 是掩码输入正当用途）。
+
+### 已知残留
+
+- `docs/screenshots/admin-*.png` 旧版实拍已随新 UI 上线删除（README 双语引用同步移除）；新 UI 真机截图待拍后回补。
+- 版本号与 `dshQuality.testCount` 未随分支推进（发布门统一在 release 时收口）。
+
 ## [0.9.5] - 2026-08-28
 
 R5「测试保真与文档」修复列车（80 项清单 W13：G-57/G-58/G-59/G-60/S-11/S-13 + mock 分层原则）。全部为 mock/contract 证据，协议类修复未经真机验证（真机缺口登记 `docs/memory/risks.md`）；`npm test` 为 1531（1531 pass，同 0.9.4——本批为测试与文档面）。

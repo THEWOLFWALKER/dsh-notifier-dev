@@ -24,13 +24,22 @@ check(/^\d+\.\d+\.\d+$/.test(version), `package.json version is invalid: ${versi
 check(Number.isInteger(qualityCount) && qualityCount > 0, 'dshQuality.testCount must be a positive integer')
 
 const changelog = read('CHANGELOG.md')
-const ui = read('src/admin/ui.mjs')
 const readme = read('README.md')
 const readmeZh = read('README.zh-CN.md')
 const handoff = read('HANDOFF.md')
 
 check(changelog.includes(`## [${version}]`), `CHANGELOG.md has no [${version}] heading`)
-check(ui.includes(`v${version}`), `src/admin/ui.mjs does not contain v${version}`)
+// 零配置首访起 ui.mjs 只做组合（theme/markup/client 三件套拆分）——版本角标检查
+// 必须落在「实际 served 的组合 HTML」上，而不是某个具体源文件（再重构也不会漏检）。
+let uiHtml = ''
+try {
+  const { pathToFileURL } = await import('node:url')
+  const mod = await import(pathToFileURL(resolve(root, 'src/admin/ui.mjs')).href)
+  uiHtml = String(mod.ADMIN_UI_HTML ?? '')
+} catch (error) {
+  check(false, `src/admin/ui.mjs import failed: ${error instanceof Error ? error.message : String(error)}`)
+}
+check(uiHtml.includes(`v${version}`), `admin UI composed HTML does not contain v${version}`)
 
 const documentedCounts = [
   one(readme, /tests-(\d+)-brightgreen/, 'README.md badge'),

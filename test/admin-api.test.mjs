@@ -112,7 +112,7 @@ test('缺省依赖：全部查询方法不抛，按空数据降级', () => {
 
 // ———————— overview ————————
 
-test('overview：渠道三态分类（出站 enabled/有凭证/全无；双域出站只认 YAML；入站有凭证=启用）', () => {
+test('overview：渠道三态分类（出站 enabled/有凭证/全无；双域出站有专属键域；入站有凭证=启用）', () => {
   const { api } = makeApi({
     state: {
       'bark:account': { key: 'k' }, // 有凭证、未启用
@@ -128,13 +128,33 @@ test('overview：渠道三态分类（出站 enabled/有凭证/全无；双域�
   assert.deepEqual(byType('bark', 'outbound'), { type: 'bark', direction: 'outbound', configured: true, enabled: false, editable: true, restartRequired: true })
   // 出站：既无凭证也未启用 → 双 false
   assert.deepEqual(byType('pushplus', 'outbound'), { type: 'pushplus', direction: 'outbound', configured: false, enabled: false, editable: true, restartRequired: true })
-  // 双域出站（feishu/dingtalk）：`<type>:account` 键域归入站机器人凭证 → 出站行只认
-  // YAML（configured=enabled），store 有凭证也不算已配置，且 editable=false（webhook 走 YAML bootstrap）
-  assert.deepEqual(byType('feishu', 'outbound'), { type: 'feishu', direction: 'outbound', configured: false, enabled: false, editable: false, restartRequired: true })
-  assert.deepEqual(byType('dingtalk', 'outbound'), { type: 'dingtalk', direction: 'outbound', configured: false, enabled: false, editable: false, restartRequired: true })
+  // 双域出站（feishu/dingtalk）：`<type>:account` 键域归入站机器人凭证 → 出站行不因它
+  // 变 configured；但零配置首访起出站 editable 恒 true（新 admin:channel:<type>:outbound
+  // 键域与入站分离，双域也能网页保存出站 webhook）
+  assert.deepEqual(byType('feishu', 'outbound'), { type: 'feishu', direction: 'outbound', configured: false, enabled: false, editable: true, restartRequired: true })
+  assert.deepEqual(byType('dingtalk', 'outbound'), { type: 'dingtalk', direction: 'outbound', configured: false, enabled: false, editable: true, restartRequired: true })
   // 入站：有 `<channel>:account` → 双 true；无 → 双 false；editable 恒 true（扫码/表单可写）
   assert.deepEqual(byType('feishu', 'inbound'), { type: 'feishu', direction: 'inbound', configured: true, enabled: true, editable: true, restartRequired: false })
   assert.deepEqual(byType('qq', 'inbound'), { type: 'qq', direction: 'inbound', configured: false, enabled: false, editable: true, restartRequired: false })
+})
+
+test('overview：admin:channel:<type>:outbound 键使出站行 configured（含双域），与入站键互不污染', () => {
+  const { api } = makeApi({
+    state: {
+      'admin:channel:feishu:outbound': { webhook: 'https://open.feishu.cn/hook/x' },
+      'admin:channel:serverchan:outbound': { sendkey: 's' },
+      'feishu:account': { appId: 'a', appSecret: 's' }, // 入站凭证：只影响入站行
+    },
+  })
+  const rows = api.overview().channels
+  const byType = (type, direction) => rows.find((row) => row.type === type && row.direction === direction)
+  // 双域出站：新出站键 → configured=true（即使未启用、YAML 未配）
+  assert.deepEqual(byType('feishu', 'outbound'), { type: 'feishu', direction: 'outbound', configured: true, enabled: false, editable: true, restartRequired: true })
+  // 非双域出站：新出站键同样生效
+  assert.equal(byType('serverchan', 'outbound').configured, true)
+  // 入站行不受新出站键影响；入站凭证照旧使入站行 configured
+  assert.equal(byType('dingtalk', 'inbound').configured, false)
+  assert.deepEqual(byType('feishu', 'inbound'), { type: 'feishu', direction: 'inbound', configured: true, enabled: true, editable: true, restartRequired: false })
 })
 
 test('overview：sessions active/total 与 agents.keys 计数', () => {
@@ -589,7 +609,7 @@ test('getChannels：YAML ⊕ store 合并视图（store 覆盖同名 YAML 字段
   assert.deepEqual(bark.config, { key: '***', device: '***' }) // store.key 覆盖，yaml.device 保留，均脱敏
   const feishuOut = rows.find((row) => row.type === 'feishu' && row.direction === 'outbound')
   assert.deepEqual(feishuOut.config, { webhook: '***' }) // 双域出站不混入 store 的 appId/appSecret
-  assert.equal(feishuOut.editable, false)
+  assert.equal(feishuOut.editable, true) // 零配置首访：新出站键域 admin:channel:feishu:outbound 使双域出站可网页编辑
   const feishuIn = rows.find((row) => row.type === 'feishu' && row.direction === 'inbound')
   assert.deepEqual(feishuIn.config, { appId: '***', appSecret: '***' }) // 入站行 = store 账号视图
 })

@@ -89,8 +89,9 @@ test('admin UI: no credential leakage in HTML', () => {
   const html = ADMIN_UI_HTML
   // Should not contain any hardcoded secrets or API keys
   assert.ok(!html.includes('sk-'), 'no API key pattern')
-  assert.ok(!html.includes('password'), 'no password field')
   assert.ok(!html.includes('tokenSecret'), 'no token secret in HTML')
+  // 解锁门的 type="password" 是掩码输入的正当用途；泄密判定 = 任何口令框不得预填值
+  assert.doesNotMatch(html, /type="password"[^>]*\bvalue="[^"]+"/, 'password 输入框不得预填任何值')
 })
 
 // ——— 3. ask_user settlement success/failure ———

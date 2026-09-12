@@ -138,6 +138,14 @@ export function createAdminServer({ api, verifyToken, host = '127.0.0.1', port =
     { method: 'GET', segments: ['api', 'channels'], handler: () => api.getChannels() },
     { method: 'PUT', segments: ['api', 'channels', ':type'], handler: ({ params, body }) => api.putChannel(params.type, body.config ?? body) },
     { method: 'POST', segments: ['api', 'channels', ':type', 'test'], handler: ({ params }) => api.testChannel(params.type) },
+    // 零配置首访（admin-zero-config-onboarding）：方向明确的通道路由（段数与旧路由不同，
+    // 天然无冲突）。出站写 admin:channel:<type>:outbound；入站写 <type>:account；
+    // 出站即时测试读取最新 YAML+state 合并配置（保存后无需重启即可真测）。
+    { method: 'PUT', segments: ['api', 'channels', 'outbound', ':type'], handler: ({ params, body }) => api.putOutboundChannel(params.type, body.config ?? body) },
+    { method: 'DELETE', segments: ['api', 'channels', 'outbound', ':type'], handler: ({ params }) => api.deleteOutboundChannel(params.type) },
+    { method: 'POST', segments: ['api', 'channels', 'outbound', ':type', 'test'], handler: ({ params }) => api.testOutboundChannel(params.type) },
+    { method: 'PUT', segments: ['api', 'channels', 'inbound', ':type'], handler: ({ params, body }) => api.putInboundChannel(params.type, body.config ?? body) },
+    { method: 'DELETE', segments: ['api', 'channels', 'inbound', ':type'], handler: ({ params }) => api.deleteInboundChannel(params.type) },
     { method: 'POST', segments: ['api', 'scan', ':channel'], handler: ({ params }) => api.scanChannel(params.channel) },
     // v0.7 成员与配对码（键形 "<channel>:<userId>"，冒号在路径段内合法——decodeSegment 已解 %3A）
     { method: 'GET', segments: ['api', 'members'], handler: () => api.getMembers() },
@@ -398,25 +406,40 @@ export function createAdminServer({ api, verifyToken, host = '127.0.0.1', port =
   let listenPromise = null
   let closePromise = null
 
-  /** 启动监听（幂等）；resolve 实际 { port, address }（port 0 时为内核分配的随机端口）。 */
+  /** 启动监听（幂等）；resolve 实际 { port, address }（port 0 时为内核分配的随机端口）。
+   * 零配置首访（admin-zero-config-onboarding）：首选端口被占用时自动回退到系统分配的
+   * 空闲端口（port: 0），仍只绑定 127.0.0.1，并打印实际监听地址。回退在同一个 server
+   * 生命周期内完成——listen 失败时先 close 清理半启动状态，再以 port=0 重新 listen。
+   * Origin/Host allowlist 使用实际端口（buildGateAllowlist 读取 listenInfo?.port）。 */
   function start() {
     if (listenPromise !== null) return listenPromise
     listenPromise = new Promise((resolve, reject) => {
+      let fallbackAttempted = false
       const onListenError = (error) => {
-        listenPromise = null
-        reject(error) // listen 失败（端口占用等）要向上抛
-      }
-      server.once('error', onListenError)
-      server.listen(port, host, () => {
-        server.removeListener('error', onListenError)
-        const address = server.address()
-        listenInfo = {
-          port: typeof address === 'object' && address !== null ? address.port : port,
-          address: typeof address === 'object' && address !== null ? address.address : host,
+        if (!fallbackAttempted && error?.code === 'EADDRINUSE') {
+          fallbackAttempted = true
+          warn(`首选端口 ${port} 已被占用，自动回退到系统分配端口（仅本机回环）`)
+          // 清理半启动状态：close 忽略错误（未 listen 时回调带错），然后以 port=0 重试
+          try { server.close(() => { doListen(0) }) } catch { doListen(0) }
+          return
         }
-        warn(`admin 管理台已监听 ${listenInfo.address}:${listenInfo.port}（仅本机回环，永不绑公网）`)
-        resolve({ ...listenInfo })
-      })
+        listenPromise = null
+        reject(error) // listen 失败（非端口占用或回退后仍失败）要向上抛
+      }
+      function doListen(listenPort) {
+        server.once('error', onListenError)
+        server.listen(listenPort, host, () => {
+          server.removeListener('error', onListenError)
+          const address = server.address()
+          listenInfo = {
+            port: typeof address === 'object' && address !== null ? address.port : listenPort,
+            address: typeof address === 'object' && address !== null ? address.address : host,
+          }
+          warn(`admin 管理台已监听 ${listenInfo.address}:${listenInfo.port}（仅本机回环，永不绑公网）`)
+          resolve({ ...listenInfo })
+        })
+      }
+      doListen(port)
     })
     return listenPromise
   }

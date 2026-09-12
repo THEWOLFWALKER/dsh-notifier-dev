@@ -45,26 +45,20 @@ your phone ──6 inbound channels───▶   remote approval (buttons · re
 
 Every message resolves through one chain — level (`timeSensitive` / `active` / `passive`) → routing (multi-agent matrix) → channel adapter (`resolve(cfg)` + `send(msg)`). Two trigger lines feed it: the harness auto-pushes session events (debounced, deduped), and the model calls the `notify` tool. Six inbound channels ride the same core in reverse for approvals and conversation — and since v0.5 the outbound line reports back too: long-running turns send heartbeats, silent turns raise stall alerts, and Telegram/Feishu notifications carry a one-click stop action.
 
-## Screenshots
+## Web admin console
 
-The web admin console (`admin.enabled: true`, loopback only, mobile-friendly since v0.5) — all six pages (demo data). The browser opens in personal mode: first configure, pair, test, then use; bindings and sessions stay behind an explicit advanced-settings toggle. Open the exact loopback URL printed by the `Web 管理台已就绪` startup line instead of guessing port `8104`:
+The console is enabled by default and binds loopback only (mobile-friendly since v0.5). Zero-config onboarding: no YAML needed after install — open the exact `http://127.0.0.1:<port>/#token=...` link printed by the startup line (port conflicts fall back to a free port automatically; the token lives only in the URL fragment and is printed once). The in-page unlock gate verifies silently, then a first-visit wizard walks you through: pick a notification channel → fill in credentials → receive a real test notification on your phone. Remote reply, approvals, and member pairing can be configured later; bindings and sessions stay behind an explicit advanced-settings toggle.
 
 | Page | What it shows |
 |---|---|
-| **Dashboard** | session stats, outbound/inbound channel health groups, recent audit |
-| **Notifications** (v0.4.0) | live SSE event stream, system-notification preferences, event log |
+| **Home** | link status & next actions, outbound/inbound channel health matrix, pending questions, audit stream; a three-step setup wizard when nothing is configured yet |
+| **Channels** | outbound-first credential forms (masked `***`; untouched `***` fields are never submitted), instant real test send, QR authorization |
 | **Members** (v0.7.0) | identity bindings (roles / labels / pairing time), pairing codes, pending-binding confirmations |
-| **Bindings** | agent × channel checkbox grid, per-channel default agent |
-| **Sessions** | per-session outbound resolution with override editing |
-| **Channels** | credential forms for every channel (masked `***`), test send, QR scan |
+| **Notifications** (v0.4.0) | live SSE event stream, system-notification preferences, event log |
+| **Bindings** (advanced) | agent × channel checkbox grid, per-channel default agent |
+| **Sessions** (advanced) | per-session outbound resolution with override editing |
 
-![Dashboard](docs/screenshots/admin-dashboard.png)
-![Notify](docs/screenshots/admin-notify.png)
-![Bindings](docs/screenshots/admin-bindings.png)
-![Sessions](docs/screenshots/admin-sessions.png)
-![Channels](docs/screenshots/admin-channels.png)
-
-> **Outbound config is "view-hot, delivery-cold"** (G-14, W12): saving an **outbound** channel in the admin console reflects in the UI immediately, and the channel card shows a **"重启后生效" (takes effect after restart)** badge — the delivery layer (outbound router/channel instances) only merges runtime config (YAML ⊕ store) at the **next plugin startup**; inbound credentials likewise reconnect at next startup. Saving does **not** mean live delivery; restart DSH once you see the badge.
+> **Outbound config is "view-hot, delivery-cold"** (G-14, W12): saving an **outbound** channel in the admin console reflects in the UI immediately, and the channel card shows a **"重启后生效" (takes effect after restart)** badge — the delivery layer (outbound router/channel instances) only merges runtime config (YAML ⊕ store) at the **next plugin startup**; inbound credentials likewise reconnect at next startup. Test send is exempt: it runs against the latest merged config instantly, no restart needed.
 
 ## Quick start
 
@@ -74,23 +68,11 @@ dsh plugin add dsh-notifier --profile <profile-name>
 
 > `--profile` is required (DSH 0.1.0-rc.6+): plugin installs target a named profile — use the one you run (e.g. `web`).
 
-Add channels to your profile patch (`cordis.patch.yml`):
+No YAML needed. Restart DSH, then open the full link printed by the `Web 管理台已就绪` startup line (looks like `http://127.0.0.1:<port>/#token=...`):
 
-```yaml
-insert:
-  - id: dsh-notifier
-    name: dsh-notifier
-    config:
-      channels:
-        - type: telegram
-          botToken: "123456:ABC-DEF..."
-          chatId: "987654321"
-        - type: dingtalk
-          webhook: "https://oapi.dingtalk.com/robot/send?access_token=..."
-          secret: "SEC..."
-        - type: bark
-          key: "your-device-key"
-```
+1. The token in the link verifies silently and the first-visit wizard opens;
+2. Pick a channel your phone already has (Bark / Telegram / Feishu / DingTalk …) and fill in its credentials;
+3. Hit "save & send test notification" — **once your phone buzzes, setup is done**.
 
 That's it. `turn/end`, `approval/asked`, and `agent/error` events now reach every configured channel, and the model can push on its own with `notify({ message, channel, title })`. Long tasks send heartbeats and stall alerts out of the box (v0.5 defaults), and you can stop a runaway turn right from the notification card.
 
@@ -108,7 +90,7 @@ That's it. `turn/end`, `approval/asked`, and `agent/error` events now reach ever
 | **Open event source** (v0.6.0) | Other plugins push via the `notifier` service (`ctx.inject(['notifier'], …)` — shared config, routing, ledger, rate limits, flush) and subscribe to delivery metadata via `ctx.on('dsh-notifier/sent')`. Broadcast and directed sends each produce one audited event; message text is never exposed. Per-source rate limiting (10/min), 20k-codepoint clamps, never-reject API; consumer contract in [PLUGINS.md](PLUGINS.md). |
 | **Identity system** (v0.7.0) | "Who can drive inbound" becomes a runtime object: pairing codes (`/pair <code>` in any DM; first redeemer becomes owner), composite-key bindings (`channel:userId` — a Telegram-bound id no longer admits a Feishu message), role management (last owner can't be deleted or demoted), and rejection receipts that tell unbound senders how to get in. Empty whitelist boots into a guided state with a bootstrap pairing code written to a local 0600 file (`<stateDir>/bootstrap-paircode.txt`; logs print the path, never the code) instead of refusing to start. **Full setup-to-daily-use walkthrough: [docs/guide.md](docs/guide.md) (中文)**. |
 | **Multi-agent routing** (v0.3.2) | Bidirectional agent × channel matrix; sessions auto-register; `/agent` command family + `route.mjs` CLI. |
-| **Web admin console** (v0.3.3) | 127.0.0.1-only + Bearer token; six pages — dashboard / notify / members (v0.7) / bindings / sessions / channels; responsive ≤768px layout (v0.5) with personal-first onboarding and progressive disclosure. |
+| **Web admin console** (v0.3.3; zero-config onboarding rebuild) | 127.0.0.1-only + Bearer token; enabled by default with a one-time fragment launch link and automatic port fallback; four main pages — home / channels / members (v0.7) / notify, with bindings / sessions behind an explicit advanced toggle; first-visit wizard finishes the moment a real test notification lands on your phone; responsive ≤768px layout (v0.5). |
 | **QR login** (v0.3.1) | One-command official scan authorization for QQ / DingTalk / Feishu (WeChat keeps iLink). |
 | **Desktop notifications** (v0.4.0) | Native `desktop` channel (`osascript` / `notify-send` / PowerShell toast) + admin SSE live stream. |
 | **Long-message segmentation** | Over-budget messages split into ordered `（i/n）` segments. |
@@ -164,7 +146,7 @@ Optional blocks each opt in under their own key:
 | `approval` | Timeout, numbered reply, escalation | `mode: answer` |
 | `conversation` | Merge window, steer prefix | `mergeWindowMs: 1500` |
 | `route` | Multi-agent routing | `sessionTtlHours: 24` |
-| `admin` | Web console | `enabled: true` (optional `port`; use the startup URL) |
+| `admin` | Web console | enabled by default (127.0.0.1 only); open the exact `/#token=...` startup link — no port guessing |
 | `events` / `keywords` / `graceSeconds` | Anti-disturb gates | `exclude: ["heartbeat"]` |
 | `events.turnStart` / `longRunning` / `stall` | v0.5 status line | `longRunning: { firstAfterMs: 900000 }` |
 | `digest` | Ledger + daily summary | `enabled: true` |

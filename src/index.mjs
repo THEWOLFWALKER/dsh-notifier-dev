@@ -608,7 +608,9 @@ export function apply(ctx, config = {}) {
     try {
       // token 策略（§0.5-6）：维护批 3 阶段 2 抽到 src/assembly/admin-token.mjs
       // resolveAdminToken（纯函数：显式/复用/首启生成 + verifyToken；详注见模块头）。
-      const { tokenMode, verifyToken } = resolveAdminToken({
+      // 零配置首访：generated 分支额外拿到 launchToken（本次进程内有效的明文 token），
+      // 在 server 启动取得真实端口后拼接 fragment 启动链接打印；显式/复用路径恒 null。
+      const { tokenMode, launchToken, verifyToken } = resolveAdminToken({
         store,
         explicitToken: typeof resolved.admin.token === 'string' ? resolved.admin.token : '',
         info,
@@ -625,7 +627,16 @@ export function apply(ctx, config = {}) {
         notifier,
         channelsEnabled: () => resolved.channels.map((entry) => entry.type),
         outboundConfigs: () => Object.fromEntries(resolved.channels.map((entry) => [entry.type, entry.config])),
-        channelTest: (type) => runChannelTest({ type, rawConfig: testRawConfigOf(type) }),
+        // 零配置首访：channelTest 支持第二参 rawConfig——testOutboundChannel 现场合并
+        // 「当前 YAML + 当前 state 出站键」后传入，保存后无需重启即可真实测试；
+        // 旧 testChannel(type) 单参路径不变，仍用启动快照 testRawConfigOf。
+        channelTest: (type, rawConfig) => runChannelTest({
+          type,
+          rawConfig: rawConfig !== undefined && rawConfig !== null ? rawConfig : testRawConfigOf(type),
+        }),
+        // 零配置首访：YAML 原始出站行表（type → raw row 含 type/enabled 元键，api 层自剔除）——
+        // testOutboundChannel 的即时真测合并基底（raw 原文重新 resolve，不用启动快照）。
+        yamlRawConfigs: () => Object.fromEntries(yamlRowOf),
         scanHandlers,
         identity, // v0.7 成员页：与 inbound 共用同一实例（store 读收敛 → 写入半秒内热生效）
         pairing, // v0.7 配对码铸造/撤销
@@ -658,6 +669,12 @@ export function apply(ctx, config = {}) {
                 ? 'token 沿用首启打印的旧值（见首次启动日志或删 admin:token-hash 后重启再生成）'
                 : 'token 已打印到上方日志（仅此一次，请妥善保存）')
           info(`Web 管理台已就绪: http://${address}:${port}（仅本机回环；${acquireHint}）`)
+          // 零配置首访：仅首启生成的 launchToken 拼 fragment 启动链接（token 在 # 后，
+          // 不进 query / Referer / 服务器访问日志；浏览器端验证后即清地址栏并只存
+          // sessionStorage）。端口用真实监听端口（端口冲突回退后仍指向正确实例）。
+          if (typeof launchToken === 'string' && launchToken !== '') {
+            info(`零配置启动链接（点开即入管理台，仅此一次有效输出）: http://${address}:${port}/#token=${encodeURIComponent(launchToken)}`)
+          }
         })
         .catch((error) => {
           const detail = error?.code === 'EADDRINUSE'

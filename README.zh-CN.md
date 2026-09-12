@@ -47,22 +47,16 @@ DSH 会话事件 ─自动推送──────────┘   分级路由
 
 ## 界面预览
 
-Web 管理台（`admin.enabled: true`，仅绑 127.0.0.1；v0.5 起移动端自适应）六页实拍（演示数据）。首次打开默认是个人模式：配置、配对、测试后即可使用；绑定矩阵和会话等复杂设置需显式点击「打开高级设置」。请打开启动日志「Web 管理台已就绪」行中的完整本机 URL，不要猜端口 `8104`：
+Web 管理台（默认启用，仅绑 127.0.0.1；v0.5 起移动端自适应）。零配置首访：安装后不用写 YAML——打开启动日志打印的 `http://127.0.0.1:<port>/#token=...` 链接（端口冲突自动换端口，token 只在 fragment 仅此一次明文），站内解锁门静默验证后进入首访向导：选通知渠道 → 填凭证 → 当场收到真实测试通知即完成初始化；手机回复、审批、成员配对以后可以再配。绑定矩阵和会话等复杂设置需显式点击「打开高级设置」：
 
 | 页面 | 内容 |
 |---|---|
-| **Dashboard 总览** | 会话统计、出/入站通道健康分组、最近审计 |
-| **通知页**（v0.4.0） | SSE 事件流实时推送、系统通知偏好、事件日志 |
-| **成员页**（v0.7.0） | 身份绑定（角色/备注/配对时间）、配对码铸造与撤销、待确认绑定收口 |
-| **绑定矩阵** | agent × 通道勾选网格、入站通道默认 agent |
-| **会话台账** | 每会话出站解析与覆盖编辑 |
-| **通道管理** | 全部渠道凭证建单（处处脱敏 `***`）、测试发送、扫码授权 |
-
-![Dashboard](docs/screenshots/admin-dashboard.png)
-![Notify](docs/screenshots/admin-notify.png)
-![Bindings](docs/screenshots/admin-bindings.png)
-![Sessions](docs/screenshots/admin-sessions.png)
-![Channels](docs/screenshots/admin-channels.png)
+| **首页** | 链路状态与下一步行动、出/入站通道健康矩阵、待决提问、审计流；未配置出站时首屏为三步配置向导 |
+| **通知渠道** | 出站为主、入站为次的凭证建单（处处脱敏 `***`，`***` 视为未修改）、即时真实测试发送、扫码授权 |
+| **成员**（v0.7.0） | 身份绑定（角色/备注/配对时间）、配对码铸造与撤销、待确认绑定收口 |
+| **通知**（v0.4.0） | SSE 事件流实时推送、系统通知偏好、事件日志 |
+| **绑定矩阵**（高级） | agent × 通道勾选网格、入站通道默认 agent |
+| **会话台账**（高级） | 每会话出站解析与覆盖编辑 |
 
 ## 快速开始
 
@@ -72,25 +66,15 @@ dsh plugin add dsh-notifier --profile <profile-name>
 
 > `--profile` 必填（DSH 0.1.0-rc.6 起）：插件安装需指定目标 profile——填你实际运行的那个（如 `web`）。
 
-把渠道加进你的 profile patch（`cordis.patch.yml`）：
+装完**不用写 YAML**。重启 DSH，打开启动日志里 **「Web 管理台已就绪」** 一行打印的完整链接（形如 `http://127.0.0.1:<端口>/#token=...`；端口冲突会自动换端口，token 只出现这一次）：
 
-```yaml
-insert:
-  - id: dsh-notifier
-    name: dsh-notifier
-    config:
-      channels:
-        - type: telegram
-          botToken: "123456:ABC-DEF..."
-          chatId: "987654321"
-        - type: dingtalk
-          webhook: "https://oapi.dingtalk.com/robot/send?access_token=..."
-          secret: "SEC..."
-        - type: bark
-          key: "your-device-key"
-```
+1. 链接里的 token 静默验证通过 → 进入首访向导；
+2. 选一个手机上有的通知渠道（Bark / Telegram / 飞书 / 钉钉……），按表单提示填凭证；
+3. 点「保存并发送测试通知」——**手机当场收到，初始化就完成了**。
 
-完成。`turn/end`、`approval/asked`、`agent/error` 事件即推送到所有已配置渠道，模型也能用 `notify({ message, channel, title })` 主动推送。长任务默认自动发心跳与卡住提醒（v0.5），失控的 turn 直接在通知卡片上停掉。
+完成。`turn/end`、`approval/asked`、`agent/error` 事件即推送到已配置渠道，模型也能用 `notify({ message, channel, title })` 主动推送。长任务默认自动发心跳与卡住提醒（v0.5），失控的 turn 直接在通知卡片上停掉。
+
+> 批量部署 / 自动化场景仍可用 YAML：渠道写在 profile patch（`cordis.patch.yml`）的 `channels` 下，字段清单见下文「配置项」。YAML 是高级入口，不是第二套控制台。
 
 ## 核心功能
 
@@ -106,7 +90,7 @@ insert:
 | **开放事件源**（v0.6.0） | 其他插件经 `notifier` 服务推送（`ctx.inject(['notifier'], …)`——共享配置、路由、账本、限流、flush），并可 `ctx.on('dsh-notifier/sent')` 订阅投递元数据。广播与定向推送各产生一次审计事件，事件绝不暴露正文；按源独立限流（默认 10/分钟）、2 万码点钳制、永不 reject 的 API；消费方契约见 [PLUGINS.md](PLUGINS.md)。 |
 | **身份体系**（v0.7.0） | 「谁能驱动入站」成为运行时对象：配对码准入（任意通道私聊 `/pair <码>`，首位核销者成为 owner）、复合键绑定（`channel:userId`——TG 绑定的 id 不再放行飞书消息）、角色管理（末位 owner 不可删不可降）、拒绝回执（未绑定者收到含自身身份与配对指引的回执）。空白名单引导态启动（bootstrap 码写本机 0600 文件 `<stateDir>/bootstrap-paircode.txt`，日志只印路径不印码面），不再拒绝启动。**从安装到日常使用的完整指南见 [docs/guide.md](docs/guide.md)**。 |
 | **多 agent 路由**（v0.3.2） | agent × 通道双向矩阵；会话创建即建档；`/agent` 命令族 + `route.mjs` CLI。 |
-| **Web 管理台**（v0.3.3） | 仅绑 127.0.0.1 + Bearer token；六页 —— 总览 / 通知 / 成员（v0.7）/ 绑定 / 会话 / 通道；v0.5 起 ≤768px 移动端自适应，并采用个人优先的渐进式引导。 |
+| **Web 管理台**（v0.3.3；零配置首访重构） | 仅绑 127.0.0.1 + Bearer token；默认启用，首启打印 fragment 启动链接，端口冲突自动回退；四主页面 —— 首页 / 通知渠道 / 成员（v0.7）/ 通知，绑定 / 会话收进显式高级设置；首访三步向导当场收到测试通知即完成初始化；v0.5 起 ≤768px 移动端自适应。 |
 | **扫码授权**（v0.3.1） | QQ / 钉钉 / 飞书一条命令官方扫码授权（微信保持 iLink）。 |
 | **桌面通知**（v0.4.0） | `desktop` 原生渠道（`osascript` / `notify-send` / PowerShell toast）+ 管理台 SSE 实时流。 |
 | **长消息分段** | 超出预算的消息按序切成带 `（i/n）` 前缀的多段。 |
@@ -162,7 +146,7 @@ insert:
 | `approval` | 超时、编号回复、升级提醒 | `mode: answer` |
 | `conversation` | 合并窗、steer 前缀 | `mergeWindowMs: 1500` |
 | `route` | 多 agent 路由 | `sessionTtlHours: 24` |
-| `admin` | 网页控制台 | `enabled: true`（`port` 可选；以启动日志中的 URL 为准） |
+| `admin` | 网页控制台 | 默认启用（仅 127.0.0.1）；以启动日志打印的 `/#token=...` 完整链接为准，不用猜端口 |
 | `events` / `keywords` / `graceSeconds` | 防打扰闸门 | `exclude: ["heartbeat"]` |
 | `events.turnStart` / `longRunning` / `stall` | v0.5 状态上报线 | `longRunning: { firstAfterMs: 900000 }` |
 | `digest` | 账本 + 每日摘要 | `enabled: true` |

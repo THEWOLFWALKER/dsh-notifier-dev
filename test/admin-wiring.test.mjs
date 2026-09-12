@@ -466,7 +466,8 @@ test('HTTP 集成：GET / 返回内嵌 UI，/api/channels 行带 fields/editable
     assert.deepEqual(bark.config, { endpoint: '***', key: '***', timeoutMs: 5000 })
     assert.ok(Object.keys(bark.fields).length > 0, 'fields 字段表随行返回（零 YAML 建单数据源）')
     const feishuOut = channels.find((row) => row.type === 'feishu' && row.direction === 'outbound')
-    assert.equal(feishuOut.editable, false, '双域出站只读')
+    // 零配置首访：新出站键域 admin:channel:feishu:outbound 使双域出站可网页编辑（旧只读契约废止）
+    assert.equal(feishuOut.editable, true, '双域出站可经新出站键网页配置')
   } finally {
     await rig.cleanup()
   }

@@ -13,8 +13,12 @@ const HEX_64 = /^[0-9a-f]{64}$/
 
 /**
  * 解析 admin 生效 token：返回验证器与就绪日志要用的 tokenMode。
+ * 零配置首访扩展：generated 分支额外返回 launchToken（本次进程内有效的明文 token），
+ * 由 index.mjs 在 server 启动并取得真实端口后拼接 http://127.0.0.1:<port>/#token=<encoded>。
+ * 显式 token 与复用旧哈希的路径不返回 launchToken（明文不落盘、不重发）。
  * @param {{ store: object, explicitToken: string, info: (msg: string) => void }} deps
- * @returns {{ activeHash: string, tokenMode: 'explicit'|'reused'|'generated', verifyToken: (candidate: unknown) => boolean }}
+ * @returns {{ activeHash: string, tokenMode: 'explicit'|'reused'|'generated',
+ *   launchToken: string | null, verifyToken: (candidate: unknown) => boolean }}
  */
 export function resolveAdminToken({ store, explicitToken, info }) {
   let storedHash = null
@@ -23,6 +27,7 @@ export function resolveAdminToken({ store, explicitToken, info }) {
 
   let activeHash = '' // 生效哈希（verifyToken 比对基准；明文无需保留在内存外）
   let tokenMode = '' // 就绪日志明确 token 获取方式（explicit/reused/generated）
+  let launchToken = null // 零配置首访：仅 generated 分支返回，供拼接 fragment 启动链接
   if (explicitToken !== '') {
     activeHash = sha256HexOf(explicitToken)
     if (storedHash !== activeHash) store.set('admin:token-hash', activeHash) // 同步到 state
@@ -39,6 +44,7 @@ export function resolveAdminToken({ store, explicitToken, info }) {
     info(`admin token（仅此一次打印，请妥善保存）: ${generated}`)
     info('忘记 token 时：删除 state.json 的 admin:token-hash 键（或在配置写 admin.token）后重启即重新生成')
     tokenMode = 'generated'
+    launchToken = generated // 仅本次进程内有效；不落盘、不进日志、不进 API 响应
   }
   /** Bearer 校验：candidate 的 SHA-256 与生效哈希恒时比对；任何异常一律 false。 */
   const verifyToken = (candidate) => {
@@ -51,5 +57,5 @@ export function resolveAdminToken({ store, explicitToken, info }) {
       return false
     }
   }
-  return { activeHash, tokenMode, verifyToken }
+  return { activeHash, tokenMode, launchToken, verifyToken }
 }
