@@ -1083,10 +1083,30 @@ function renderChannels() {
   var list = Array.isArray(state.channels) ? state.channels : []
   var out = list.filter(function (c) { return c && c.direction === 'outbound' })
   var inn = list.filter(function (c) { return c && c.direction === 'inbound' })
+  // 排序：已配置在前，其后推荐，最后其余（其余收进「更多渠道」折叠组，避免 27 张卡一次性铺开）
+  function rank(c) { return (c.configured ? 0 : 1) * 10 + (setupMeta(c.type).rec ? 0 : 1) }
+  function sorter(a, b) { return rank(a) - rank(b) || String(a.type).localeCompare(String(b.type)) }
+  out = out.slice().sort(sorter)
+  inn = inn.slice().sort(sorter)
+  // 平铺 = 已配置 ∪ 推荐；折叠 = 其余（未配置且非推荐）
+  function split(rows) {
+    var top = rows.filter(function (c) { return c.configured || setupMeta(c.type).rec })
+    var more = rows.filter(function (c) { return !(c.configured || setupMeta(c.type).rec) })
+    return [top, more]
+  }
+  var outSp = split(out)
+  var innSp = split(inn)
+  function moreBlock(more) {
+    if (more.length === 0) return ''
+    return '<details class="more-group"><summary>更多 ' + more.length + ' 个渠道<span class="muted small">点击展开完整清单</span></summary>'
+      + '<div class="more-body">' + more.map(function (c) { return cardHtml(plain(c)) }).join('') + '</div></details>'
+  }
   var html = '<h3 class="chan-group-title">出站通知<span class="dir-tag">主</span><span class="muted small">把 agent 的消息推送到你的设备（保存后可当场测试，无需重启）</span></h3>'
-  html += out.map(function (c) { return cardHtml(plain(c)) }).join('') || '<p class="muted">（无出站通道）</p>'
+  html += outSp[0].map(function (c) { return cardHtml(plain(c)) }).join('') || '<p class="muted">（无出站通道）</p>'
+  html += moreBlock(outSp[1])
   html += '<h3 class="chan-group-title">入站控制<span class="dir-tag">可选</span><span class="muted small">手机远程回复 / 审批 agent；不配置不影响出站通知</span></h3>'
-  html += inn.map(function (c) { return cardHtml(plain(c)) }).join('') || '<p class="muted">（无入站通道）</p>'
+  html += innSp[0].map(function (c) { return cardHtml(plain(c)) }).join('') || '<p class="muted">（无入站通道）</p>'
+  html += moreBlock(innSp[1])
   $('#channelCards').innerHTML = html
 }
 function saveChannel(key, btn) {

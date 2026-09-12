@@ -217,18 +217,43 @@ label.fld input { flex: 1; min-width: 0; }
 .verify .row { margin: 0 0 0 auto; }
 
 /* ---------- 卡片与表格 ---------- */
-.card { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 10px; background: var(--panel); }
-.card-head { display: flex; gap: 10px; align-items: center; padding: 10px 14px; cursor: pointer; }
+.card { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 10px; background: var(--panel);
+  transition: border-color .12s ease, box-shadow .12s ease; }
+.card:hover { border-color: var(--border-strong); box-shadow: 0 4px 18px rgba(0, 0, 0, .22); }
+/* 已配置渠道卡片：左侧信号青强调条，一眼区分就绪渠道 */
+.card:has(.badge.ok), .card:has(.badge.warn) { border-left: 3px solid var(--accent); }
+.card:has(.badge.warn) { border-left-color: var(--warn); }
+.card-head { display: flex; gap: 10px; align-items: center; padding: 10px 14px; cursor: pointer;
+  border-radius: var(--radius) var(--radius) 0 0; }
 .card-head:hover { background: rgba(255, 255, 255, .02); }
+/* 展开指示箭头：默认收起朝右，展开朝下 */
+.card-head::after { content: ""; margin-left: 2px; flex: 0 0 auto; width: 8px; height: 8px;
+  border-right: 2px solid var(--faint); border-bottom: 2px solid var(--faint);
+  transform: rotate(-45deg); transition: transform .12s ease; }
+.card:has(.card-body:not([hidden])) .card-head::after { transform: rotate(45deg); }
 .card-head .badge { margin-left: auto; }
 .card-head .glyph { width: 26px; height: 26px; border-radius: 8px; background: var(--panel3); color: var(--accent);
   display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; flex: 0 0 auto; }
-.card-body { padding: 6px 14px 14px; border-top: 1px solid var(--border); }
-.badge { font-size: 12px; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
-.badge.ok { color: var(--ok); border-color: rgba(74, 222, 128, .55); }
-.badge.none { color: var(--muted); }
-.badge.warn { color: var(--warn); border-color: rgba(251, 191, 36, .55); }
+.card-body { padding: 6px 14px 14px; border-top: 1px solid var(--border); animation: rise .15s ease-out; }
+
+/* 更多渠道折叠组：原生 details，默认收起，减少首屏纵向噪音 */
+.more-group { border: 1px dashed var(--border-strong); border-radius: var(--radius);
+  margin: 4px 0 14px; background: var(--bg-soft); }
+.more-group > summary { list-style: none; cursor: pointer; padding: 11px 16px; display: flex;
+  align-items: center; gap: 8px; color: var(--muted); font-size: 13.5px; user-select: none; }
+.more-group > summary::-webkit-details-marker { display: none; }
+.more-group > summary::before { content: ""; width: 8px; height: 8px; flex: 0 0 auto;
+  border-right: 2px solid var(--faint); border-bottom: 2px solid var(--faint);
+  transform: rotate(-45deg); transition: transform .12s ease; }
+.more-group[open] > summary::before { transform: rotate(45deg); }
+.more-group > summary:hover { color: var(--text); }
+.more-group .more-body { padding: 4px 12px 8px; border-top: 1px dashed var(--border); }
+.badge { font-size: 11.5px; font-weight: 600; letter-spacing: .01em; padding: 2px 10px; border-radius: 999px;
+  border: 1px solid var(--border); white-space: nowrap; }
+.badge.ok { color: var(--ok); border-color: rgba(74, 222, 128, .5); background: var(--ok-soft); }
+.badge.none { color: var(--faint); background: var(--panel2); }
+.badge.warn { color: var(--warn); border-color: rgba(251, 191, 36, .5); background: var(--warn-soft); }
 .dir-tag { font-size: 11px; color: var(--faint); border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; }
 table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border);
   border-radius: var(--radius); overflow: hidden; }
