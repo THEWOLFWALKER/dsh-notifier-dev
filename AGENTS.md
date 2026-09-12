@@ -44,7 +44,7 @@
 - Before handoff, the working tree must be clean, the branch must identify its purpose, and the final commit list must be reported.
 - Relay handoff cadence: every agent completion must commit and push before leaving a machine, update its detailed `.agents/workstreams/<topic>.md` identity/status/tests/review/commit record, and refresh the current handoff snapshot in `HANDOFF.md`. Do not append chat transcripts; consolidate the snapshot so it stays readable.
 - Never commit `node_modules/`, `package-lock.json`, credentials, state files, `.log` files, or generated local artifacts.
-- Release packing must never include development-tool directories: `.agents/`, `.claude/`, `.codex/`, `.opencode/` (and any future agent config), or the npm payload would expose internal design skills and engineering notes. Keep these out of `package.json.files`, the npm archive, and the public mirror.
+- Release packing must never include development-tool directories: `.claude/`, `.codex/`, `.opencode/` (and any future agent config), or the npm payload would expose personal tool config. Keep these out of `package.json.files` and the npm archive. The npm payload boundary is independent of the mirror boundary: tracked `.agents/` (project collaboration knowledge) syncs to the public mirror but stays out of the npm archive — see `docs/VERSIONING.md`.
 
 ## Multi-Agent Protocol
 
