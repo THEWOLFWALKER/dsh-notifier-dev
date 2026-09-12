@@ -17,6 +17,15 @@
 import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+/**
+ * 取证副本路径：.corrupt.<ts>.<pid>.<rand>。
+ * 裸毫秒时间戳在快速机器上会同 ms 撞名——boot 取证与 save 自愈转存同一损坏现场时
+ * 第二份覆盖第一份（CI ubuntu-latest 实测翻车，1544 中唯一红）。加随机后缀保证唯一。
+ */
+function corruptBackupPath(filePath) {
+  return `${filePath}.corrupt.${Date.now()}.${process.pid}.${Math.random().toString(36).slice(2, 8)}`
+}
+
 /** DSH 数据目录：$DSH_HOME（宿主约定）回退 ~/.dsh。 */
 export function defaultStateDir() {
   const home = process.env.DSH_HOME
@@ -81,7 +90,7 @@ export function createStore(filePath) {
       if (sizeBytes >= 0 && sizeBytes > FORENSIC_COPY_MAX_BYTES) {
         skippedForSize = true
       } else {
-        const backup = `${filePath}.corrupt.${Date.now()}`
+        const backup = corruptBackupPath(filePath)
         try {
           copyFileSync(filePath, backup)
           preserved = true
@@ -256,7 +265,7 @@ export function createStore(filePath) {
         // 自愈 = 现场转存为 .corrupt.<ts>（取证可手工恢复，保护等级不降）后，
         // 以内存全量 + dirty 重建写路径。半截 JSON 本就解析不出任何键，
         // 重建丢失的只有「损坏文件里已不可读的内容」，且已留副本。
-        const backup = `${filePath}.corrupt.${Date.now()}`
+        const backup = corruptBackupPath(filePath)
         try {
           renameSync(filePath, backup)
           console.error('[dsh-notifier/store]', `state 文件损坏，已转存现场为 ${backup} 并以内存态重建（副本可手工排查恢复）`)
