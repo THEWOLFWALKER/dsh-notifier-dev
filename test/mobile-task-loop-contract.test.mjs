@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createNativeQuestionBridge } from '../src/host/native-questions.mjs'
+import { resolveConfig } from '../src/config.mjs'
 
 // v0.10 移动任务闭环契约冻结（任务书第 1 提交）。
 // 本文件锁定「现状 + 目标」契约形状：已落地部分做实断言，尚未实现的目标
@@ -23,11 +24,13 @@ test('contract: native question bridge surface', () => {
   }
 })
 
-test('contract: web-first remote escalation stages', { todo: true }, () => {
+test('contract: web-first remote escalation stages', () => {
   // Stage 0 Web 立即可见；默认 20s 升级主 IM；默认 60s 提醒已确认备用目标；
   // answered/skipped/expired/cancelled/host-disposed 任一取消全部后续定时器。
-  assert.equal(20000, 20_000)
-  assert.equal(60000, 60_000)
+  const resolved = resolveConfig({})
+  assert.equal(resolved.questions.webFirstMs, 20_000)
+  assert.equal(resolved.questions.reminderMs, 60_000)
+  assert.equal(resolved.questions.remoteEnabled, true)
 })
 
 test('contract: dual-end first-win settlement', { todo: true }, () => {
