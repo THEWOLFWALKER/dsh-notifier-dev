@@ -11,6 +11,7 @@ import {
   INBOUND_KINDS,
   downloadInboundImage,
   normalizeImageAttachment,
+  normalizeImageUrl,
   parseQQImageMessage,
   parseExtraSegments,
   normalizeInboundMessage,
@@ -85,6 +86,22 @@ test('normalizeImageAttachment：只保留安全 URL 与有界尺寸，未知字
   assert.deepEqual(normalizeImageAttachment({ url: 'https://media.example.test/a.png', width: 100001 }), {
     url: 'https://media.example.test/a.png',
   })
+})
+
+test('normalizeImageUrl：SSRF 硬边界拒绝私有/回环/映射 IPv6（含 IPv4-mapped 绕过）', () => {
+  const blocked = [
+    'http://127.0.0.1/x', 'http://localhost/x', 'http://169.254.169.254/latest', 'http://10.0.0.1/x',
+    'http://192.168.1.1/x', 'http://172.16.0.1/x', 'http://[::1]/x', 'http://[fe80::1]/x', 'http://[fc00::1]/x',
+    // IPv4-mapped IPv6：Node URL 规范化为 hex 形式（::ffff:7f00:1 等），曾绕过纯 IPv6 前缀判断
+    'http://[::ffff:127.0.0.1]/x', 'http://[::ffff:169.254.169.254]/x', 'http://[::ffff:10.0.0.1]/x',
+    'http://[::ffff:192.168.1.1]/x', 'http://[::ffff:172.16.0.1]/x',
+    'http://metadata.google.internal/x', 'http://host.internal/x',
+  ]
+  for (const url of blocked) assert.equal(normalizeImageUrl(url), '', `应拒绝 ${url}`)
+  const allowed = [
+    'https://media.example.com/a.png', 'http://[::ffff:8.8.8.8]/x', 'https://cdn.example.org/x/y.png?q=1',
+  ]
+  for (const url of allowed) assert.notEqual(normalizeImageUrl(url), '', `应放行 ${url}`)
 })
 
 test('downloadInboundImage：超时、非图片和声明/实际超限均 fail-closed，不保留二进制', async () => {

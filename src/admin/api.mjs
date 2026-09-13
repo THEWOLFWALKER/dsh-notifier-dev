@@ -562,13 +562,18 @@ export function createAdminApi(options = {}) {
       const events = (() => {
         try { return typeof hostSnapshot === 'function' ? hostSnapshot() : null } catch { return null }
       })()
-      return createHostCapabilitySnapshot({
-        ctx,
-        events,
-        questionsFallbackEnabled: questionsFallbackEnabled === true,
-        webLocal,
-        imageInput,
-      })
+      try {
+        return createHostCapabilitySnapshot({
+          ctx,
+          events,
+          questionsFallbackEnabled: questionsFallbackEnabled === true,
+          webLocal,
+          imageInput,
+        })
+      } catch {
+        // 查询方法红线：绝不抛（宿主 ctx 可能是抛错代理/getter）。降级为全 unknown 的安全最小快照。
+        return createHostCapabilitySnapshot({ ctx: {}, events: null })
+      }
     },
 
     /**

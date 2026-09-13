@@ -100,6 +100,16 @@ test('getHostCapabilities: hostSnapshot 抛错/缺失按空事件降级，绝不
   assert.equal(snap.events.mode, 'unsupported')
 })
 
+test('getHostCapabilities: ctx 抛错代理也不冒泡（查询方法红线：绝不抛）', () => {
+  const throwingCtx = new Proxy({}, {
+    get() { throw new Error('ctx getter boom') },
+  })
+  const api = makeApi({ ctx: throwingCtx })
+  const snap = api.getHostCapabilities()
+  assert.ok(snap && typeof snap === 'object')
+  assert.equal(snap.host.version, 'unknown')
+})
+
 // ———————— HTTP 层：只读路由鉴权 + 分发 ————————
 
 const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms))

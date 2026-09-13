@@ -67,12 +67,29 @@ function isLiteralIpv6(host) {
   return host.includes(':')
 }
 
-/** 私有/特殊 IPv6 段判定：::(未指定)、::1(回环)、fe80::/10(链路本地)、fc00::/7(ULA)。 */
+/**
+ * 从 IPv4-mapped / IPv4-compatible IPv6 字面量抽取内嵌 IPv4 的 4 个八位组；不匹配返回 null。
+ * Node URL 对 IPv4-mapped 规范化为 `::ffff:AAAA:BBBB`（每个 16-bit 组去前导 0）、
+ * IPv4-compatible 为 `::AAAA:BBBB`。取尾部两个 16-bit 组拼成 32-bit IPv4，再交 IPv4
+ * 私有/保留段判定（否则 `::ffff:7f00:1` 这类回环映射 IPv6 会绕过纯 IPv6 前缀判断）。
+ */
+function ipv4MappedOctets(host) {
+  const match = /^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(host)
+  if (match === null) return null
+  const value = Number.parseInt(`${match[1].padStart(4, '0')}${match[2].padStart(4, '0')}`, 16)
+  if (!Number.isFinite(value) || value > 0xffffffff) return null
+  return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]
+}
+
+/** 私有/特殊 IPv6 段判定：::(未指定)、::1(回环)、fe80::/10(链路本地)、fc00::/7(ULA)、
+ * 以及 IPv4-mapped/compatible（内嵌 IPv4 需经 IPv4 私有判定）。 */
 function isPrivateIpv6(host) {
   const lower = host.toLowerCase()
   if (lower === '::' || lower === '::1') return true
   if (lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) return true
   if (lower.startsWith('fc') || lower.startsWith('fd')) return true
+  const mapped = ipv4MappedOctets(lower)
+  if (mapped !== null) return isPrivateIpv4(mapped.join('.'))
   return false
 }
 
