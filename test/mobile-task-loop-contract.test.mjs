@@ -2,10 +2,24 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createNativeQuestionBridge } from '../src/host/native-questions.mjs'
 import { resolveConfig } from '../src/config.mjs'
+import { createInboundBus } from '../src/inbound/bus.mjs'
+import { normalizeInboundMessage } from '../src/inbound/message.mjs'
+import { createTaskSelection } from '../src/routing/task-selection.mjs'
+import { projectTasks } from '../src/routing/task-projection.mjs'
 
-// v0.10 移动任务闭环契约冻结（任务书第 1 提交）。
-// 本文件锁定「现状 + 目标」契约形状：已落地部分做实断言，尚未实现的目标
-// 用 `todo: true` 冻结，作为后续窄提交的验收清单。
+// v0.10 移动任务闭环契约（任务书第 1 提交冻结 → 后续窄提交逐项落地为实断言）。
+// 本文件锁定「现状 + 目标」契约形状：已落地部分做实断言，未实现的目标用 `todo: true`
+// 冻结。全部 6 项契约现已落地，todo 已翻转。
+
+function memoryStore(initial = {}) {
+  const map = new Map(Object.entries(initial))
+  return {
+    get(key, fallback) { return map.has(key) ? JSON.parse(JSON.stringify(map.get(key))) : fallback },
+    set(key, value) { map.set(key, JSON.parse(JSON.stringify(value))); return true },
+    delete(key) { const had = map.has(key); map.delete(key); return had },
+    keys(prefix = '') { return [...map.keys()].filter((k) => k.startsWith(prefix)) },
+  }
+}
 
 test('contract: host capability snapshot exposes task-visible shape', () => {
   // 形状契约：快照只有 host/events/questions/conversation/media 五个无敏感域。
@@ -33,22 +47,42 @@ test('contract: web-first remote escalation stages', () => {
   assert.equal(resolved.questions.remoteEnabled, true)
 })
 
-test('contract: dual-end first-win settlement', { todo: true }, () => {
-  // Web 先答 / 手机先答 / 几乎同时答均只结算一次；后到者 already-handled。
-  assert.ok(true)
+test('contract: dual-end first-win settlement', () => {
+  // Web 先答 / 手机先答 / 几乎同时答均只结算一次；后到者 already-resolved。
+  const bus = createInboundBus({})
+  bus.wait('q1', 5000)
+  assert.equal(bus.settle('q1', 'allowed-once', 'web', '42').ok, true)
+  assert.equal(bus.settle('q1', 'rejected', 'im', '100').reason, 'already-resolved')
 })
 
-test('contract: multi-task ambiguity fails before delivering', { todo: true }, () => {
+test('contract: multi-task ambiguity fails before delivering', () => {
   // 多活跃任务无绑定时不先投最近再提示；先任务选择卡；选择成功后原消息只投一次。
-  assert.ok(true)
+  const sel = createTaskSelection({ store: memoryStore() })
+  const eg = { channel: 'telegram', userId: '42', chatId: '42' }
+  const begun = sel.begin(eg, ['sid-a', 'sid-b'], '帮我构建')
+  assert.deepEqual(begun.candidates, ['sid-a', 'sid-b'])
+  assert.equal(sel.has(eg), true)
+  const resolved = sel.resolve(eg, '2')
+  assert.equal(resolved.ok, true)
+  assert.equal(resolved.sessionId, 'sid-b')
+  assert.equal(sel.has(eg), false, '消解后清待决：原消息只投一次')
+  assert.equal(sel.resolve(eg, '1').reason, 'no-pending', '二次消解不再投递')
 })
 
-test('contract: image message block preserves text + image', { todo: true }, () => {
+test('contract: image message block preserves text + image', () => {
   // 文本+图片必须保留二者，不能因为 text !== '' 就丢图。
-  assert.ok(true)
+  const dual = normalizeInboundMessage({ kind: 'image', image: { url: 'https://media.example.test/a.png' }, text: '说明' })
+  assert.equal(dual.kind, 'text')
+  assert.equal(dual.text, '说明')
+  assert.equal(dual.image.url, 'https://media.example.test/a.png')
 })
 
-test('contract: task projection is a read-only derived view', { todo: true }, () => {
+test('contract: task projection is a read-only derived view', () => {
   // taskRef/workspace/status/attention/lastActivityAt/boundChannels；不存储正文/凭证/回答。
-  assert.ok(true)
+  const registry = { activeSessions: () => ['sid-a'], getSession: () => ({ workspace: 'proj', lastActiveAt: 100 }) }
+  const ctx = { agents: { list: () => [{ id: 'sid-a', status: 'running' }], get: () => ({ status: 'running' }) } }
+  const router = { resolveOutbound: () => ({ channelTypes: ['telegram'] }) }
+  const { tasks } = projectTasks({ registry, router, ctx, channelTypes: ['telegram'] })
+  assert.deepEqual(Object.keys(tasks[0]).sort(), ['attention', 'boundChannels', 'lastActivityAt', 'status', 'taskRef', 'workspace'].sort())
+  assert.ok(!/answer|credential|token|content|userId/.test(JSON.stringify(tasks[0])))
 })
