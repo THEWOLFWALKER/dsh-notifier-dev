@@ -296,6 +296,10 @@ export function apply(ctx, config = {}) {
   let busRef = null
   let questionsBridge = null
   let nativeBridge = null
+  // v0.10 提交7：宿主事件 registrar 快照（管理台 /host 的 events.received 视图）
+  // 与图片入站能力标记（会话路由装配成功即 available）。惰性读取，装配前为 null/false。
+  let hostEventsRegistrar = null
+  let conversationRouterActive = false
   const questionsForChannels = {
     decide: (payload) => questionsBridge?.decide(payload) ?? { ok: false, message: '提问服务未就绪' },
   }
@@ -305,6 +309,7 @@ export function apply(ctx, config = {}) {
     bus: () => busRef,
     actions: () => actionsRef,
     interactive: () => interactiveRaw,
+    onHostEvents: (registrar) => { hostEventsRegistrar = registrar }, // 诊断快照外泄（提交7）
   }))
   const disposeTool = registerNotifyTool(ctx, notifier, {
     rateLimitPerMinute: resolved.toolRateLimitPerMinute,
@@ -619,6 +624,7 @@ export function apply(ctx, config = {}) {
         logger,
       })
       disposers.push(disposeConversation)
+      conversationRouterActive = true // 提交7：会话路由（含图片投递）已装配 → 管理台图片入站标 available
     } catch (error) {
       warn(`会话路由装配失败，已跳过（inbound 通道与审批不受影响）: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -673,6 +679,14 @@ export function apply(ctx, config = {}) {
         logger,
         questions: questionsBridge, // 路线图阶段 2A：远程提问管理台裁决（脱敏查询 + 受保护结算）
         control, // 结算必须经 Control Core 唯一裁决（注入同一实例，缺线即 fail-closed）
+        // v0.10 提交7：暴露 DSH 连接与任务状态——宿主上下文 + 任务投影关注判定 + 宿主
+        // 事件 registrar 快照 + 会话/提问/图片能力信号（全只读，装配期惰性闭包）。
+        ctx,
+        attentionOf,
+        hostSnapshot: () => (hostEventsRegistrar !== null ? hostEventsRegistrar.snapshot() : null),
+        questionsFallbackEnabled: questionsBridge !== null, // 插件自有 ask_user 工具已注册
+        webLocal: 'available', // 管理台本机回环（此 API 自身已在本机运行）
+        imageInput: conversationRouterActive ? 'available' : 'unknown', // 图片入站随会话路由装配
       })
       // v0.7：接通配对审计晚绑定（inbound 阶段积压的事件此刻转发 admin-audit.jsonl）
       try {
