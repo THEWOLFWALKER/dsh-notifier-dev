@@ -31,6 +31,8 @@ import { createPublicFacade, composeOnSend, deepFreeze, redactAuditRecord } from
 // v0.3.2：路由引擎（双向解析链 + 会话台账，src/routing/*.mjs）
 import { createAgentRouter } from './routing/agent-router.mjs'
 import { createSessionRegistry } from './routing/session-registry.mjs'
+// v0.10 移动任务选择（歧义前置）：多活跃任务无绑定先下发选择卡；待决状态经 store 持久化
+import { createTaskSelection } from './routing/task-selection.mjs'
 // v0.3.3：Web 管理台（HTTP 壳 + API 函数层 + 单文件 UI + 扫码流机 + 连通性自检）
 import { createAdminApi, INBOUND_CHANNELS } from './admin/api.mjs'
 // v0.4.0：通知事件 hub（SSE 数据源）
@@ -268,6 +270,21 @@ export function apply(ctx, config = {}) {
     if (migrated > 0) warn(`route:sessions 迁移：为旧 bind 绑定补建 ${migrated} 条会话记录`)
   } catch { /* 迁移失败静默：绝不弄崩启动 */ }
   disposers.push(() => registry.dispose())
+  // v0.10 任务选择状态机（歧义前置）：候选惰性过滤为「仍活跃会话」，待决经 store 持久化
+  // （taskselect:* 键域，重启不丢）。dispose 只清内存态（盘上待决由 TTL 惰性回收）。
+  const taskSelection = createTaskSelection({
+    store,
+    isActive: ({ sessionId }) => { try { return registry.isActive(sessionId) === true } catch { return false } },
+    logger,
+  })
+  // v0.10 待关注事项判定器（任务投影 attention + /tasks ⚠ 标记）：question 待决即标 attention。
+  // questionsBridge 晚装配（questions.enabled 块），本闭包惰性读取，装配前恒 false。
+  const attentionOf = (taskRef) => {
+    try {
+      const ids = questionsBridge?.pendingAgentIds?.()
+      return ids instanceof Set && ids.has(String(taskRef))
+    } catch { return false }
+  }
 
   // v0.5 动作闭环的装配时序（架构审查修正，设计稿 §6）：eventListener 装配早于
   // inbound 白名单块（vault/store/通道在其后才创建），直传实例不可行——用惰性
@@ -596,6 +613,9 @@ export function apply(ctx, config = {}) {
         registry, // 会话台账（/agent 命令族数据源、活跃信号、入站对话挂钩）
         control,
         channelTypes: () => resolved.channels.map((entry) => entry.type), // 全局渠道池快照（分流过滤白名单）
+        // v0.10 移动任务路由（任务书提交5）：歧义前置选择卡 + /tasks ⚠ 待关注标记
+        taskSelection,
+        attentionOf,
         logger,
       })
       disposers.push(disposeConversation)

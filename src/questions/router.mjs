@@ -599,6 +599,19 @@ export function createQuestionBridge(deps) {
     ledger.resolve(key, 'skipped', { via, userId })
     return { ok: true, message: '已驳回该提问：交还桌面处理', answers: [] }
   }
+  /** 当前待决问题归属的 agentId 集合（供任务投影 attention 与装配层判定「待关注」；
+   *  只用于装配-内部同进程判定，绝不进入 admin/UI/日志快照——raw agentId 不外泄）。 */
+  function pendingAgentIds() {
+    const ids = new Set()
+    for (const key of core.scanKeys()) {
+      if (!key.startsWith(KEY_PREFIX)) continue
+      const row = core.get(key)
+      if (!core.isPending(row)) continue
+      const agentId = String(row?.agentId ?? '')
+      if (agentId !== '') ids.add(agentId)
+    }
+    return ids
+  }
   /** 当前待决问题汇总（读快照，绝不抛）。无任何待决返回空数组。 */
   function adminPending() {
     const rows = []
@@ -1019,7 +1032,7 @@ export function createQuestionBridge(deps) {
     escalation.dispose()
   }
 
-  return { askQuestions, decide, decideTrusted, adminPending, adminSettle, attach, dispose, handleCardAction }
+  return { askQuestions, decide, decideTrusted, adminPending, adminSettle, pendingAgentIds, attach, dispose, handleCardAction }
 }
 
 /** 校验并归一 ask_user 工具参数；违规返回 { ok:false, reason }。 */
