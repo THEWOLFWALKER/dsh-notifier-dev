@@ -19,9 +19,12 @@ import { CHANNEL_TYPES } from '../config.mjs'
 import { chatScopeOf } from '../control/session-arbiter.mjs'
 import { bindingKey as identityBindingKey } from './identity.mjs'
 import { MESSAGE_PRIORITY } from './bus.mjs'
+import { normalizeImageAttachment, downloadInboundImage } from './message.mjs'
 
 const DEFAULT_MERGE_WINDOW_MS = 1500
 const SUMMARY_MAX_CHARS = 120
+/** 各 P0 通道图片-only 占位正文（wechat/qq 沿用）；投递时不得把它当真实文本交给视觉模型。 */
+const IMAGE_PLACEHOLDER_TEXT = '[图片消息]'
 
 /** 入站解析来源层的展示标签（/route 入站段用，与 agent-router 的 source 值一一对应）。 */
 const INBOUND_SOURCE_LABELS = {
@@ -31,13 +34,21 @@ const INBOUND_SOURCE_LABELS = {
   latest: '最近活跃（默认兜底）',
 }
 
-/** 组装宿主 UserMessage（source.kind = 'plugin'，与 call-me 同构）。 */
-function buildUserMessage(text, plugin = 'dsh-notifier') {
+/** 组装宿主 UserMessage（source.kind = 'plugin'，与 call-me 同构）。图片走 OpenAI 风格
+ * image_url 内容块（DeepSeek/DSH 兼容格式；合同测试锁定，真机 schema 待验证）。
+ * 纯图占位正文（IMAGE_PLACEHOLDER_TEXT）不落进视觉模型：content 只带 image_url 块。 */
+function buildUserMessage(text, image = null, plugin = 'dsh-notifier') {
+  const realText = String(text ?? '')
+  const hasImage = image !== null && typeof image?.url === 'string' && image.url !== ''
+  const content = []
+  if (realText !== '' && realText !== IMAGE_PLACEHOLDER_TEXT) content.push({ type: 'text', text: realText })
+  if (hasImage) content.push({ type: 'image_url', image_url: { url: image.url } })
+  const summaryText = realText !== '' && realText !== IMAGE_PLACEHOLDER_TEXT ? realText : '(图片消息)'
   return {
     id: randomUUID(),
     role: 'user',
-    content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin, form: 'notice', summary: String(text).slice(0, SUMMARY_MAX_CHARS) },
+    content,
+    source: { kind: 'plugin', plugin, form: 'notice', summary: summaryText.slice(0, SUMMARY_MAX_CHARS) },
   }
 }
 
@@ -56,6 +67,11 @@ function buildUserMessage(text, plugin = 'dsh-notifier') {
  *   - 会话台账（/agent 命令族数据源、活跃信号 touch、入站对话挂钩维护）；缺省时命令族降级提示
  * @param {() => string[]} [deps.channelTypes] - 全局已启用渠道类型（v0.3.2 出站解析的兜底池
  *   与过滤白名单）；缺省回落 config.mjs 的 CHANNEL_TYPES 全量（乐观池）
+ * @param {ReturnType<typeof import('../routing/task-selection.mjs').createTaskSelection>} [deps.taskSelection]
+ *   - v0.10 任务选择（歧义前置）；非空时多活跃任务无绑定先下发选择卡
+ * @param {(id: string) => boolean} [deps.attentionOf] - v0.10 待关注判定器（/tasks ⚠）
+ * @param {(url: string) => Promise<object|null>} [deps.downloadImage] - v0.10 图片受控下载原语
+ *   （测试替身/渠道专用下载器注入点；缺省回落 message.mjs downloadInboundImage）
  * @returns {() => void} 反注册函数
  */
 export function registerConversationRouter(deps) {
@@ -69,6 +85,10 @@ export function registerConversationRouter(deps) {
   const taskSelection = deps.taskSelection ?? null
   // v0.10 待关注事项判定器（/tasks ⚠ 标记与投影 attention 字段）；缺省恒 false。
   const attentionOf = typeof deps.attentionOf === 'function' ? deps.attentionOf : () => false
+  // v0.10 图片受控下载（提交6）：沿用 message.mjs downloadInboundImage（有界超时/大小/类型、
+  // 不落盘二进制）。只做可达性校验 + 失败回执，不阻断文字投递主线。可注入 downloadImage
+  // 换成测试替身/渠道专用下载器。
+  const downloadImage = typeof deps.downloadImage === 'function' ? deps.downloadImage : downloadInboundImage
   // mergeWindowMs 归一：undefined/null → 默认；0 合法（README 承诺「0 = 关闭合并」，立即投递）；
   // 非数字/NaN → 默认；负数 → 0（Math.max 兜底）。注意不能用 `Number(x) || 默认`——那会把
   // 显式 0 当 falsy 回落 1500，使下方 `mergeWindowMs === 0` 的立即投递分支永不可达（v0.3.2 审查修复）。
@@ -432,12 +452,14 @@ export function registerConversationRouter(deps) {
     registryCall('touch', sessionId)
   }
 
-  /** 选定会话后投递原消息（恰好一次，任务书「选择成功后原消息只投一次」）。 */
-  function selectAndDeliver(envelope, sessionId, originalText, say) {
+  /** 选定会话后投递原消息（恰好一次，任务书「选择成功后原消息只投一次」）；image 可选随投。 */
+  function selectAndDeliver(envelope, sessionId, originalText, say, image = null) {
     const agent = agentOf(sessionId)
     if (agent === undefined) { say(`会话 ${sessionId} 不存在或已退出（用 /tasks 重选）`); return false }
     applyBinding(envelope, sessionId)
-    const outcome = deliver(agent, originalText)
+    const outcome = deliver(agent, originalText, image, () => {
+      try { say('图片获取失败（已投递正文，图片未随附）') } catch { /* 回执失败不致命 */ }
+    })
     if (outcome === 'error') { say('投递失败（详见宿主日志）'); return false }
     if (outcome === 'empty') { say(`已选择 ${sessionId}（原消息为空，未投递）`); return true }
     say(`已选择 ${sessionId} 并投递（仅一次）`)
@@ -457,7 +479,7 @@ export function registerConversationRouter(deps) {
     if (matched.sid === null) { say(matched.message); return }
     const pending = taskSelection !== null ? taskSelection.get(envelope) : undefined
     if (pending !== undefined) {
-      if (selectAndDeliver(envelope, matched.sid, pending.originalText, say)) taskSelection.cancel(envelope)
+      if (selectAndDeliver(envelope, matched.sid, pending.originalText, say, pending.image ?? null)) taskSelection.cancel(envelope)
       return
     }
     applyBinding(envelope, matched.sid)
@@ -574,27 +596,51 @@ export function registerConversationRouter(deps) {
     return lines.join('\n')
   }
 
-  /** 投递语义路由：! 前缀 steer；忙碌 inject；空闲 followup。 */
-  function deliver(agent, text) {
+  /** 投递语义路由：! 前缀 steer；忙碌 inject；空闲 followup。image 可选（已在别处受控校验）。
+   *  onImageFailure（可选）：图片受控下载失败时回调（失败回执用），best-effort 不阻断投递。 */
+  function deliver(agent, text, image = null, onImageFailure = null) {
     const wantsSteer = text.startsWith(steerPrefix)
     const body = (wantsSteer ? text.slice(steerPrefix.length) : text).trim()
-    if (body === '') return 'empty'
-    const payload = buildUserMessage(body)
+    const imagePart = image !== null && typeof image?.url === 'string' && image.url !== '' ? image : null
+    if (body === '' && imagePart === null) return 'empty'
+    const payload = buildUserMessage(body, imagePart)
     try {
       if (wantsSteer) {
         agent.steer(payload) // 空闲时宿主内部等价 followup
+        scheduleImageValidation(imagePart, onImageFailure)
         return 'steer'
       }
+      const outcome = agent.status === 'running' ? 'inject' : 'followup'
       if (agent.status === 'running') {
         agent.inject(payload) // 忙碌：排队到下一步边界，不打断
-        return 'inject'
+      } else {
+        agent.followup(payload) // 空闲：唤醒新 turn
       }
-      agent.followup(payload) // 空闲：唤醒新 turn
-      return 'followup'
+      scheduleImageValidation(imagePart, onImageFailure)
+      return outcome
     } catch (error) {
       warn(`投递失败: ${error instanceof Error ? error.message : String(error)}`)
       return 'error'
     }
+  }
+
+  /** 图片受控下载（best-effort，非阻塞）：只做可达性/类型/大小校验，不落盘。失败调用
+   *  onImageFailure() 发失败回执；onImageFailure 为 null 时仅记 warn。 */
+  function scheduleImageValidation(imagePart, onImageFailure) {
+    if (imagePart === null) return
+    const url = imagePart.url
+    void Promise.resolve()
+      .then(() => downloadImage(url))
+      .then((result) => {
+        if (result === null || result === undefined) {
+          if (typeof onImageFailure === 'function') { try { onImageFailure() } catch { /* 回执失败不致命 */ } }
+          else warn(`图片受控下载失败（已按纯文本投递）: ${url}`)
+        }
+      })
+      .catch(() => {
+        if (typeof onImageFailure === 'function') { try { onImageFailure() } catch { /* 回执失败不致命 */ } }
+        else warn(`图片受控下载异常（已按纯文本投递）: ${url}`)
+      })
   }
 
   // 合并窗：手机上打长句常拆多条；窗口内的连续消息合并为一条再投递。
@@ -622,9 +668,9 @@ export function registerConversationRouter(deps) {
     const text = entry.parts.join('\n').trim()
     if (text === '') return
     const merged = entry.forceSteer ? `${steerPrefix}${text}` : text
-    route(envelope, merged)
+    route(envelope, merged, entry.image ?? null)
   }
-  function routeUnsafe(envelope, text) {
+  function routeUnsafe(envelope, text, image = null) {
     if (text.startsWith('/')) {
       if (handleCommand(envelope, text)) return
     }
@@ -635,7 +681,7 @@ export function registerConversationRouter(deps) {
       const selection = taskSelection.resolve(envelope, text)
       if (selection.ok === true) {
         selectAndDeliver(envelope, selection.sessionId, selection.originalText,
-          (message) => reply(envelope.channel, envelope.chatId, message))
+          (message) => reply(envelope.channel, envelope.chatId, message), selection.image ?? null)
         return
       }
       if (selection.reason === 'invalid') {
@@ -651,7 +697,7 @@ export function registerConversationRouter(deps) {
     // 先下发任务选择卡（编号回复 / /use），选定后才把原消息投一次。
     if (resolved.ambiguous === true && taskSelection !== null
       && Array.isArray(resolved.candidates) && resolved.candidates.length > 1) {
-      const begun = taskSelection.begin(envelope, resolved.candidates, text)
+      const begun = taskSelection.begin(envelope, resolved.candidates, text, image)
       if (begun !== null) {
         reply(envelope.channel, envelope.chatId, renderSelectionCard(begun.candidates))
         return
@@ -667,7 +713,9 @@ export function registerConversationRouter(deps) {
       reply(envelope.channel, envelope.chatId, `会话 ${bound} 不存在或已退出（用 /status 查看）`)
       return
     }
-    const outcome = deliver(agent, text)
+    const outcome = deliver(agent, text, image, () => {
+      reply(envelope.channel, envelope.chatId, '图片获取失败（已按纯文本投递，图片未随附）')
+    })
     if (outcome === 'error') {
       reply(envelope.channel, envelope.chatId, '投递失败（详见宿主日志）')
     } else if (outcome === 'empty') {
@@ -685,13 +733,13 @@ export function registerConversationRouter(deps) {
 
   // Control Core gate for session-affecting inbound text. Ordinary outbound
   // notifications never pass here; only remote control/conversation commands do.
-  function route(envelope, text) {
+  function route(envelope, text, image = null) {
     const trimmed = String(text ?? '').trim()
     // G-04：仅裸 '/stop' 归类为 stop 控制命令。'/stop 等等' 不再命中（旧 startsWith('/stop ')
     // 会把附言形态也送进 Control Core 当取消指令，误杀长任务），改走未知命令路径。
     const command = trimmed === '/stop' ? 'stop'
       : (trimmed.startsWith(steerPrefix) ? 'steer' : (trimmed.startsWith('/') ? null : 'ordinary-message'))
-    if (control === null || command === null) return routeUnsafe(envelope, text)
+    if (control === null || command === null) return routeUnsafe(envelope, text, image)
     // QQ group/ambiguous envelopes must not fall through to the legacy route
     // when no session is resolved; consume with a receipt instead.
     if (String(envelope.channel ?? '').toLowerCase() === 'qq' && chatScopeOf(envelope) !== 'private') {
@@ -701,7 +749,7 @@ export function registerConversationRouter(deps) {
       return
     }
     const target = resolveTarget(envelope)
-    if (target.sessionId === null) return routeUnsafe(envelope, text)
+    if (target.sessionId === null) return routeUnsafe(envelope, text, image)
     const receipt = control.handle({
       eventId: String(envelope.messageId ?? ''),
       command,
@@ -715,7 +763,7 @@ export function registerConversationRouter(deps) {
       sessionId: String(target.sessionId),
       policyVersion: '1',
       pending: { status: 'pending', sessionId: String(target.sessionId), createdAt: Date.now() - 1, expiresAt: Date.now() + 10 * 60 * 1000 },
-      settle: () => { routeUnsafe(envelope, text); return true },
+      settle: () => { routeUnsafe(envelope, text, image); return true },
     })
     if (receipt.status === 'accepted') return
     if (receipt.reason === 'conversation_disabled') reply(envelope.channel, envelope.chatId, '远程对话默认关闭，请在 session policy 中显式开启')
@@ -726,30 +774,36 @@ export function registerConversationRouter(deps) {
 
   // G-31：会话路由是消费链末位兜底（priority 100）——前面审批/提问未消费的消息才进 agent 会话。
   const disposeMessage = bus.onMessage((envelope) => {
-    const text = String(envelope.text ?? '').trim()
+    // v0.10 图片（提交6）：归一图片附件随文投递。纯图（无正文）用占位正文保底，绝不静默丢弃；
+    // 占位正文在 buildUserMessage 中被剥掉，不会当真实文本交给视觉模型。
+    const image = normalizeImageAttachment(envelope?.image)
+    const rawText = String(envelope.text ?? '').trim()
+    const text = rawText === '' && image !== null ? IMAGE_PLACEHOLDER_TEXT : rawText
     if (text === '') return
     // 命令不进合并窗：立即处理
     if (text.startsWith('/')) {
-      route(envelope, text)
+      route(envelope, text, image)
       return
     }
     const key = mergeWindowKeyOf(envelope) // G-51：与 flush 同一键（含 chatId 维度）
     if (text.endsWith('..') || text.endsWith('!!')) {
-      // 终止符：先并入再立即冲刷（!! 追加 steer 前缀）
-      const entry = pending.get(key) ?? { parts: [], timer: null, forceSteer: false }
+      // 终止符：先并入再立即冲刷（!! 追加 steer 前缀）；图片取首条（合并窗内图片不叠加）
+      const entry = pending.get(key) ?? { parts: [], timer: null, forceSteer: false, image: null }
       entry.parts.push(text.slice(0, -2).trim())
       entry.forceSteer = entry.forceSteer || text.endsWith('!!')
+      if (entry.image === null) entry.image = image
       pending.set(key, entry)
       flush(envelope)
       return
     }
     if (mergeWindowMs === 0) {
-      route(envelope, text)
+      route(envelope, text, image)
       return
     }
     const entry = pending.get(key)
     if (entry !== undefined) {
       entry.parts.push(text)
+      if (entry.image === null) entry.image = image
       clearTimeout(entry.timer)
       entry.timer = setTimeout(() => flush(envelope), mergeWindowMs)
       return
@@ -758,6 +812,7 @@ export function registerConversationRouter(deps) {
       parts: [text],
       timer: setTimeout(() => flush(envelope), mergeWindowMs),
       forceSteer: false,
+      image: image ?? null,
     })
   }, { priority: MESSAGE_PRIORITY.conversation })
 

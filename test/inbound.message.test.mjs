@@ -56,11 +56,15 @@ test('normalizeInboundMessage：未知结构 fail-closed（非对象/空文本/�
   assert.equal(normalizeInboundMessage({ kind: 'video', ...({ image: { url: 'x' } }) }), null, '未知 kind 拒绝')
 })
 
-test('normalizeInboundMessage：既有 text + 无附件载荷按 text 归一（附件路径待证据，绝不旁路）', () => {
-  const result = normalizeInboundMessage({ kind: 'image', image: { url: 'https://x/a.png' }, text: '说明文字' })
+test('normalizeInboundMessage：既有 text + 合法图片附件 → 保留两者（不因 text!==\'\' 丢图）', () => {
+  const result = normalizeInboundMessage({ kind: 'image', image: { url: 'https://x/a.png', width: 800 }, text: '说明文字' })
   assert.equal(result.kind, INBOUND_KINDS.text)
   assert.equal(result.text, '说明文字')
-  assert.equal(result.image, undefined, 'text 归一不携带 image 附载')
+  assert.deepEqual(result.image, { url: 'https://x/a.png', width: 800 }, '文本+图片必须双载，不得丢图')
+  // 无合法图片附件的纯文字仍只归一为 text（附件缺 url 不产生 image 段）
+  const textOnly = normalizeInboundMessage({ text: '说明文字', image: { width: 800 } })
+  assert.equal(textOnly.kind, INBOUND_KINDS.text)
+  assert.equal(textOnly.image, undefined)
 })
 
 test('parseExtraSegments：JSON 字符串/已解析数组/畸形输入', () => {

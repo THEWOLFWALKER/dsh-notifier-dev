@@ -30,9 +30,70 @@ export const DEFAULT_INBOUND_MEDIA_TIMEOUT_MS = 10000
 /** url 精确必须是非空字符串（fail-closed：缺 URL 的附件段不构成有效媒体消息）。 */
 const urlPresent = (value) => normalizeImageUrl(value) !== ''
 
+/** 永拒主机名（精确匹配，小写归一后）。 */
+const BLOCKED_HOSTNAMES = new Set([
+  'localhost', 'localhost.localdomain', 'ip6-localhost', 'ip6-loopback',
+  'metadata.google.internal', 'metadata.goog',
+])
+/** 永拒主机后缀（mDNS/内部 TLD，DNS rebinding 之外的静态面）。 */
+const BLOCKED_HOST_SUFFIXES = ['.localhost', '.local', '.internal', '.home.arpa', '.lan']
+
+/** IPv4 字面量判定（纯数字点分，含前导 0 形态）；非字面量返回 false。 */
+function isLiteralIpv4(host) {
+  const parts = host.split('.')
+  if (parts.length !== 4) return false
+  return parts.every((part) => /^\d{1,3}$/.test(part))
+}
+
+/** 私有/保留 IPv4 段判定（CWE-918：回环、内网、链路本地、元数据、组播、保留段）。 */
+function isPrivateIpv4(host) {
+  const [a, b, c] = host.split('.').map((part) => Number(part))
+  const first = a
+  if (first === 0 || first === 10 || first === 127) return true
+  if (first === 100 && b >= 64 && b <= 127) return true // 100.64.0.0/10 CGNAT
+  if (first === 169 && b === 254) return true // 169.254.0.0/16 链路本地（含云元数据）
+  if (first === 172 && b >= 16 && b <= 31) return true // 172.16.0.0/12
+  if (first === 192 && b === 168) return true // 192.168.0.0/16
+  if (first === 198 && (b === 18 || b === 19)) return true // 198.18.0.0/15 基准段
+  if (first === 192 && b === 0 && c === 2) return true // 192.0.2.0/24 TEST-NET-1
+  if (first === 198 && b === 51 && c === 100) return true // TEST-NET-2
+  if (first === 203 && b === 0 && c === 113) return true // TEST-NET-3
+  if (first >= 224) return true // 组播/保留 224.0.0.0/4+
+  return false
+}
+
+/** IPv6 字面量判定（去方括号与 zone id 后）；非字面量返回 false。 */
+function isLiteralIpv6(host) {
+  return host.includes(':')
+}
+
+/** 私有/特殊 IPv6 段判定：::(未指定)、::1(回环)、fe80::/10(链路本地)、fc00::/7(ULA)。 */
+function isPrivateIpv6(host) {
+  const lower = host.toLowerCase()
+  if (lower === '::' || lower === '::1') return true
+  if (lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) return true
+  if (lower.startsWith('fc') || lower.startsWith('fd')) return true
+  return false
+}
+
+/**
+ * 主机名静态 SSRF 判定：私有/回环/链路本地/元数据/内部 TLD 一律拒绝。仅做字面量判定，
+ * 不对域名做 DNS 反查（DNS rebinding 是声明性残留风险，不做承诺）。
+ */
+function isPrivateOrReservedHost(rawHost) {
+  const stripped = String(rawHost ?? '').trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '')
+  if (stripped === '') return true // fail-closed：空主机名不可投
+  const host = stripped.includes('%') ? stripped.slice(0, stripped.indexOf('%')) : stripped // IPv6 zone id
+  if (BLOCKED_HOSTNAMES.has(host)) return true
+  for (const suffix of BLOCKED_HOST_SUFFIXES) if (host.endsWith(suffix)) return true
+  if (isLiteralIpv4(host)) return isPrivateIpv4(host)
+  if (isLiteralIpv6(host)) return isPrivateIpv6(host)
+  return false
+}
+
 /**
  * 仅接受显式 HTTP(S) 媒体地址。URL 不会被当作命令、回调载荷或状态值；禁止凭证段，
- * 避免把对端携带的敏感片段带入 agent/audit 信封。
+ * 避免把对端携带的敏感片段带入 agent/audit 信封；拒绝私有/内网/回环目标（SSRF 硬边界）。
  */
 export function normalizeImageUrl(value) {
   const raw = typeof value === 'string' ? value.trim() : ''
@@ -41,6 +102,7 @@ export function normalizeImageUrl(value) {
     const parsed = new URL(raw)
     if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || parsed.hostname === ''
       || parsed.username !== '' || parsed.password !== '') return ''
+    if (isPrivateOrReservedHost(parsed.hostname)) return ''
     return parsed.href
   } catch {
     return ''
@@ -127,15 +189,25 @@ export function parseExtraSegments(extra) {
 export function normalizeInboundMessage(input) {
   if (!isPlainObject(input)) return null
   const passthrough = { ...input }
-  // 文字兼容：既有信封以 text 为主道。非文本载荷若同时带 text 正文，按 text 归一
-  // （附件路径待协议证据，绝不旁路）。
-  if (typeof passthrough.text === 'string' && passthrough.text !== '') {
+  const textRaw = passthrough.text
+  const hasText = typeof textRaw === 'string' && textRaw !== ''
+  const image = normalizeImageAttachment(passthrough.image)
+  // v0.10（§3.4）：文本+图片必须保留二者，不能因为 text !== '' 就丢图。既有 text 又带
+  // 合法图片附件的信封归一为 text + image 双载；纯文字信封仍只归一为 text（零行为变化）。
+  if (hasText && image !== null) {
     delete passthrough.kind
     delete passthrough.image
     delete passthrough.file
-    return { kind: INBOUND_KINDS.text, text: passthrough.text, ...passthrough }
+    return { kind: INBOUND_KINDS.text, text: textRaw, image, ...passthrough }
   }
-  const image = normalizeImageAttachment(passthrough.image)
+  // 文字兼容：既有信封以 text 为主道。非文本载荷若同时带 text 正文，按 text 归一
+  // （附件路径待协议证据，绝不旁路）。
+  if (hasText) {
+    delete passthrough.kind
+    delete passthrough.image
+    delete passthrough.file
+    return { kind: INBOUND_KINDS.text, text: textRaw, ...passthrough }
+  }
   if (passthrough.kind === INBOUND_KINDS.image && image !== null) {
     delete passthrough.text
     delete passthrough.kind
