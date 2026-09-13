@@ -2,8 +2,8 @@
 
 - Agent identity: `TraeWork agent | dsh-notifier-dev | remote sandbox`
 - Branch: `codex/mobile-task-loop-v010`
-- Status: `active`
-- Start/end: `2026-09-12 -> active`
+- Status: `done`
+- Start/end: `2026-09-12 -> 2026-09-12`
 - Scope: 交付 v0.10「手机接管 DSH 任务」闭环（宿主桥 + 原生提问 + Web-first 升级 + 任务路由 + 图片输入 + 管理台状态），窄提交到 `main`。
 - Plan:
   1. 冻结 v0.10 目标契约（宿主能力、原生问题、双端首答、延迟升级、多任务歧义、图片消息块）。
@@ -24,7 +24,7 @@
   node --check src/index.mjs
   ```
 - Adversarial review: 见末尾记录（双端各成功一次、root/current 双收去重、多会话投错、旧卡消费 ref、宿主重启伪恢复、图片 SSRF、文本+图丢一半、关闭远程提问误伤宿主 Web）。
-- Handoff: 进行中。
+- Handoff: 已完成。全部 9 个窄提交落位 `codex/mobile-task-loop-v010`，`npm test` 1605 全绿，`verify-release` / 渠道矩阵 / `node --check` 全过，版本与测试计数四处对齐，待推送 `main`。
 
 ## 调查结论（2026-09-12）
 
